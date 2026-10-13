@@ -3,6 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Snap } from '../types'
 import { bandLines, isStale, modelChoices, statusText } from './guard'
+import { isMemoryFact } from './memory'
 import { healthLines, message, parseCg } from './py'
 import type { LastError } from './py'
 import { formatHits, formatRows, recallArgs } from './recall'
@@ -258,6 +259,18 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'mcp__cacheguard__recall_more' }, ($, e) =>
     served($, 'recall_more', async () => formatRows((await runCg($, python, ['expand', `--conv=${e.conv}`, `--pos=${e.pos}`])).rows as Row[])),
   )
+
+  // last and on the session side: every shared section must precede it, and the text never varies, so the prompt cache is not spent
+  on('prompt.compose', async (_, e, next) => ({ sections: [...(await next(e)).sections, { id: 'cacheguard:memory-rule', text: T.memoryRule, scope: 'session' }] }))
+
+  // The worker's or a subagent's write into the auto-memory folder; the owner's Write/Edit result always comes back as it was.
+  on('tool.call', { tool: ['Write', 'Edit'] }, async ($, e, next) => {
+    const ran = await next(e)
+    await guarded($, 'remembered', async () => {
+      if (ran.deny === undefined && !ran.isError && ran.result?.staged !== true && isMemoryFact(e.file_path)) $.ui.toast(T.remembered(e.file_path.split(/[\\/]/).pop()!.slice(0, -3)))
+    })
+    return ran
+  })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     // every read first, so the band is subscribed to all of them even when it draws nothing

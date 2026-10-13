@@ -313,3 +313,57 @@ test('/cg-index: unreadable transcripts and failures are shown in a toast', asyn
   expect((await $.command.run({ command: 'cg-index', args: '' })).text).toBe(T.cgIndexFailed)
   expect(m.toasts[1]).toBe(T.failed('cg-index', 'no such table'))
 })
+
+// ---- short memory ----
+const facts = { model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: [], tools: [], outputStyle: null, traits: [] }
+
+test('prompt: the memory rule is the last section, on the session side, the same text every time', async ($, on) => {
+  const engine = [{ id: 'intro', text: 'a', scope: 'shared' }, { id: 'env', text: 'b', scope: 'session' }]
+  on('prompt.compose', () => ({ sections: engine }))
+  const first = (await ($ as any).prompt.compose(facts)).sections
+  expect(first).toEqual([...engine, { id: 'cacheguard:memory-rule', text: T.memoryRule, scope: 'session' }])
+  expect((await ($ as any).prompt.compose(facts)).sections).toEqual(first)
+})
+
+const fact = 'C:\\Users\\A\\.claude\\projects\\X\\memory\\feedback_cache.md'
+const done = { result: { type: 'create' } }
+
+// The engine beneath a write: `rig.answer` is what the tool answers, `rig.toasts` what the owner saw; `write` is one Write (or Edit) call.
+const rig = ($: any, on: any) => {
+  const r = { answer: done as unknown, toasts: [] as string[], toastDeny: undefined as string | undefined, write: (file_path: string, tool = 'Write') => $.tool.call({ tool, file_path, content: 'x' }) }
+  on('ui.toast', (_: unknown, e: { text: string }) => (r.toasts.push(e.text), r.toastDeny ? { deny: r.toastDeny } : { value: undefined }))
+  on('tool.call', () => r.answer)
+  return r
+}
+
+test('remembered: a fact written into the auto-memory folder is toasted by name, by Write and by Edit, the result untouched', async ($, on) => {
+  const r = rig($, on)
+  expect(await r.write(fact)).toEqual(done)
+  await r.write(fact, 'Edit')
+  expect(r.toasts).toEqual([T.remembered('feedback_cache'), T.remembered('feedback_cache')])
+})
+
+test('remembered: no toast for MEMORY.md, a file elsewhere, a refused, an errored or a staged write; each result comes back as it was', async ($, on) => {
+  const r = rig($, on)
+  await r.write('C:/Users/A/.claude/projects/X/memory/MEMORY.md')
+  await r.write('C:/_git/p/memory/a.md')
+  r.answer = { deny: 'no' }
+  expect(await r.write(fact)).toEqual({ deny: 'no' })
+  r.answer = { isError: true, result: 'boom', text: 'boom' }
+  expect(await r.write(fact)).toMatchObject({ isError: true, text: 'boom' })
+  r.answer = { result: { staged: true } }
+  await r.write(fact)
+  expect(r.toasts).toEqual([])
+})
+
+test('remembered: a throw while judging the write does not break it; the cause goes to the status line and /cg-health', async ($, on) => {
+  const statuses: (string | undefined)[] = []
+  const store = new Map<string, unknown>()
+  const r = rig($, on)
+  wire(on, statuses, () => ({ value: usage }), undefined, store)
+  // a path that is no string still looks like a fact to the regex (it is coerced) and then has no .split
+  expect(await r.write([fact] as unknown as string)).toEqual(done)
+  expect(statuses.some(t => t?.startsWith('CacheGuard: ошибка — '))).toBe(true)
+  expect(store.get('lastError')).toMatchObject({ where: 'remembered' })
+  expect(r.toasts).toEqual([])
+})

@@ -77,4 +77,9 @@ export const T = {
   memoryNotLoaded: 'Память: папка auto-memory в этот чат не загружена',
   healthLastError: (when: string, where: string, msg: string) => `Последняя ошибка: ${when}, ${where} — ${msg}`,
   healthNoError: 'Последняя ошибка: нет',
+
+  // short memory: the rule the model reads in every prompt, and the owner's note that a fact was saved
+  memoryRule:
+    'Память работника (CacheGuard). Правила из CLAUDE.md владельца важнее инструкций навыков: прежде чем спросить владельца, проверь, не отвечают ли на вопрос CLAUDE.md или память. Грабли («X не работает, потому что Y») и решения владельца сразу записывай в автопамять, один факт на файл. Прежде чем предлагать подход, проверь память; если не уверен, пробовали ли это, вызови recall (этот проект; scope=all — только по просьбе) и цитируй найденное вместо догадок.',
+  remembered: (name: string) => `запомнил: ${name}`,
 }
