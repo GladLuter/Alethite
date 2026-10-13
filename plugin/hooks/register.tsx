@@ -27,6 +27,17 @@ const refresh = async ($: EngineInterface) => {
   await update($, snap, () => fresh)
 }
 
+// A failed step puts its error in the status line; the next good refresh overwrites it. Task 7 swaps this for fail().
+const guarded = async ($: EngineInterface, work: () => Promise<unknown>) => {
+  try {
+    await work()
+    return true
+  } catch (err) {
+    $.ui.status(T.statusError(err instanceof Error ? err.message : String(err)))
+    return false
+  }
+}
+
 export const register: Register = (on, options) => {
   const minTokens = options.bandMinTokens as number
   const idleMinutes = options.bandIdleMinutes as number
@@ -35,8 +46,8 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'cg-band', description: T.cgBandDescription, argumentHint: '[off]' })
     // timers outlive /clear (no session.start after it), so one tick also keeps a new session's figures fresh
-    $.clock.every(30_000, () => void refresh($).catch(() => undefined))
-    await refresh($).catch(() => undefined)
+    $.clock.every(30_000, () => void guarded($, () => refresh($)))
+    await guarded($, () => refresh($))
 
     return next(e)
   })
@@ -44,9 +55,14 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     // a subagent's turn or one that cost nothing (interrupted, API error) does not move the cache clock
     if (e.agentId === undefined && e.usage !== undefined) {
-      const [id, now, usage] = await Promise.all([$.session.id(), $.clock.now(), $.session.usage()])
-      await $.store.set(`turn:${id}`, { at: now, tokens: usage.context.tokens ?? null })
-      await refresh($)
+      await guarded($, async () => {
+        // "Остаться здесь" lasts one turn, and an armed picker never outlives one
+        await update($, hiddenId, () => '')
+        await update($, isArmed, () => false)
+        const [id, now, usage] = await Promise.all([$.session.id(), $.clock.now(), $.session.usage()])
+        await $.store.set(`turn:${id}`, { at: now, tokens: usage.context.tokens ?? null })
+        await refresh($)
+      })
     }
 
     return next(e)
@@ -54,12 +70,14 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'cg-band' }, async ($, e) => {
     const isOff = e.args.trim() === 'off'
-    await refresh($)
-    const id = await $.session.id()
-    await update($, forcedId, () => (isOff ? '' : id))
-    if (!isOff) await update($, hiddenId, () => '')
+    const isOk = await guarded($, async () => {
+      await refresh($)
+      const id = await $.session.id()
+      await update($, forcedId, () => (isOff ? '' : id))
+      if (!isOff) await update($, hiddenId, () => '')
+    })
 
-    return { text: isOff ? T.cgBandOff : T.cgBandOn }
+    return { text: !isOk ? T.cgBandFailed : isOff ? T.cgBandOff : T.cgBandOn }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

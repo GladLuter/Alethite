@@ -4,8 +4,8 @@
   "description": "Claude-CacheGuard: price a send into a big idle chat, offer a clean new worker, remember what was learned.",
   "types": "./types/index.d.ts",
   "userConfig": {
-    "bandMinTokens": { "type": "number", "title": "Полоса: от скольких токенов контекста", "description": "Полоса с ценой отправки появляется, когда в чате не меньше стольких токенов (и прошло достаточно минут).", "default": 100000 },
-    "bandIdleMinutes": { "type": "number", "title": "Полоса: через сколько минут после ответа", "description": "Полоса появляется, когда с последнего ответа прошло не меньше стольких минут. Кэш живёт 60 минут.", "default": 55 },
+    "bandMinTokens": { "type": "number", "title": "Полоса: от скольких токенов контекста", "description": "Полоса с ценой отправки появляется, когда в чате больше стольких токенов (и прошло достаточно минут).", "default": 100000 },
+    "bandIdleMinutes": { "type": "number", "title": "Полоса: через сколько минут после ответа", "description": "Полоса появляется, когда с последнего ответа прошло больше стольких минут. Кэш живёт 60 минут.", "default": 55 },
     "showLimits": { "type": "boolean", "title": "Полоса: показывать проценты лимитов", "description": "Добавлять в полосу строку с использованными процентами лимитов (5 часов, неделя).", "default": true },
     "python": { "type": "string", "title": "Команда Python", "description": "Команда, которой мод запускает свои скрипты на Python.", "default": "python" }
   }

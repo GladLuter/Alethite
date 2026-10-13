@@ -36,7 +36,7 @@ export const statusText = (tokens: number | null, at: number | null, now: number
 }
 
 export const isStale = (s: Snap, minTokens: number, idleMinutes: number) =>
-  s.at !== null && (s.tokens ?? 0) >= minTokens && s.now - s.at >= idleMinutes * 60_000
+  s.at !== null && (s.tokens ?? 0) > minTokens && s.now - s.at > idleMinutes * 60_000
 
 const ago = (ms: number) => {
   const min = Math.floor(ms / 60_000)

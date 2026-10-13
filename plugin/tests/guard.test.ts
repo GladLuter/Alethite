@@ -24,6 +24,11 @@ test('stale: both thresholds, defaults 100k and 55 min', () => {
   expect(isStale(snap({ tokens: 120_000, at: now - 54 * 60_000 }), 100_000, 55)).toBe(false)
   expect(isStale(snap({ at: null }), 100_000, 55)).toBe(false)
 })
+test('stale: thresholds are strict, "больше"', () => {
+  expect(isStale(snap({ tokens: 100_000, at: now - 56 * 60_000 }), 100_000, 55)).toBe(false)
+  expect(isStale(snap({ tokens: 120_000, at: now - 55 * 60_000 }), 100_000, 55)).toBe(false)
+  expect(isStale(snap({ tokens: 100_001, at: now - 55 * 60_000 - 1 }), 100_000, 55)).toBe(true)
+})
 test('status line', () => {
   expect(statusText(290_000, now - 18 * 60_000, now)).toBe('ctx 290k · кэш ~42 мин')
   expect(statusText(290_000, now - 61 * 60_000, now)).toBe('ctx 290k · кэш истёк')

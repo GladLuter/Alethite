@@ -30,8 +30,12 @@ export const T = {
   atFilesHint: '@файлы и картинки из черновика не передаются',
   notYet: 'Новый работник: запуск пока не подключён.',
 
+  // refresh failed: the status line shows it until the next good refresh
+  statusError: (msg: string) => `CacheGuard: ошибка — ${msg}`,
+
   // /cg-band
   cgBandDescription: 'Показать полосу принудительно (off: вернуть пороги)',
   cgBandOn: 'cg-band: полоса показана принудительно.',
   cgBandOff: 'cg-band: полоса снова по порогам.',
+  cgBandFailed: 'cg-band: не вышло, причина в строке состояния.',
 }
