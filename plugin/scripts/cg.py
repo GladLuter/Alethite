@@ -1,11 +1,13 @@
 """Command line of Claude-CacheGuard: every command prints one JSON object in UTF-8; an error is {"error": "<Type>: <text>"} with exit code 1."""
 import argparse
+import datetime
 import json
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import memdb
+import stats
 from handoff import build_handoff
 from transcripts import find_session, last_usage, project_key
 
@@ -48,11 +50,20 @@ def _handoff(a):
     return {'text': text, 'path': path}
 
 
+def _day(s):  # argparse reports a ValueError from a type function as a bad argument
+    return datetime.date.fromisoformat(s).isoformat()
+
+
+def _stats(a):
+    m = stats.metrics(a.projects, memdb.connect(a.db), a.since, a.until)
+    return {'metrics': m, 'note': stats.note_markdown(m, a.host, a.today, json.loads(a.limits), a.rule_chars)}
+
+
 def _parser():
     p = _Parser(prog='cg.py')
     p.add_argument('--db', default=memdb.DB_PATH)
     p.add_argument('--projects', default=os.path.join(os.path.expanduser('~'), '.claude', 'projects'))
-    sub = p.add_subparsers(dest='cmd', required=True)  # stats (Task 11) is added here
+    sub = p.add_subparsers(dest='cmd', required=True)
 
     def add(name, fn):
         s = sub.add_parser(name)
@@ -75,6 +86,13 @@ def _parser():
     s.add_argument('--session', required=True)
     s.add_argument('--today', required=True)
     s.add_argument('--memory-dir')
+    s = add('stats', _stats)
+    s.add_argument('--since', type=_day, required=True)
+    s.add_argument('--until', type=_day)
+    s.add_argument('--host', required=True)
+    s.add_argument('--today', type=_day, required=True)
+    s.add_argument('--limits', required=True)  # JSON: [{"kind", "percentUsed"}, ...]
+    s.add_argument('--rule-chars', type=int, required=True)
     return p
 
 

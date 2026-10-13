@@ -4,6 +4,8 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Snap } from '../types'
 import { bandLines, isStale, modelChoices, statusText } from './guard'
 import { isMemoryFact } from './memory'
+import { FOLDER, flush, notePath, SUMMARY_PATH, summaryNote } from './notes'
+import type { Note } from './notes'
 import { healthLines, message, parseCg } from './py'
 import type { LastError } from './py'
 import { formatHits, formatRows, recallArgs } from './recall'
@@ -104,6 +106,53 @@ const refresh = async ($: EngineInterface, python: string) => {
   await update($, snap, () => fresh)
 }
 
+// The owner's calendar day (local time) as YYYY-MM-DD.
+const calendarDay = (now: number) => new Date(now - new Date(now).getTimezoneOffset() * 60_000).toISOString().slice(0, 10)
+
+// A call to the Obsidian server; a throw and an answer with isError are both a failure, with the server's words when it gave any.
+const obsidian = async ($: EngineInterface, tool: string, args: Record<string, unknown>) => {
+  const r = await $.mcp.call('obsidian', tool, args)
+  const text = r.content.map(c => c.text ?? '').join('')
+  if (r.isError) throw new Error(text || tool)
+  return text
+}
+
+// The summary note: the frontmatter of every note in the folder as one table (the summary itself has none, so summaryNote leaves it out).
+const rebuildSummary = async ($: EngineInterface) => {
+  const names = JSON.parse(await obsidian($, 'vault_list', { path: FOLDER })) as string[]
+  const fronts = await Promise.all(names.filter(n => n.endsWith('.md')).map(async n => JSON.parse(await obsidian($, 'vault_read', { path: `${FOLDER}/${n}` })).frontmatter ?? {}))
+  await obsidian($, 'vault_write', { path: SUMMARY_PATH, content: summaryNote(fronts) })
+}
+
+// One /cg-stats run: measure, queue the note, send the queue, rebuild the summary. Returns what the owner reads.
+const runStats = async ($: EngineInterface, python: string, days: number) => {
+  const [now, host, usage] = await Promise.all([$.clock.now(), $.env.get('COMPUTERNAME'), $.session.usage()])
+  if (!host) throw new Error(T.noHost)
+  const today = calendarDay(now)
+  const since = new Date(Date.parse(today) - days * 86_400_000).toISOString().slice(0, 10)
+  const limits = usage.rateLimits.map(({ kind, percentUsed }) => ({ kind, percentUsed }))
+  const args = ['stats', '--since', since, '--host', host, '--today', today, '--limits', JSON.stringify(limits), '--rule-chars', String(T.memoryRule.length)]
+  const { note } = (await runCg($, python, args, 600_000)) as { note: string }
+  const path = notePath(host, today)
+  // one note per computer and day: a note still waiting for this day is replaced, not doubled
+  const queue = [...(((await $.store.get('outbox')) as Note[] | undefined) ?? []).filter(n => n.path !== path), { path, content: note }]
+  await $.store.set('outbox', queue) // kept before sending, so nothing is lost if the send is cut short
+  const sent = await flush(queue, async n => void (await obsidian($, 'vault_write', n)))
+  await $.store.set('outbox', sent.left)
+  const figures = note.replace(/^---\n[\s\S]*?\n---\n/, '').trim() // the frontmatter is for the vault
+  if (sent.error !== undefined) {
+    await fail($, 'cg-stats', sent.error)
+    return `${figures}\n\n${T.cgStatsQueued(sent.left.length)}`
+  }
+  try {
+    await rebuildSummary($)
+  } catch (err) {
+    await fail($, 'cg-stats-summary', err)
+    return `${figures}\n\n${T.cgStatsSummaryFailed}`
+  }
+  return `${figures}\n\n${T.cgStatsSent(sent.sent)}`
+}
+
 // "Новый работник": binds launch() to the engine through closures made here. One launch at a time.
 const startWorker = async ($: EngineInterface, python: string, model: string | null) => {
   let wasBusy = false
@@ -116,8 +165,7 @@ const startWorker = async ($: EngineInterface, python: string, model: string | n
       draft: async () => (await $.prompt.read()).text,
       handoff: async () => {
         const [id, now, dir] = await Promise.all([$.session.id(), $.clock.now(), memoryDir($)])
-        const today = new Date(now - new Date(now).getTimezoneOffset() * 60_000).toISOString().slice(0, 10) // the owner's calendar day
-        return (await runCg($, python, ['handoff', '--session', id, '--today', today, ...(dir ? ['--memory-dir', dir] : [])])) as { text: string; path: string }
+        return (await runCg($, python, ['handoff', '--session', id, '--today', calendarDay(now), ...(dir ? ['--memory-dir', dir] : [])])) as { text: string; path: string }
       },
       clear: () => $.command.run({ command: 'clear' }),
       setModel: async name => {
@@ -162,6 +210,7 @@ export const register: Register = (on, options) => {
     await $.command.register({ name: 'cg-band', description: T.cgBandDescription, argumentHint: '[off]' })
     await $.command.register({ name: 'cg-health', description: T.cgHealthDescription })
     await $.command.register({ name: 'cg-index', description: T.cgIndexDescription, argumentHint: '[rebuild]' })
+    await $.command.register({ name: 'cg-stats', description: T.cgStatsDescription, argumentHint: '[дней]' })
     // two short schemas in every request cost less than the extra ToolSearch turn a deferred tool needs in each new chat
     await $.tool.register({
       name: 'recall',
@@ -242,6 +291,17 @@ export const register: Register = (on, options) => {
     } catch (err) {
       await fail($, 'cg-index', err)
       return { text: T.cgIndexFailed }
+    }
+  })
+
+  on('command.run', { command: 'cg-stats' }, async ($, e) => {
+    const days = Number(e.args.trim() || 7)
+    if (!Number.isInteger(days) || days < 1) return { text: T.cgStatsDays }
+    try {
+      return { text: await runStats($, python, days) }
+    } catch (err) {
+      await fail($, 'cg-stats', err)
+      return { text: T.cgStatsFailed }
     }
   })
 

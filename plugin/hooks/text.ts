@@ -78,6 +78,18 @@ export const T = {
   healthLastError: (when: string, where: string, msg: string) => `Последняя ошибка: ${when}, ${where} — ${msg}`,
   healthNoError: 'Последняя ошибка: нет',
 
+  // /cg-stats: the reply, and the summary note written into the vault
+  cgStatsDescription: 'Замер расходов за N дней (по умолчанию 7): заметка и сводка в Obsidian',
+  cgStatsDays: 'cg-stats: число дней — целое больше нуля, например /cg-stats 7.',
+  noHost: 'имя компьютера неизвестно (переменная COMPUTERNAME пуста)',
+  cgStatsSent: (n: number) => `В Obsidian записано заметок: ${n}, сводка обновлена.`,
+  cgStatsQueued: (n: number) => `Obsidian недоступен (причина во всплывающем сообщении). В очереди неотправленных заметок: ${n}; следующий /cg-stats их дошлёт.`,
+  cgStatsSummaryFailed: 'Заметка записана, но сводка не пересобрана (причина во всплывающем сообщении); следующий /cg-stats попробует снова.',
+  cgStatsFailed: 'cg-stats: не вышло, причина во всплывающем сообщении.',
+  summaryTitle: '# Сводка замеров',
+  summaryHint: 'Собрана командой /cg-stats из заметок по компьютерам; руками не править.',
+  summaryColumns: ['дата', 'компьютер', '$ на сообщение владельца', 'перезаписи кэша', 'из них после паузы ≥ 60 мин', 'медианный контекст', 'сообщений владельца'],
+
   // short memory: the rule the model reads in every prompt, and the owner's note that a fact was saved
   memoryRule:
     'Память работника (CacheGuard). Правила из CLAUDE.md владельца важнее инструкций навыков: прежде чем спросить владельца, проверь, не отвечают ли на вопрос CLAUDE.md или память. Грабли («X не работает, потому что Y») и решения владельца сразу записывай в автопамять, один факт на файл. Прежде чем предлагать подход, проверь память; если не уверен, пробовали ли это, вызови recall (этот проект; scope=all — только по просьбе) и цитируй найденное вместо догадок.',

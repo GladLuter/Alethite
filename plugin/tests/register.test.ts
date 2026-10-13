@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import { FOLDER, notePath, SUMMARY_PATH } from '../hooks/notes'
 import { T } from '../hooks/text'
 
 const usage = { context: { tokens: 512_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 7 }] }
@@ -366,4 +367,153 @@ test('remembered: a throw while judging the write does not break it; the cause g
   expect(statuses.some(t => t?.startsWith('CacheGuard: ошибка — '))).toBe(true)
   expect(store.get('lastError')).toMatchObject({ where: 'remembered' })
   expect(r.toasts).toEqual([])
+})
+
+// ---- measurements ----
+const NOTE = '---\nhost: PC-1\ndate: 2026-10-13\nusd_per_owner_msg: 4.5\n---\n# Замер\n\n| метрика | база | сейчас |\n|---|---|---|\n| $ на сообщение | $5.20 | $4.50 |'
+const OTHER = '---\nhost: PC-2\ndate: 2026-10-01\nusd_per_owner_msg: 5.1\n---\n'
+const flag = (a: string[], name: string) => a[a.indexOf(name) + 1]!
+
+// The Obsidian server beneath the plugin: a vault in memory. `fail(tool)` says which calls break, `failure` how (a throw, or an answer with isError).
+const fakeVault = (on: any) => {
+  const v = { files: new Map<string, string>(), calls: [] as string[], fail: (_tool: string) => false, failure: 'throws' as 'throws' | 'isError', onWrite: (_path: string) => {} }
+  const ok = (text: string) => ({ value: { content: [{ type: 'text', text }], isError: false } })
+  on('mcp.call', (_: unknown, e: { server: string; tool: string; args: { path: string; content?: string } }) => {
+    v.calls.push(`${e.server} ${e.tool} ${e.args.path}`)
+    if (v.fail(e.tool)) return v.failure === 'throws' ? { deny: 'connection refused' } : { value: { content: [{ type: 'text', text: 'vault locked' }], isError: true } }
+    if (e.tool === 'vault_write') return v.onWrite(e.args.path), v.files.set(e.args.path, e.args.content!), ok('written')
+    if (e.tool === 'vault_list') return ok(JSON.stringify([...v.files.keys()].filter(p => p.startsWith(e.args.path + '/')).map(p => p.slice(e.args.path.length + 1))))
+    const content = v.files.get(e.args.path)!
+    const front = content.split('---')[1] ?? ''
+    const frontmatter = Object.fromEntries([...front.matchAll(/^(\w+): (.*)$/gm)].map(([, k, x]) => [k, x === 'null' ? null : isNaN(Number(x)) ? x : Number(x)]))
+    return ok(JSON.stringify({ content, frontmatter }))
+  })
+  return v
+}
+
+const statsRig = async ($: any, on: any, answer: (a: string[]) => unknown = () => ran(JSON.stringify({ metrics: {}, note: NOTE })), env: Record<string, string> = { COMPUTERNAME: 'PC-1' }) => {
+  mock.env(on, env)
+  const vault = fakeVault(on)
+  const m = await started($, on, a => (a[0] === 'stats' ? answer(a) : ran('{}')))
+  const stats = (args = '') => $.command.run({ command: 'cg-stats', args }) as Promise<{ text: string }>
+  const today = () => flag(ofCg(m, 'stats').at(-1)!.argv, '--today')
+  return { vault, m, stats, today }
+}
+
+test('/cg-stats: cg.py gets the period, the computer, the limits and the size of the memory rule; the figures are in the reply', async ($, on) => {
+  const { m, stats, today } = await statsRig($, on)
+  const { text } = await stats()
+  const { argv, timeoutMs } = ofCg(m, 'stats')[0]!
+  expect(argv.slice(0, 1)).toEqual(['stats'])
+  expect(today()).toMatch(/^\d{4}-\d\d-\d\d$/)
+  expect(Date.parse(today()) - Date.parse(flag(argv, '--since'))).toBe(7 * 86_400_000) // the default is a week
+  expect(argv).not.toContain('--until')
+  expect([flag(argv, '--host'), flag(argv, '--limits'), flag(argv, '--rule-chars'), timeoutMs]).toEqual(['PC-1', JSON.stringify(usage.rateLimits), String(T.memoryRule.length), 600_000])
+  expect(text).toContain('| метрика | база | сейчас |')
+  expect(text).not.toContain('host: PC-1') // the frontmatter is for the vault, not for the reply
+})
+
+test('/cg-stats 30: the period is as long as asked', async ($, on) => {
+  const { m, stats, today } = await statsRig($, on)
+  await stats(' 30 ')
+  expect(Date.parse(today()) - Date.parse(flag(ofCg(m, 'stats')[0]!.argv, '--since'))).toBe(30 * 86_400_000)
+})
+
+test('/cg-stats: no sense in the days: say so, run nothing', async ($, on) => {
+  const { m, stats } = await statsRig($, on)
+  for (const bad of ['abc', '0', '-3', '2.5']) expect((await stats(bad)).text).toBe(T.cgStatsDays)
+  expect(ofCg(m, 'stats')).toEqual([])
+})
+
+test('/cg-stats: Obsidian up: the note and the summary are written, the outbox is empty', async ($, on) => {
+  const { vault, m, stats, today } = await statsRig($, on)
+  vault.files.set(`${FOLDER}/2026-10-01 PC-2.md`, OTHER)
+  const { text } = await stats()
+  expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
+  const summary = vault.files.get(SUMMARY_PATH)!
+  expect(summary).toContain('PC-1')
+  expect(summary).toContain('PC-2')
+  expect(summary.split('\n').filter(l => /^\| 2026/.test(l))).toHaveLength(2) // the summary does not list itself
+  expect(vault.calls[0]).toBe(`obsidian vault_write ${notePath('PC-1', today())}`)
+  expect(m.store.get('outbox')).toEqual([])
+  expect(m.toasts).toEqual([])
+  expect(text).toContain(T.cgStatsSent(1))
+})
+
+test('/cg-stats: Obsidian down: the error is shown, the note waits in the outbox, the next run sends it', async ($, on) => {
+  const { vault, m, stats, today } = await statsRig($, on)
+  vault.fail = () => true
+  const { text } = await stats()
+  expect(m.toasts).toHaveLength(1)
+  expect(m.toasts[0]).toContain(T.failed('cg-stats', '').trim())
+  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-stats' })
+  expect(m.store.get('outbox')).toEqual([{ path: notePath('PC-1', today()), content: NOTE }])
+  expect(text).toContain(T.cgStatsQueued(1))
+  expect(text).toContain('| метрика | база | сейчас |') // the figures are not lost with the vault
+  expect(vault.files.size).toBe(0)
+
+  vault.fail = () => false
+  expect((await stats()).text).toContain(T.cgStatsSent(1)) // the same day: the new note replaces the queued one, not doubles it
+  expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
+  expect(m.store.get('outbox')).toEqual([])
+})
+
+test("/cg-stats: an answer with isError is a failure too, with the server's words", async ($, on) => {
+  const { vault, m, stats } = await statsRig($, on)
+  vault.fail = () => true
+  vault.failure = 'isError'
+  await stats()
+  expect(m.toasts[0]).toContain('vault locked')
+  expect((m.store.get('outbox') as unknown[]).length).toBe(1)
+})
+
+test('/cg-stats: what waited from an earlier day goes first', async ($, on) => {
+  const { vault, m, stats, today } = await statsRig($, on)
+  const old = { path: notePath('PC-1', '2026-01-01'), content: 'old' }
+  await m.store.set('outbox', [old])
+  const duringSend: unknown[] = []
+  vault.onWrite = () => duringSend.push(m.store.get('outbox'))
+  const { text } = await stats()
+  expect(duringSend[0]).toEqual([old, { path: notePath('PC-1', today()), content: NOTE }]) // saved before the first send, in case the send is cut short
+  expect(vault.calls.slice(0, 2)).toEqual([`obsidian vault_write ${old.path}`, `obsidian vault_write ${notePath('PC-1', today())}`])
+  expect(vault.files.get(old.path)).toBe('old')
+  expect(m.store.get('outbox')).toEqual([])
+  expect(text).toContain(T.cgStatsSent(2))
+})
+
+test('/cg-stats: the vault dies after the first of two: only the rest stays queued', async ($, on) => {
+  const { vault, m, stats, today } = await statsRig($, on)
+  const old = { path: notePath('PC-1', '2026-01-01'), content: 'old' }
+  await m.store.set('outbox', [old])
+  vault.fail = () => vault.files.size === 1
+  const { text } = await stats()
+  expect(vault.files.has(old.path)).toBe(true)
+  expect(m.store.get('outbox')).toEqual([{ path: notePath('PC-1', today()), content: NOTE }])
+  expect(text).toContain(T.cgStatsQueued(1))
+})
+
+test('/cg-stats: the summary cannot be built: the note is safe, the owner is told', async ($, on) => {
+  const { vault, m, stats, today } = await statsRig($, on)
+  vault.fail = tool => tool === 'vault_list'
+  const { text } = await stats()
+  expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
+  expect(m.store.get('outbox')).toEqual([])
+  expect(m.toasts[0]).toContain('cg-stats-summary')
+  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-stats-summary' })
+  expect(text).toContain(T.cgStatsSummaryFailed)
+})
+
+test('/cg-stats: cg.py fails: a toast, nothing is queued or sent', async ($, on) => {
+  const { vault, m, stats } = await statsRig($, on, () => failed('PermissionError: x'))
+  expect((await stats()).text).toBe(T.cgStatsFailed)
+  expect(m.toasts).toEqual([T.failed('cg-stats', 'PermissionError: x')])
+  expect(m.store.get('outbox')).toBeUndefined()
+  expect(vault.calls).toEqual([])
+})
+
+test('/cg-stats: no computer name, no note', async ($, on) => {
+  const { vault, m, stats } = await statsRig($, on, undefined, {})
+  expect((await stats()).text).toBe(T.cgStatsFailed)
+  expect(m.toasts).toEqual([T.failed('cg-stats', T.noHost)])
+  expect(vault.calls).toEqual([])
 })
