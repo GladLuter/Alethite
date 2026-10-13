@@ -6,6 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import memdb
+from handoff import build_handoff
 from transcripts import find_session, last_usage, project_key
 
 
@@ -37,11 +38,21 @@ def _last_turn(a):
     return (main and last_usage(main)) or {'tokens': None, 'at': None, 'model': None}
 
 
+def _handoff(a):
+    text = build_handoff(a.projects, a.session, a.today, a.memory_dir)
+    folder = os.path.join(os.path.dirname(a.db), 'handoffs')  # next to the index: ~/.claude/cacheguard/handoffs by default
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, a.session + '.md')
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:  # written before the answer: the owner's insurance if clear/submit fails
+        f.write(text)
+    return {'text': text, 'path': path}
+
+
 def _parser():
     p = _Parser(prog='cg.py')
     p.add_argument('--db', default=memdb.DB_PATH)
     p.add_argument('--projects', default=os.path.join(os.path.expanduser('~'), '.claude', 'projects'))
-    sub = p.add_subparsers(dest='cmd', required=True)  # handoff (Task 5) and stats (Task 11) are added here
+    sub = p.add_subparsers(dest='cmd', required=True)  # stats (Task 11) is added here
 
     def add(name, fn):
         s = sub.add_parser(name)
@@ -60,6 +71,10 @@ def _parser():
     s.add_argument('--conv', required=True)
     s.add_argument('--pos', type=int, required=True)
     add('last-turn', _last_turn).add_argument('--session', required=True)
+    s = add('handoff', _handoff)
+    s.add_argument('--session', required=True)
+    s.add_argument('--today', required=True)
+    s.add_argument('--memory-dir')
     return p
 
 
