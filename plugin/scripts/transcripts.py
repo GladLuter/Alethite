@@ -49,8 +49,8 @@ def _typed(text, kind):
     """What a person (or, in a subagent, the parent agent) wrote, without injected parts."""
     if not isinstance(text, str):
         return []
-    text = strip_handoff(text)
-    text = '' if INJECTED.match(text) else _REMINDER.sub('', text).strip()
+    text = _REMINDER.sub('', strip_handoff(text)).strip()
+    text = '' if INJECTED.match(text) else text  # what is left still starts like injected text: an unclosed reminder, a slash command
     return [(kind, text, None)] if text else []
 
 
@@ -105,7 +105,7 @@ def read_records(path, start=0):
 
 
 def find_session(projects, session_id):
-    """(main transcript or None, its subagent transcripts)."""
+    """(main transcript or None, all its subagent transcripts, nested workflow agents included)."""
     main, subs = None, []
     try:
         dirs = sorted(os.listdir(lp(projects)))
@@ -115,8 +115,9 @@ def find_session(projects, session_id):
         f = os.path.join(projects, d, session_id + '.jsonl')
         main = main or (f if os.path.isfile(lp(f)) else None)
         sd = os.path.join(projects, d, session_id, 'subagents')
-        if os.path.isdir(lp(sd)):
-            subs += [os.path.join(sd, n) for n in sorted(os.listdir(lp(sd))) if n.startswith('agent-') and n.endswith('.jsonl')]
+        top = lp(sd)  # os.walk yields nothing for a missing folder; dp[len(top):] turns the \\?\ form back into the caller's
+        subs += sorted(os.path.join(sd + dp[len(top):], n) for dp, _, ns in os.walk(top)
+                       for n in ns if n.startswith('agent-') and n.endswith('.jsonl'))
     return main, subs
 
 

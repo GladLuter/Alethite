@@ -72,6 +72,18 @@ class TranscriptsTest(unittest.TestCase):
         self.assertEqual(strip_handoff('a[cg-handoff]x'), 'a')
         self.assertEqual(strip_handoff('a[cg-handoff]x[/cg-handoff]b'), 'ab')
 
+    def test_leading_reminder_keeps_owner_text(self):
+        rem = '<system-reminder>r</system-reminder>\n'
+        path = self.write('s.jsonl', [
+            u(rem + 'печатный текст один'),
+            u([text(rem + 'печатный текст два')]),
+            {'type': 'attachment', 'timestamp': TS, 'cwd': 'C:\\r', 'attachment': {'type': 'queued_command', 'prompt': rem + 'печатный текст три'}},
+            u('[cg-handoff]\nстарое\n[/cg-handoff]\n\n' + rem + 'печатный текст четыре'),
+            u(rem + '<command-name>/clear</command-name>'),
+            u('<system-reminder>без конца'),
+        ])
+        self.assertEqual(self.owner_texts(path), ['печатный текст один', 'печатный текст два', 'печатный текст три', 'печатный текст четыре'])
+
     def test_partial_last_line(self):
         data = jsonl([u('раз'), u('два'), u('три')])
         first_two = len(jsonl([u('раз'), u('два')]))
@@ -127,6 +139,10 @@ class TranscriptsTest(unittest.TestCase):
         self.assertEqual(find_session(self.dir.name, 'S'), (main, [sub]))
         self.assertEqual(find_session(self.dir.name, 'nope'), (None, []))
         self.assertEqual(find_session(os.path.join(self.dir.name, 'нет'), 'S'), (None, []))
+        w1, w2 = (self.write('P/W/subagents/' + n, [u('сделай Z')]) for n in ('agent-w1.jsonl', 'workflows/wf_1/agent-w2.jsonl'))
+        self.write('P/W/subagents/workflows/wf_1/notes.jsonl', [u('не агент')])
+        self.assertEqual(find_session(self.dir.name, 'W'), (None, [w1, w2]))
+        self.assertEqual([r['kind'] for r in read_records(w2)[0]], ['task'])
         self.assertEqual(last_usage(main), {'tokens': 1 + 2 + 3 + 4, 'at': at, 'model': 'claude-opus-5-5'})
         old = self.write('P/T.jsonl', [a([text('один')], usage=u1), u('x' * 300000)])
         self.assertIsNone(last_usage(old))  # the only call is outside the last 256 KB
