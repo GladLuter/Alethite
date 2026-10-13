@@ -38,4 +38,19 @@ export const T = {
   cgBandOn: 'cg-band: полоса показана принудительно.',
   cgBandOff: 'cg-band: полоса снова по порогам.',
   cgBandFailed: 'cg-band: не вышло, причина в строке состояния.',
+
+  // errors: the toast of an owner-started action; cg.py could not be started at all
+  failed: (where: string, msg: string) => `CacheGuard (${where}): ${msg}`,
+  pythonMissing: (python: string) => `Не удалось запустить «${python}»: команды нет или она не ответила вовремя. Проверьте настройку «Команда Python».`,
+
+  // /cg-health
+  cgHealthDescription: 'Проверить, что мод, индекс и память работают',
+  cgHealthFailed: 'cg-health: не вышло, причина во всплывающем сообщении.',
+  healthVersion: (version: string) => `Claude Code ${version}`,
+  healthIndex: (i: Record<string, unknown>) => `Индекс: ${i.convs} чатов, ${i.rows} записей, ${i.size_mb} МБ, обновлён ${i.last_update ?? 'ни разу'} (${i.db})`,
+  healthIndexError: (msg: string) => `Индекс: ошибка — ${msg}`,
+  healthMemory: (dir: string, facts: number) => `Память: ${facts} файлов в ${dir}`,
+  memoryNotLoaded: 'Память: папка auto-memory в этот чат не загружена',
+  healthLastError: (when: string, where: string, msg: string) => `Последняя ошибка: ${when}, ${where} — ${msg}`,
+  healthNoError: 'Последняя ошибка: нет',
 }
