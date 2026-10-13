@@ -7,10 +7,17 @@ BASELINE = {'usd_per_owner_msg': 5.20, 'rewrite_share': 0.417, 'idle60_share': 0
             'weekly_limit': '70% за 4,5 дня (2026-10-13)'}
 
 
-def metrics(projects, conn, since, until=None):
-    """Figures for the API calls on/after `since` (and before `until`) in the transcripts under `projects`."""
-    memdb.update(conn, projects)  # the owner count comes from the index
+def metrics(projects, conn, since, until=None, errors=None):
+    """Figures for the API calls on/after `since` (and before `until`) in the transcripts under `projects`.
+    What would make them wrong (unreadable transcripts, models without a price) is appended to the `errors` list, as the index reports its own."""
+    errors = [] if errors is None else errors
+    errors += memdb.update(conn, projects)['errors']  # the owner count comes from the index
     R = cc_token_audit.analyze(projects, since, until=until)
+    meta = R['meta']
+    if meta['files_unreadable']:
+        errors.append({'path': 'audit', 'error': 'files_unreadable: %d' % meta['files_unreadable']})
+    if meta['unpriced_model_calls']:
+        errors.append({'path': 'audit', 'error': 'unpriced_model_calls: ' + ', '.join('%s=%d' % kv for kv in meta['unpriced_model_calls'].items())})
     cost = R['by_kind'].get('main', {}).get('cost_usd', 0)
     n = memdb.owner_count(conn, since, until)
     main = R['stats']['main']  # {'chains': 0} when the period holds no main chat

@@ -55,8 +55,9 @@ def _day(s):  # argparse reports a ValueError from a type function as a bad argu
 
 
 def _stats(a):
-    m = stats.metrics(a.projects, memdb.connect(a.db), a.since, a.until)
-    return {'metrics': m, 'note': stats.note_markdown(m, a.host, a.today, json.loads(a.limits), a.rule_chars)}
+    errors = []
+    m = stats.metrics(a.projects, memdb.connect(a.db), a.since, a.until, errors)
+    return {'metrics': m, 'note': stats.note_markdown(m, a.host, a.today, json.loads(a.limits), a.rule_chars), 'errors': errors}
 
 
 def _parser():

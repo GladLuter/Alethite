@@ -4,6 +4,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+import cg
 from memdb import connect
 from stats import metrics, note_markdown
 
@@ -90,6 +92,35 @@ class StatsTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual((out['metrics']['owner_msgs'], out['metrics']['until']), (2, '2026-10-14'))
         self.assertIn('host: ПК-1', out['note'])
+        self.assertEqual(out['errors'], [])
+
+    def stats_out(self):  # in this process, so that open() can be patched
+        a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'stats', '--since', '2026-10-01', '--host', 'h', '--today', '2026-10-13',
+                                     '--limits', '[]', '--rule-chars', '0'])
+        with mock.patch('cg.memdb.connect', return_value=self.conn):  # the test closes it; cg.py leaves that to the process exit
+            return a.fn(a)
+
+    def test_unreadable_transcript_is_reported_with_the_figures(self):
+        real_open = open
+
+        def deny(path, *a, **k):  # the main chat cannot be opened: neither by the index nor by the audit
+            if str(path).endswith('S.jsonl'):
+                raise PermissionError(13, 'denied', path)
+            return real_open(path, *a, **k)
+
+        with mock.patch('builtins.open', deny):
+            out = self.stats_out()
+        self.assertEqual(out['metrics']['owner_msgs'], 0)  # the undercount the errors warn about
+        self.assertIn('usd_per_owner_msg', out['metrics'])
+        self.assertIn('host: h', out['note'])
+        index, audit = out['errors']
+        self.assertTrue(index['path'].endswith('S.jsonl') and index['error'].startswith('PermissionError'))
+        self.assertEqual(audit, {'path': 'audit', 'error': 'files_unreadable: 1'})
+
+    def test_unpriced_model_is_reported(self):
+        self.write('P/T.jsonl', [owner_line('x', '2026-10-06T10:00:00.000Z'), dict(call('u1', '2026-10-06T10:00:01.000Z', IN_1M), message={
+            'id': 'u1', 'model': 'mystery-9', 'role': 'assistant', 'usage': IN_1M, 'content': []})])
+        self.assertEqual(self.stats_out()['errors'], [{'path': 'audit', 'error': 'unpriced_model_calls: mystery-9=1'}])
 
     def test_cli_bad_date_is_json_error(self):
         code, out = self.run_cg('--since', 'вчера', '--host', 'h', '--today', '2026-10-13', '--limits', '[]', '--rule-chars', '0')

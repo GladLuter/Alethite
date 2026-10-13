@@ -132,14 +132,15 @@ const runStats = async ($: EngineInterface, python: string, days: number) => {
   const since = new Date(Date.parse(today) - days * 86_400_000).toISOString().slice(0, 10)
   const limits = usage.rateLimits.map(({ kind, percentUsed }) => ({ kind, percentUsed }))
   const args = ['stats', '--since', since, '--host', host, '--today', today, '--limits', JSON.stringify(limits), '--rule-chars', String(T.memoryRule.length)]
-  const { note } = (await runCg($, python, args, 600_000)) as { note: string }
+  const { note, errors } = (await runCg($, python, args, 600_000)) as { note: string; errors: IndexError[] }
+  await indexErrors($, 'cg-stats', errors, true) // an unreadable transcript lowers the figures; the note is written all the same
   const path = notePath(host, today)
   // one note per computer and day: a note still waiting for this day is replaced, not doubled
   const queue = [...(((await $.store.get('outbox')) as Note[] | undefined) ?? []).filter(n => n.path !== path), { path, content: note }]
   await $.store.set('outbox', queue) // kept before sending, so nothing is lost if the send is cut short
   const sent = await flush(queue, async n => void (await obsidian($, 'vault_write', n)))
   await $.store.set('outbox', sent.left)
-  const figures = note.replace(/^---\n[\s\S]*?\n---\n/, '').trim() // the frontmatter is for the vault
+  const figures = note.replace(/^---\n[\s\S]*?\n---\n/, '').trim() + (errors.length ? `\n\n${T.cgStatsErrors(errors.length)}` : '') // the frontmatter is for the vault
   if (sent.error !== undefined) {
     await fail($, 'cg-stats', sent.error)
     return `${figures}\n\n${T.cgStatsQueued(sent.left.length)}`

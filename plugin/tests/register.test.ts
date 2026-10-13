@@ -391,7 +391,7 @@ const fakeVault = (on: any) => {
   return v
 }
 
-const statsRig = async ($: any, on: any, answer: (a: string[]) => unknown = () => ran(JSON.stringify({ metrics: {}, note: NOTE })), env: Record<string, string> = { COMPUTERNAME: 'PC-1' }) => {
+const statsRig = async ($: any, on: any, answer: (a: string[]) => unknown = () => ran(JSON.stringify({ metrics: {}, note: NOTE, errors: [] })), env: Record<string, string> = { COMPUTERNAME: 'PC-1' }) => {
   mock.env(on, env)
   const vault = fakeVault(on)
   const m = await started($, on, a => (a[0] === 'stats' ? answer(a) : ran('{}')))
@@ -501,6 +501,17 @@ test('/cg-stats: the summary cannot be built: the note is safe, the owner is tol
   expect(m.toasts[0]).toContain('cg-stats-summary')
   expect(m.store.get('lastError')).toMatchObject({ where: 'cg-stats-summary' })
   expect(text).toContain(T.cgStatsSummaryFailed)
+})
+
+test('/cg-stats: cg.py reports what made the figures wrong: a toast, /cg-health, a word in the reply; the note is written all the same', async ($, on) => {
+  const errors = [{ path: 'audit', error: 'files_unreadable: 2' }]
+  const { vault, m, stats, today } = await statsRig($, on, () => ran(JSON.stringify({ metrics: {}, note: NOTE, errors })))
+  const { text } = await stats()
+  expect(m.toasts).toEqual([T.indexErrors(1)])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-stats', msg: T.indexErrorFirst(1, 'audit', 'files_unreadable: 2') })
+  expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
+  expect(text).toContain(T.cgStatsErrors(1))
+  expect(text).toContain(T.cgStatsSent(1))
 })
 
 test('/cg-stats: cg.py fails: a toast, nothing is queued or sent', async ($, on) => {
