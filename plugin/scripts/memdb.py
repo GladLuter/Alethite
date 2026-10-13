@@ -1,0 +1,134 @@
+import datetime
+import os
+import re
+import sqlite3
+import time
+from redact import redact
+from transcripts import lp, project_key, read_records
+
+DB_PATH = os.path.join(os.path.expanduser('~'), '.claude', 'cacheguard', 'index.db')
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, size INTEGER, offset INTEGER);
+CREATE TABLE IF NOT EXISTS convs(conv TEXT PRIMARY KEY, parent TEXT, first_ts TEXT, last_ts TEXT);
+CREATE TABLE IF NOT EXISTS conv_projects(conv TEXT, project TEXT, PRIMARY KEY(conv, project));
+CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
+  text, conv UNINDEXED, pos UNINDEXED, ts UNINDEXED, kind UNINDEXED,
+  tokenize='unicode61 remove_diacritics 2');
+"""
+_SEARCH = """
+SELECT conv, pos, ts, kind, snippet(chunks, 0, '«', '»', '…', 24),
+       (SELECT parent FROM convs WHERE convs.conv = chunks.conv)
+FROM chunks WHERE chunks MATCH :q AND (:p IS NULL
+  OR conv IN (SELECT conv FROM conv_projects WHERE project = :p)
+  OR conv IN (SELECT c.conv FROM convs c JOIN conv_projects p ON p.conv = c.parent WHERE p.project = :p))
+ORDER BY bm25(chunks) * CASE WHEN kind IN ('sub', 'tool') THEN 0.5 ELSE 1.0 END LIMIT :n
+"""
+
+
+def connect(path=DB_PATH):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.executescript(_SCHEMA)
+    return conn
+
+
+def _file(conn, path, conv, parent):
+    """Index the new lines of one transcript in one transaction. Rows added, or None if there is nothing to read."""
+    try:
+        size = os.path.getsize(path)
+        old = conn.execute('SELECT size, offset FROM files WHERE path = ?', (path,)).fetchone()
+        if old and size == old[0]:
+            return None
+        if old and size < old[0]:  # shortcut: only a shorter file counts as rewritten; same-size or longer rewrites are not noticed
+            for t in ('chunks', 'conv_projects', 'convs'):
+                conn.execute('DELETE FROM %s WHERE conv = ?' % t, (conv,))
+            old = None
+        recs, off = read_records(path, old[1] if old else 0)
+    except OSError:  # vanished or locked between the walk and the read: next run tries again
+        conn.rollback()
+        return None
+    # the last sub text of a subagent is its report; a newer one demotes the previous report
+    last = max((i for i, r in enumerate(recs) if r['kind'] == 'sub'), default=None)
+    if last is not None and old:
+        conn.execute("UPDATE chunks SET kind = 'sub' WHERE conv = ? AND kind = 'report'", (conv,))
+    conn.executemany('INSERT INTO chunks(text, conv, pos, ts, kind) VALUES(?, ?, ?, ?, ?)',
+                     [(redact(r['text']), conv, r['pos'], r['ts'], 'report' if i == last else r['kind']) for i, r in enumerate(recs)])
+    conn.executemany('INSERT OR IGNORE INTO conv_projects VALUES(?, ?)', {(conv, project_key(r['cwd'])) for r in recs if r['cwd']})
+    ts = [r['ts'] for r in recs if r['ts']]
+    if recs:
+        conn.execute('INSERT INTO convs VALUES(?, ?, ?, ?) ON CONFLICT(conv) DO UPDATE SET '
+                     'first_ts = min(first_ts, excluded.first_ts), last_ts = max(last_ts, excluded.last_ts)',
+                     (conv, parent, min(ts, default=''), max(ts, default='')))
+    conn.execute('INSERT OR REPLACE INTO files VALUES(?, ?, ?)', (path, size, off))
+    conn.commit()
+    return len(recs)
+
+
+def update(conn, projects, rebuild=False):
+    t0, files, rows = time.perf_counter(), 0, 0
+    if rebuild:  # also drops the text of transcripts that are no longer on disk
+        for t in ('files', 'convs', 'conv_projects', 'chunks'):
+            conn.execute('DELETE FROM ' + t)
+        conn.commit()
+    top = lp(projects)
+    for dp, _, names in os.walk(top):
+        rel = dp[len(top):].split(os.sep)
+        # a subagent file lies under <session id>\subagents\ (nested workflow agents deeper), the session id is its parent
+        parent = rel[rel.index('subagents') - 1] if 'subagents' in rel else ''
+        for n in names:
+            if n.endswith('.jsonl'):
+                added = _file(conn, os.path.join(dp, n), n[:-len('.jsonl')], parent)
+                if added is not None:
+                    files, rows = files + 1, rows + added
+    conn.execute("INSERT OR REPLACE INTO meta VALUES('last_update', ?)", (datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),))
+    conn.commit()
+    return {'files': files, 'rows': rows, 'convs': conn.execute('SELECT count(*) FROM convs').fetchone()[0],
+            'seconds': time.perf_counter() - t0}
+
+
+def status(conn):
+    db = conn.execute('PRAGMA database_list').fetchone()[2]
+    last = conn.execute("SELECT value FROM meta WHERE key = 'last_update'").fetchone()
+    return {'db': db, 'convs': conn.execute('SELECT count(*) FROM convs').fetchone()[0],
+            'rows': conn.execute('SELECT count(*) FROM chunks').fetchone()[0],
+            'last_update': last[0] if last else None, 'size_mb': round(os.path.getsize(db) / 2 ** 20, 2)}
+
+
+def search(conn, query, project=None, limit=8, budget=7000):
+    """Hits containing all the words of the query, else any of them; best first, cut at `limit` hits or `budget` snippet characters."""
+    words = ['"%s"' % w for w in re.findall(r'\w+', query)]
+    rows = []
+    for q in ((' '.join(words), ' OR '.join(words)) if words else ()):
+        rows = conn.execute(_SEARCH, {'q': q, 'p': project, 'n': limit}).fetchall()
+        if rows:
+            break
+    out, used = [], 0
+    for conv, pos, ts, kind, snippet, parent in rows:
+        used += len(snippet)
+        if used > budget:
+            break
+        out.append({'conv': conv, 'parent': parent or '', 'ts': ts, 'kind': kind, 'pos': pos, 'snippet': snippet})
+    return out
+
+
+def expand(conn, conv, pos, radius=6, budget=7000):
+    """The records around `pos` (±radius), in order; when over budget the ones farthest from `pos` are dropped first."""
+    # shortcut: expand scans the FTS table by conv; add a plain msgs table with an index if the index grows past ~1M rows
+    rows = conn.execute('SELECT pos, ts, kind, substr(text, 1, 1500) FROM chunks WHERE conv = ? ORDER BY pos, rowid', (conv,)).fetchall()
+    hit = [i for i, r in enumerate(rows) if r[0] == pos]
+    if not hit:
+        return []
+    lo, hi = hit[0], hit[-1]
+    keep, used = [], 0
+    for i in sorted(range(max(0, lo - radius), min(len(rows), hi + radius + 1)), key=lambda i: max(lo - i, i - hi, 0)):
+        used += len(rows[i][3])
+        if used > budget:
+            break
+        keep.append(i)
+    return [dict(zip(('pos', 'ts', 'kind', 'text'), rows[i])) for i in sorted(keep)]
+
+
+def owner_count(conn, since, until=None):
+    return conn.execute("SELECT count(*) FROM chunks WHERE kind = 'owner' AND ts >= ? AND (? IS NULL OR ts < ?)",
+                        (since, until, until)).fetchone()[0]
