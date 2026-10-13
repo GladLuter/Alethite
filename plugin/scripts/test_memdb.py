@@ -1,7 +1,10 @@
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
+from unittest import mock
+import memdb
 from memdb import connect, expand, owner_count, search, status, update
 from transcripts import project_key
 
@@ -22,7 +25,8 @@ class MemdbTest(unittest.TestCase):
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
         self.projects = os.path.join(d.name, 'projects')
-        self.conn = connect(os.path.join(d.name, 'db', 'index.db'))  # connect creates the folder
+        self.db = os.path.join(d.name, 'db', 'index.db')
+        self.conn = connect(self.db)  # connect creates the folder
         self.addCleanup(self.conn.close)
 
     def write(self, name, objs, mode='wb'):
@@ -46,7 +50,7 @@ class MemdbTest(unittest.TestCase):
         self.write('P/S.jsonl', [owner_line('первая'), claude_line('ответ')])
         s = self.update()
         self.assertGreater(s['rows'], 0)
-        self.assertEqual((s['files'], s['rows'], s['convs']), (1, 2, 1))
+        self.assertEqual((s['files'], s['rows'], s['convs'], s['errors']), (1, 2, 1, []))
         self.write('P/S.jsonl', [owner_line('добавка')], 'ab')
         s2 = self.update()
         self.assertEqual((s2['files'], s2['rows']), (1, 1))
@@ -54,8 +58,92 @@ class MemdbTest(unittest.TestCase):
         st = status(self.conn)
         self.assertEqual((st['convs'], st['rows']), (1, 3))
         self.assertTrue(st['last_update'] and os.path.isfile(st['db']) and st['size_mb'] > 0)
-        self.assertEqual(self.update(rebuild=True)['rows'], 3)
+        s3 = self.update(rebuild=True)  # re-reads the file from the start; its old rows are replaced, not doubled
+        self.assertEqual((s3['files'], s3['rows'], s3['errors']), (1, 3, []))
         self.assertEqual(status(self.conn)['rows'], 3)
+
+    def test_rebuild_keeps_deleted_transcripts(self):
+        self.write('P/A.jsonl', [owner_line('альфа здесь'), owner_line('и ещё альфа')])
+        b = self.write('P/B.jsonl', [owner_line('бета здесь')])
+        self.update()
+        os.remove(b)  # Claude Code cleaned it up; the index must remember it
+        s = self.update(rebuild=True)
+        self.assertEqual((s['files'], s['rows'], s['convs']), (1, 2, 2))
+        self.assertEqual((self.rows_of('A'), self.rows_of('B')), (2, 1))
+        self.assertEqual(search(self.conn, 'бета')[0]['conv'], 'B')
+        with self.assertRaises(OSError):  # a wrong folder must not wipe anything
+            update(self.conn, os.path.join(self.projects, 'нет'), rebuild=True)
+        self.assertEqual(status(self.conn)['rows'], 3)
+
+    def test_missing_root_raises_and_keeps_last_update(self):
+        with self.assertRaises(OSError):
+            update(self.conn, os.path.join(self.projects, 'нет'))
+        self.assertIsNone(status(self.conn)['last_update'])
+
+    def test_unreadable_file_is_reported_and_retried(self):
+        for n in ('good', 'bad', 'gone'):
+            self.write('P/%s.jsonl' % n, [owner_line('текст ' + n)])
+        real = memdb.read_records
+
+        def fake(path, start=0):
+            if os.path.basename(path) == 'bad.jsonl':
+                raise PermissionError(13, 'нет доступа')
+            if os.path.basename(path) == 'gone.jsonl':
+                raise FileNotFoundError(2, 'исчез')  # vanished after the walk: not an error
+            return real(path, start)
+
+        with mock.patch.object(memdb, 'read_records', fake):
+            s = self.update()
+        self.assertEqual((s['files'], s['rows']), (1, 1))
+        self.assertEqual([(os.path.basename(e['path']), e['error'].split(':')[0]) for e in s['errors']], [('bad.jsonl', 'PermissionError')])
+        self.assertEqual((self.rows_of('good'), self.rows_of('bad'), self.rows_of('gone')), (1, 0, 0))
+        s2 = self.update()
+        self.assertEqual((s2['files'], s2['rows'], s2['errors']), (2, 2, []))
+
+        def walk(top, onerror=None):  # a subfolder that cannot be listed
+            onerror(PermissionError(13, 'нет доступа', os.path.join(top, 'sub')))
+            yield top, [], []
+
+        with mock.patch.object(os, 'walk', walk):
+            s3 = self.update()
+        self.assertEqual([(os.path.basename(e['path']), e['error'].split(':')[0]) for e in s3['errors']], [('sub', 'PermissionError')])
+
+    def test_failure_mid_file_rolls_back(self):
+        self.write('P/bad.jsonl', [owner_line('раз', cwd='C:\bad'), owner_line('два', cwd='C:\bad')])
+        self.write('P/good.jsonl', [owner_line('три')])
+        real = memdb.project_key
+
+        def key(cwd):  # runs after the file's chunks are inserted
+            if cwd == 'C:\bad':
+                raise ValueError('сбой')
+            return real(cwd)
+
+        with mock.patch.object(memdb, 'project_key', key):
+            s = self.update()
+        self.assertEqual([(os.path.basename(e['path']), e['error']) for e in s['errors']], [('bad.jsonl', 'ValueError: сбой')])
+        self.assertEqual((self.rows_of('bad'), self.rows_of('good')), (0, 1))
+        self.assertFalse(self.conn.in_transaction)
+
+    def test_overlapping_updates_do_not_duplicate(self):
+        self.write('P/S.jsonl', [owner_line('раз'), owner_line('два')])
+        other = connect(self.db)  # the owner's second chat
+        self.addCleanup(other.close)
+        other.execute('PRAGMA busy_timeout = 0')  # the lock is held by this very thread: fail at once instead of waiting
+        real, nested = memdb.read_records, []
+
+        def racing(path, start=0):
+            if not nested:  # the other update runs between this one reading the offset and inserting
+                try:
+                    nested.append(update(other, self.projects))
+                except sqlite3.OperationalError as e:  # locked out, which is the point
+                    nested.append(str(e))
+            return real(path, start)
+
+        with mock.patch.object(memdb, 'read_records', racing):
+            self.update()
+        self.assertEqual(len(nested), 1)
+        self.assertEqual(self.rows_of('S'), 2)
+        self.assertEqual(update(other, self.projects)['files'], 0)
 
     def test_rewritten_file_not_duplicated(self):
         self.write('P/S.jsonl', [owner_line('одна'), owner_line('две'), owner_line('три')])

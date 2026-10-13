@@ -28,63 +28,80 @@ ORDER BY bm25(chunks) * CASE WHEN kind IN ('sub', 'tool') THEN 0.5 ELSE 1.0 END 
 
 def connect(path=DB_PATH):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, isolation_level=None)  # no implicit transactions: _file opens its own with BEGIN IMMEDIATE
     conn.executescript(_SCHEMA)
     return conn
 
 
-def _file(conn, path, conv, parent):
+def _file(conn, path, conv, parent, rebuild):
     """Index the new lines of one transcript in one transaction. Rows added, or None if there is nothing to read."""
+    conn.execute('BEGIN IMMEDIATE')  # the write lock comes before the offset is read, so overlapping updates cannot both insert the same lines
     try:
         size = os.path.getsize(path)
         old = conn.execute('SELECT size, offset FROM files WHERE path = ?', (path,)).fetchone()
-        if old and size == old[0]:
+        if old and size == old[0] and not rebuild:
+            conn.rollback()
             return None
-        if old and size < old[0]:  # shortcut: only a shorter file counts as rewritten; same-size or longer rewrites are not noticed
+        # rebuild re-reads the files found on disk; rows of transcripts that are gone stay
+        if rebuild or (old and size < old[0]):  # shortcut: only a shorter file counts as rewritten; same-size or longer rewrites are not noticed
             for t in ('chunks', 'conv_projects', 'convs'):
                 conn.execute('DELETE FROM %s WHERE conv = ?' % t, (conv,))
             old = None
         recs, off = read_records(path, old[1] if old else 0)
-    except OSError:  # vanished or locked between the walk and the read: next run tries again
+        # the last sub text of a subagent is its report; a newer one demotes the previous report
+        last = max((i for i, r in enumerate(recs) if r['kind'] == 'sub'), default=None)
+        if last is not None and old:
+            conn.execute("UPDATE chunks SET kind = 'sub' WHERE conv = ? AND kind = 'report'", (conv,))
+        conn.executemany('INSERT INTO chunks(text, conv, pos, ts, kind) VALUES(?, ?, ?, ?, ?)',
+                         [(redact(r['text']), conv, r['pos'], r['ts'], 'report' if i == last else r['kind']) for i, r in enumerate(recs)])
+        conn.executemany('INSERT OR IGNORE INTO conv_projects VALUES(?, ?)', {(conv, project_key(r['cwd'])) for r in recs if r['cwd']})
+        ts = [r['ts'] for r in recs if r['ts']]
+        if recs:
+            conn.execute('INSERT INTO convs VALUES(?, ?, ?, ?) ON CONFLICT(conv) DO UPDATE SET '
+                         'first_ts = min(first_ts, excluded.first_ts), last_ts = max(last_ts, excluded.last_ts)',
+                         (conv, parent, min(ts, default=''), max(ts, default='')))
+        conn.execute('INSERT OR REPLACE INTO files VALUES(?, ?, ?)', (path, size, off))
+        conn.commit()
+        return len(recs)
+    except BaseException:  # no half-written file is ever left in an open transaction
         conn.rollback()
-        return None
-    # the last sub text of a subagent is its report; a newer one demotes the previous report
-    last = max((i for i, r in enumerate(recs) if r['kind'] == 'sub'), default=None)
-    if last is not None and old:
-        conn.execute("UPDATE chunks SET kind = 'sub' WHERE conv = ? AND kind = 'report'", (conv,))
-    conn.executemany('INSERT INTO chunks(text, conv, pos, ts, kind) VALUES(?, ?, ?, ?, ?)',
-                     [(redact(r['text']), conv, r['pos'], r['ts'], 'report' if i == last else r['kind']) for i, r in enumerate(recs)])
-    conn.executemany('INSERT OR IGNORE INTO conv_projects VALUES(?, ?)', {(conv, project_key(r['cwd'])) for r in recs if r['cwd']})
-    ts = [r['ts'] for r in recs if r['ts']]
-    if recs:
-        conn.execute('INSERT INTO convs VALUES(?, ?, ?, ?) ON CONFLICT(conv) DO UPDATE SET '
-                     'first_ts = min(first_ts, excluded.first_ts), last_ts = max(last_ts, excluded.last_ts)',
-                     (conv, parent, min(ts, default=''), max(ts, default='')))
-    conn.execute('INSERT OR REPLACE INTO files VALUES(?, ?, ?)', (path, size, off))
-    conn.commit()
-    return len(recs)
+        raise
+
+
+def _error(path, e):
+    return {'path': path, 'error': '%s: %s' % (type(e).__name__, e)}
 
 
 def update(conn, projects, rebuild=False):
-    t0, files, rows = time.perf_counter(), 0, 0
-    if rebuild:  # also drops the text of transcripts that are no longer on disk
-        for t in ('files', 'convs', 'conv_projects', 'chunks'):
-            conn.execute('DELETE FROM ' + t)
-        conn.commit()
+    """Index what is new in the transcripts under `projects`; with `rebuild`, re-read every file found there from the start.
+    A missing or unreadable `projects` raises. Files that could not be read are listed in the result's 'errors' and retried next time."""
+    t0, files, rows, errors = time.perf_counter(), 0, 0, []
     top = lp(projects)
-    for dp, _, names in os.walk(top):
+
+    def walk_error(e):
+        if e.filename == top:
+            raise e
+        errors.append(_error(e.filename, e))
+
+    for dp, _, names in os.walk(top, onerror=walk_error):
         rel = dp[len(top):].split(os.sep)
         # a subagent file lies under <session id>\subagents\ (nested workflow agents deeper), the session id is its parent
         parent = rel[rel.index('subagents') - 1] if 'subagents' in rel else ''
         for n in names:
             if n.endswith('.jsonl'):
-                added = _file(conn, os.path.join(dp, n), n[:-len('.jsonl')], parent)
+                path = os.path.join(dp, n)
+                try:
+                    added = _file(conn, path, n[:-len('.jsonl')], parent, rebuild)
+                except FileNotFoundError:  # vanished between the walk and the open
+                    continue
+                except Exception as e:
+                    errors.append(_error(path, e))
+                    continue
                 if added is not None:
                     files, rows = files + 1, rows + added
     conn.execute("INSERT OR REPLACE INTO meta VALUES('last_update', ?)", (datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),))
-    conn.commit()
     return {'files': files, 'rows': rows, 'convs': conn.execute('SELECT count(*) FROM convs').fetchone()[0],
-            'seconds': time.perf_counter() - t0}
+            'seconds': time.perf_counter() - t0, 'errors': errors}
 
 
 def status(conn):
