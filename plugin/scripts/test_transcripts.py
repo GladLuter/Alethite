@@ -84,6 +84,10 @@ class TranscriptsTest(unittest.TestCase):
         ])
         self.assertEqual(self.owner_texts(path), ['печатный текст один', 'печатный текст два', 'печатный текст три', 'печатный текст четыре'])
 
+    def test_interrupt_markers_are_not_owner(self):
+        path = self.write('s.jsonl', [u('[Request interrupted by user]'), u('[Request interrupted by user for tool use]'), u('продолжай')])
+        self.assertEqual(self.owner_texts(path), ['продолжай'])
+
     def test_partial_last_line(self):
         data = jsonl([u('раз'), u('два'), u('три')])
         first_two = len(jsonl([u('раз'), u('два')]))

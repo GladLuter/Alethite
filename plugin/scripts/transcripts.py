@@ -50,7 +50,7 @@ def _typed(text, kind):
     if not isinstance(text, str):
         return []
     text = _REMINDER.sub('', strip_handoff(text)).strip()
-    text = '' if INJECTED.match(text) else text  # what is left still starts like injected text: an unclosed reminder, a slash command
+    text = '' if INJECTED.match(text) or text.startswith('[Request interrupted by user') else text  # what is left still starts like injected text: an unclosed reminder, a slash command, an Esc interrupt
     return [(kind, text, None)] if text else []
 
 
