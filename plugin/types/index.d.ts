@@ -17,7 +17,7 @@ declare module 'claude-code' {
       forcedId: string
       // the band is showing the model picker instead of its two buttons
       isArmed: boolean
-      // a new-worker launch is running (used from Task 8)
+      // a new-worker launch is running: the band shows T.busy and ignores presses
       isBusy: boolean
     }
   }

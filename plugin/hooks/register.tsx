@@ -6,11 +6,14 @@ import { bandLines, isStale, modelChoices, statusText } from './guard'
 import { healthLines, message, parseCg } from './py'
 import type { LastError } from './py'
 import { T } from './text'
+import { launch } from './worker'
+import type { LaunchIO } from './worker'
 
 const snap = atom({ plugin: 'cacheguard', key: 'snap' } as const, null)
 const hiddenId = atom({ plugin: 'cacheguard', key: 'hiddenId' } as const, '')
 const forcedId = atom({ plugin: 'cacheguard', key: 'forcedId' } as const, '')
 const isArmed = atom({ plugin: 'cacheguard', key: 'isArmed' } as const, false)
+const isBusy = atom({ plugin: 'cacheguard', key: 'isBusy' } as const, false)
 
 // The helpers below take `$` and so stay in this file: the loader follows `$` only into functions declared here, never across an import.
 
@@ -77,6 +80,49 @@ const refresh = async ($: EngineInterface, python: string) => {
   }
   $.ui.status(statusText(fresh.tokens, fresh.at, now))
   await update($, snap, () => fresh)
+}
+
+// "Новый работник": binds launch() to the engine through closures made here. One launch at a time.
+const startWorker = async ($: EngineInterface, python: string, model: string | null) => {
+  let wasBusy = false
+  await update($, isBusy, busy => ((wasBusy = busy), true)) // atomic: a second press before the redraw is refused here
+  if (wasBusy) return
+  try {
+    await update($, isArmed, () => false)
+    let told = '' // the last thing launch told the owner; it is the reason when the launch did not go through
+    const io: LaunchIO = {
+      draft: async () => (await $.prompt.read()).text,
+      handoff: async () => {
+        const [id, now, dir] = await Promise.all([$.session.id(), $.clock.now(), memoryDir($)])
+        const today = new Date(now - new Date(now).getTimezoneOffset() * 60_000).toISOString().slice(0, 10) // the owner's calendar day
+        return (await runCg($, python, ['handoff', '--session', id, '--today', today, ...(dir ? ['--memory-dir', dir] : [])])) as { text: string; path: string }
+      },
+      clear: () => $.command.run({ command: 'clear' }),
+      setModel: name => $.command.run({ command: 'model', args: name }),
+      submit: text => $.prompt.submit({ text, asUser: true }),
+      fill: async text => {
+        const r = await $.prompt.fill({ text })
+        if (!r.isFilled) throw new Error(r.refusal ?? 'поле ввода не приняло текст')
+      },
+      // the draft stays in the box after submit; clear it unless the owner has typed something new meanwhile
+      emptyBox: async draft => {
+        if ((await $.prompt.read()).text === draft) await $.prompt.fill({ text: '' })
+      },
+      toast: text => {
+        $.ui.toast(text)
+        told = text
+      },
+    }
+    const outcome = await launch(io, model)
+    if (outcome === 'failed' || outcome === 'dropped') await noteError($, 'launch', told)
+  } catch (err) {
+    await fail($, 'launch', err)
+  } finally {
+    // /clear changed the session id: the picker must not stay armed for the new chat
+    await update($, isArmed, () => false)
+    await update($, isBusy, () => false)
+    await guarded($, 'launch', () => refresh($, python))
+  }
 }
 
 export const register: Register = (on, options) => {
@@ -147,6 +193,7 @@ export const register: Register = (on, options) => {
     const hidden = await read($, hiddenId)
     const forced = await read($, forcedId)
     const armed = await read($, isArmed)
+    const busy = await read($, isBusy)
 
     if (s === null || e.props.hasSurvey || s.id === hidden) return next(e)
     if (!isStale(s, minTokens, idleMinutes) && s.id !== forced) return next(e)
@@ -163,7 +210,7 @@ export const register: Register = (on, options) => {
             <Text>{T.pickModel}</Text>
             <Box gap={1} flexWrap="wrap">
               {modelChoices(s.model).map(choice => (
-                <Button key={`model:${choice.model ?? 'same'}`} label={choice.label} onPress={() => $.ui.toast(T.notYet)} />
+                <Button key={`model:${choice.model ?? 'same'}`} label={choice.label} onPress={() => startWorker($, python, choice.model)} />
               ))}
               <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
             </Box>
@@ -171,7 +218,7 @@ export const register: Register = (on, options) => {
           </Box>
         ) : (
           <Box gap={1} flexWrap="wrap">
-            <Button key="launch" label={T.newWorker} onPress={() => update($, isArmed, () => true)} />
+            <Button key="launch" label={busy ? T.busy : T.newWorker} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />
             <Button key="stay" label={T.stayHere} onPress={() => update($, hiddenId, () => s.id)} />
           </Box>
         )}

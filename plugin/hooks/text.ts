@@ -28,7 +28,15 @@ export const T = {
   sameModel: (current: string) => `та же (${current})`,
   cancel: 'Отмена',
   atFilesHint: '@файлы и картинки из черновика не передаются',
-  notYet: 'Новый работник: запуск пока не подключён.',
+  busy: 'Запускаю…',
+
+  // new worker launch: every failure says what was kept and where
+  draftEmpty: 'Новый работник: черновик пуст, чат не тронут. Набери сообщение и нажми снова.',
+  handoffFailed: (why: string) => `Новый работник: передача не собрана (${why}). Чат не тронут.`,
+  clearFailed: (why: string, path: string) => `Новый работник: чат не очистился (${why}). Передача сохранена: ${path}`,
+  modelFailed: (model: string, why: string) => `Новый работник: модель «${model}» не сменилась (${why}). Передача и черновик в поле ввода: смени модель через /model и нажми Enter.`,
+  submitFailed: (why: string) => `Новый работник: отправка не удалась (${why}). Передача и черновик в поле ввода: нажми Enter.`,
+  dropped: (why: string, path: string) => `Новый работник: отправку отклонили (${why}). Передача сохранена: ${path}`,
 
   // refresh failed: the status line shows it until the next good refresh
   statusError: (msg: string) => `CacheGuard: ошибка — ${msg}`,

@@ -87,3 +87,77 @@ test('/cg-health: version, index figures, auto-memory folder with its fact count
   expect(text).toContain('3400')
   expect(text).toContain(T.healthMemory(dir, 2))
 })
+
+// The engine beneath a launch: the prompt box, /clear and /model, and the first message. `gate` holds the submit until released.
+const box = (on: any, draft: string, log: string[], gate: Promise<unknown> = Promise.resolve()) => {
+  const state = { text: draft }
+  on('prompt.read', () => ({ value: { text: state.text, cursor: 0 } }))
+  on('prompt.fill', (_: unknown, e: { text: string }) => ((state.text = e.text), { isFilled: true }))
+  on('prompt.submit', async (_: unknown, e: { text: string }) => (log.push(`submit ${e.text}`), await gate, { text: e.text }))
+  on('command.run', (_: unknown, e: { command: string; args: string }) => (log.push(`/${e.command} ${e.args}`.trim()), { text: '' }))
+  return state
+}
+const withMemory = { value: { ...usage, context: { ...usage.context, breakdown: { memoryFiles: [{ path: 'C:/mem/memory/MEMORY.md', type: 'AutoMem', tokens: 1 }] } } } }
+const handoffOk = (_: unknown, e: { argv: string[] }) => (e.argv.includes('handoff') ? ran(JSON.stringify({ text: '[cg-handoff]x[/cg-handoff]', path: 'C:/h/id.md' })) : noTurn())
+const mountBand = async ($: any) => {
+  await $.command.run({ command: 'cg-band', args: '' })
+  return $.ui.mount({ plugin: 'cacheguard', surface: 'terminal', component: 'AbovePrompt', props } as never)
+}
+
+test('new worker: /clear, /model, then handoff + draft as the first message, draft taken out of the box, band idle', async ($, on) => {
+  const log: string[] = []
+  const argvs: string[][] = []
+  wire(on, [], () => withMemory, (_, e) => (e.argv.includes('handoff') && argvs.push(e.argv), handoffOk(_, e)))
+  const state = box(on, 'продолжаем', log)
+  const ui = await mountBand($)
+
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'model:sonnet' })
+
+  expect(log).toEqual(['/clear', '/model sonnet', 'submit [cg-handoff]x[/cg-handoff]\n\nпродолжаем'])
+  expect(state.text).toBe('')
+  const a = argvs[0]!
+  expect(a.slice(a.indexOf('handoff'))).toEqual(['handoff', '--session', 'id', '--today', expect.stringMatching(/^\d{4}-\d\d-\d\d$/), '--memory-dir', 'C:/mem/memory'])
+  expect(await buttons(ui)).toEqual(['launch', 'stay']) // not armed, not busy
+  expect(await ui.findAll({ type: 'Button', text: T.busy })).toEqual([])
+})
+
+test('new worker: busy for the whole launch, the arm button is ignored meanwhile', async ($, on) => {
+  const log: string[] = []
+  let release = () => {}
+  wire(on, [], () => ({ value: usage }), handoffOk)
+  box(on, 'x', log, new Promise<void>(r => (release = r)))
+  const ui = await mountBand($)
+
+  await ui.press({ key: 'launch' })
+  const pressed = ui.press({ key: 'model:haiku' })
+  const again = ui.press({ key: 'model:haiku' }).catch(() => undefined) // a double click: either the button is gone or the launch refuses it
+  for (let i = 0; i < 100 && !log.some(l => l.startsWith('submit')); i++) await new Promise(r => setTimeout(r, 10))
+  expect(await ui.findAll({ type: 'Button', text: T.busy })).toHaveLength(1)
+  await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['launch', 'stay']) // the picker did not open
+
+  release()
+  await Promise.all([pressed, again])
+  expect(log.filter(l => l === '/clear')).toHaveLength(1)
+  expect(await ui.findAll({ type: 'Button', text: T.busy })).toEqual([])
+})
+
+test('new worker: a failed handoff leaves the chat alone, tells why and is kept for /cg-health', async ($, on) => {
+  const toasts: string[] = []
+  const log: string[] = []
+  const store = new Map<string, unknown>()
+  on('ui.toast', (_: unknown, e: { text: string }) => (toasts.push(e.text), { value: undefined }))
+  wire(on, [], () => ({ value: usage }), (_, e) => (e.argv.includes('handoff') ? { value: { exitCode: 1, stdout: '{"error":"no transcript"}', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } : noTurn()), store)
+  box(on, 'x', log)
+  const ui = await mountBand($)
+
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'model:sonnet' })
+
+  expect(log).toEqual([])
+  expect(toasts).toEqual([T.handoffFailed('no transcript')])
+  expect(store.get('lastError')).toMatchObject({ where: 'launch', msg: T.handoffFailed('no transcript') })
+  expect(await buttons(ui)).toEqual(['launch', 'stay'])
+  expect(await ui.findAll({ type: 'Button', text: T.newWorker })).toHaveLength(1) // busy ended
+})
