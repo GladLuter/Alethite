@@ -1,0 +1,5 @@
+{
+  "name": "cacheguard-local",
+  "owner": { "name": "Evgenii S" },
+  "plugins": [{ "name": "cacheguard", "source": "./plugin" }]
+}

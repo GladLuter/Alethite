@@ -1,6 +1,7 @@
 {
   "name": "cacheguard",
   "version": "0.1.0",
+  "author": { "name": "Evgenii S" },
   "description": "Claude-CacheGuard: price a send into a big idle chat, offer a clean new worker, remember what was learned.",
   "types": "./types/index.d.ts",
   "userConfig": {
