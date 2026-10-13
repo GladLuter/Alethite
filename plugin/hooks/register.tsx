@@ -98,11 +98,16 @@ const startWorker = async ($: EngineInterface, python: string, model: string | n
         return (await runCg($, python, ['handoff', '--session', id, '--today', today, ...(dir ? ['--memory-dir', dir] : [])])) as { text: string; path: string }
       },
       clear: () => $.command.run({ command: 'clear' }),
-      setModel: name => $.command.run({ command: 'model', args: name }),
+      setModel: async name => {
+        await $.command.run({ command: 'model', args: name })
+        // the command may answer with an error line instead of rejecting, so look at the model itself; a wrong alarm only costs an Enter
+        const now = await $.session.model()
+        if (!now.toLowerCase().includes(name)) throw new Error(T.modelStill(now))
+      },
       submit: text => $.prompt.submit({ text, asUser: true }),
       fill: async text => {
         const r = await $.prompt.fill({ text })
-        if (!r.isFilled) throw new Error(r.refusal ?? 'поле ввода не приняло текст')
+        if (!r.isFilled) throw new Error(T.fillRefused[r.refusal ?? 'other'])
       },
       // the draft stays in the box after submit; clear it unless the owner has typed something new meanwhile
       emptyBox: async draft => {

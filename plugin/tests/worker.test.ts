@@ -3,7 +3,7 @@ import { launch } from '../hooks/worker'
 import type { LaunchIO } from '../hooks/worker'
 
 // A LaunchIO that only writes down what was called; `o` makes one step fail or refuse.
-const fake = (o: { draft?: string; handoffError?: string; clearError?: string; modelError?: string; submitError?: string; drop?: string } = {}) => {
+const fake = (o: { draft?: string; handoffError?: string; clearError?: string; modelError?: string; submitError?: string; fillError?: string; drop?: string } = {}) => {
   const calls: string[] = []
   const toasts: string[] = []
   const sent: string[] = []
@@ -31,7 +31,11 @@ const fake = (o: { draft?: string; handoffError?: string; clearError?: string; m
       sent.push(text)
       return o.drop === undefined ? {} : { drop: o.drop }
     },
-    fill: async text => void (calls.push('fill'), filled.push(text)),
+    fill: async text => {
+      calls.push('fill')
+      if (o.fillError) throw new Error(o.fillError)
+      filled.push(text)
+    },
     emptyBox: async () => void calls.push('emptyBox'),
     toast: text => void (calls.push('toast'), toasts.push(text)),
   }
@@ -88,6 +92,7 @@ test('model switch fails: nothing submitted, handoff and draft back in the box',
   expect(filled[0]!.startsWith('[cg-handoff]')).toBe(true)
   expect(filled[0]!.endsWith('\n\nx')).toBe(true)
   expect(toasts[0]).toContain('unknown model')
+  expect(toasts[0]).toContain('C:/h/old.md')
 })
 
 test('submit throws: handoff and draft back in the box, nothing lost', async () => {
@@ -96,4 +101,21 @@ test('submit throws: handoff and draft back in the box, nothing lost', async () 
   expect(calls).not.toContain('emptyBox')
   expect(filled[0]!.endsWith('\n\nx')).toBe(true)
   expect(toasts[0]).toContain('offline')
+  expect(toasts[0]).toContain('C:/h/old.md')
+})
+
+test('model switch fails and the box refuses the text: both reasons and the saved path in one toast', async () => {
+  const { io, calls, toasts } = fake({ draft: 'x', modelError: 'unknown model', fillError: 'dialog is open' })
+  expect(await launch(io, 'sonnet')).toBe('failed')
+  expect(calls).not.toContain('submit')
+  expect(toasts).toHaveLength(1)
+  for (const part of ['unknown model', 'dialog is open', 'C:/h/old.md']) expect(toasts[0]).toContain(part)
+})
+
+test('submit throws and the box refuses the text: both reasons and the saved path in one toast', async () => {
+  const { io, calls, toasts } = fake({ draft: 'x', submitError: 'offline', fillError: 'dialog is open' })
+  expect(await launch(io, null)).toBe('failed')
+  expect(calls).not.toContain('emptyBox')
+  expect(toasts).toHaveLength(1)
+  for (const part of ['offline', 'dialog is open', 'C:/h/old.md']) expect(toasts[0]).toContain(part)
 })

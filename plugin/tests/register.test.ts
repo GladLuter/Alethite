@@ -9,12 +9,12 @@ const ran = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isS
 const noTurn = () => ran('{"tokens":null,"at":null,"model":null}')
 
 // stands for the engine beneath the plugin; `statuses` collects what the status line was set to, `answerRun` answers cg.py
-const wire = (on: any, statuses: (string | undefined)[], answerUsage: () => unknown, answerRun: (_: unknown, e: { argv: string[] }) => unknown = noTurn, store = new Map<string, unknown>()) => {
+const wire = (on: any, statuses: (string | undefined)[], answerUsage: () => unknown, answerRun: (_: unknown, e: { argv: string[] }) => unknown = noTurn, store = new Map<string, unknown>(), chat = { model: 'claude-opus-5-5' }) => {
   mock.clock(on, { now: 10_000_000_000 })
   on('store.get', (_: unknown, e: { key: string }) => ({ value: store.get(e.key) }))
   on('store.set', (_: unknown, e: { key: string; value: unknown }) => (store.set(e.key, e.value), { value: undefined }))
   on('session.id', () => ({ value: 'id' }))
-  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('session.model', () => ({ value: chat.model }))
   on('session.usage', answerUsage)
   on('session.version', () => ({ value: { version: '2.1.295' } }))
   on('process.run', answerRun)
@@ -88,13 +88,20 @@ test('/cg-health: version, index figures, auto-memory folder with its fact count
   expect(text).toContain(T.healthMemory(dir, 2))
 })
 
-// The engine beneath a launch: the prompt box, /clear and /model, and the first message. `gate` holds the submit until released.
-const box = (on: any, draft: string, log: string[], gate: Promise<unknown> = Promise.resolve()) => {
-  const state = { text: draft }
+// What session.model() answers; /model changes it unless `isSticky` (the command printed an error and left the model alone).
+const newChat = () => ({ model: 'claude-opus-5-5', isSticky: false })
+
+// The engine beneath a launch: the prompt box (`refuse` makes a fill fail), /clear and /model, and the first message. `gate` holds the submit until released.
+const box = (on: any, draft: string, log: string[], chat: ReturnType<typeof newChat>, gate: Promise<unknown> = Promise.resolve()) => {
+  const state = { text: draft, refuse: undefined as string | undefined }
   on('prompt.read', () => ({ value: { text: state.text, cursor: 0 } }))
-  on('prompt.fill', (_: unknown, e: { text: string }) => ((state.text = e.text), { isFilled: true }))
+  on('prompt.fill', (_: unknown, e: { text: string }) => (state.refuse ? { isFilled: false, refusal: state.refuse } : ((state.text = e.text), { isFilled: true })))
   on('prompt.submit', async (_: unknown, e: { text: string }) => (log.push(`submit ${e.text}`), await gate, { text: e.text }))
-  on('command.run', (_: unknown, e: { command: string; args: string }) => (log.push(`/${e.command} ${e.args}`.trim()), { text: '' }))
+  on('command.run', (_: unknown, e: { command: string; args: string }) => {
+    log.push(`/${e.command} ${e.args}`.trim())
+    if (e.command === 'model' && !chat.isSticky) chat.model = `claude-${e.args}-5-5`
+    return { text: '' }
+  })
   return state
 }
 const withMemory = { value: { ...usage, context: { ...usage.context, breakdown: { memoryFiles: [{ path: 'C:/mem/memory/MEMORY.md', type: 'AutoMem', tokens: 1 }] } } } }
@@ -107,8 +114,9 @@ const mountBand = async ($: any) => {
 test('new worker: /clear, /model, then handoff + draft as the first message, draft taken out of the box, band idle', async ($, on) => {
   const log: string[] = []
   const argvs: string[][] = []
-  wire(on, [], () => withMemory, (_, e) => (e.argv.includes('handoff') && argvs.push(e.argv), handoffOk(_, e)))
-  const state = box(on, 'продолжаем', log)
+  const chat = newChat()
+  wire(on, [], () => withMemory, (_, e) => (e.argv.includes('handoff') && argvs.push(e.argv), handoffOk(_, e)), undefined, chat)
+  const state = box(on, 'продолжаем', log, chat)
   const ui = await mountBand($)
 
   await ui.press({ key: 'launch' })
@@ -125,8 +133,9 @@ test('new worker: /clear, /model, then handoff + draft as the first message, dra
 test('new worker: busy for the whole launch, the arm button is ignored meanwhile', async ($, on) => {
   const log: string[] = []
   let release = () => {}
-  wire(on, [], () => ({ value: usage }), handoffOk)
-  box(on, 'x', log, new Promise<void>(r => (release = r)))
+  const chat = newChat()
+  wire(on, [], () => ({ value: usage }), handoffOk, undefined, chat)
+  box(on, 'x', log, chat, new Promise<void>(r => (release = r)))
   const ui = await mountBand($)
 
   await ui.press({ key: 'launch' })
@@ -149,7 +158,7 @@ test('new worker: a failed handoff leaves the chat alone, tells why and is kept 
   const store = new Map<string, unknown>()
   on('ui.toast', (_: unknown, e: { text: string }) => (toasts.push(e.text), { value: undefined }))
   wire(on, [], () => ({ value: usage }), (_, e) => (e.argv.includes('handoff') ? { value: { exitCode: 1, stdout: '{"error":"no transcript"}', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } : noTurn()), store)
-  box(on, 'x', log)
+  box(on, 'x', log, newChat())
   const ui = await mountBand($)
 
   await ui.press({ key: 'launch' })
@@ -160,4 +169,36 @@ test('new worker: a failed handoff leaves the chat alone, tells why and is kept 
   expect(store.get('lastError')).toMatchObject({ where: 'launch', msg: T.handoffFailed('no transcript') })
   expect(await buttons(ui)).toEqual(['launch', 'stay'])
   expect(await ui.findAll({ type: 'Button', text: T.newWorker })).toHaveLength(1) // busy ended
+})
+
+test('new worker: /model that leaves the model unchanged stops the launch, handoff and draft are back in the box', async ($, on) => {
+  const toasts: string[] = []
+  const log: string[] = []
+  const chat = { ...newChat(), isSticky: true }
+  on('ui.toast', (_: unknown, e: { text: string }) => (toasts.push(e.text), { value: undefined }))
+  wire(on, [], () => ({ value: usage }), handoffOk, undefined, chat)
+  const state = box(on, 'x', log, chat)
+  const ui = await mountBand($)
+
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'model:sonnet' })
+
+  expect(log).toEqual(['/clear', '/model sonnet']) // no submit
+  expect(state.text).toBe('[cg-handoff]x[/cg-handoff]\n\nx')
+  expect(toasts).toEqual([T.modelFailed('sonnet', T.modelStill('claude-opus-5-5'), 'C:/h/id.md')])
+  expect(await buttons(ui)).toEqual(['launch', 'stay'])
+})
+
+test('new worker: the box refuses the text: readable reason and the saved path, not a raw code', async ($, on) => {
+  const toasts: string[] = []
+  const chat = { ...newChat(), isSticky: true }
+  on('ui.toast', (_: unknown, e: { text: string }) => (toasts.push(e.text), { value: undefined }))
+  wire(on, [], () => ({ value: usage }), handoffOk, undefined, chat)
+  box(on, 'x', [], chat).refuse = 'dialog' // the engine strips a code a hook writes itself, so the closure sees the code-less refusal here
+  const ui = await mountBand($)
+
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'model:sonnet' })
+
+  expect(toasts).toEqual([T.fillFailed(T.modelStill('claude-opus-5-5'), T.fillRefused.other, 'C:/h/id.md')])
 })

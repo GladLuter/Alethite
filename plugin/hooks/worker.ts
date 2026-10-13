@@ -36,9 +36,14 @@ export const launch = async (io: LaunchIO, model: string | null): Promise<'empty
   }
 
   const text = `${handoff.text}\n\n${draft}`
-  const back = async (toast: string) => {
-    await io.fill(text)
-    io.toast(toast)
+  // every failure from here on names the saved file; if even the box refuses the text, the draft is most likely still there
+  const back = async (why: string, shown: string) => {
+    try {
+      await io.fill(text)
+      io.toast(shown)
+    } catch (err) {
+      io.toast(T.fillFailed(why, message(err), handoff.path))
+    }
     return 'failed' as const
   }
   // the context is empty after /clear, so the switch overwrites nothing
@@ -46,14 +51,16 @@ export const launch = async (io: LaunchIO, model: string | null): Promise<'empty
     try {
       await io.setModel(model)
     } catch (err) {
-      return back(T.modelFailed(model, message(err)))
+      const why = message(err)
+      return back(why, T.modelFailed(model, why, handoff.path))
     }
   }
   let sent
   try {
     sent = await io.submit(text)
   } catch (err) {
-    return back(T.submitFailed(message(err)))
+    const why = message(err)
+    return back(why, T.submitFailed(why, handoff.path))
   }
   if (sent.drop !== undefined) {
     io.toast(T.dropped(sent.drop, handoff.path))

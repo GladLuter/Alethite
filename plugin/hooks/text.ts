@@ -34,8 +34,11 @@ export const T = {
   draftEmpty: 'Новый работник: черновик пуст, чат не тронут. Набери сообщение и нажми снова.',
   handoffFailed: (why: string) => `Новый работник: передача не собрана (${why}). Чат не тронут.`,
   clearFailed: (why: string, path: string) => `Новый работник: чат не очистился (${why}). Передача сохранена: ${path}`,
-  modelFailed: (model: string, why: string) => `Новый работник: модель «${model}» не сменилась (${why}). Передача и черновик в поле ввода: смени модель через /model и нажми Enter.`,
-  submitFailed: (why: string) => `Новый работник: отправка не удалась (${why}). Передача и черновик в поле ввода: нажми Enter.`,
+  modelFailed: (model: string, why: string, path: string) => `Новый работник: модель «${model}» не сменилась (${why}). Передача и черновик в поле ввода: смени модель через /model и нажми Enter. Передача сохранена: ${path}`,
+  modelStill: (now: string) => `после /model модель осталась «${now}»`,
+  submitFailed: (why: string, path: string) => `Новый работник: отправка не удалась (${why}). Передача и черновик в поле ввода: нажми Enter. Передача сохранена: ${path}`,
+  fillFailed: (why: string, fillWhy: string, path: string) => `Новый работник: ${why}. Чат уже очищен, а поле ввода не приняло передачу (${fillWhy}). Передача сохранена: ${path}; черновик, скорее всего, ещё в поле ввода.`,
+  fillRefused: { dialog: 'открыт диалог, поле занято', no_composer: 'в этом окне нет поля ввода', other: 'поле ввода не приняло текст' },
   dropped: (why: string, path: string) => `Новый работник: отправку отклонили (${why}). Передача сохранена: ${path}`,
 
   // refresh failed: the status line shows it until the next good refresh
