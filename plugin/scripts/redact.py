@@ -1,7 +1,7 @@
 import re
 
 H = '[скрыто]'
-_NAME = r'(?:password|passwd|pwd|secret|token|api_key|apikey|access_key|пароль)'
+_NAME = r'(?:password|passwd|pwd|secret|token|passphrase|пароль|(?:api|access|secret|private)[_-]?key)'
 
 # (pattern, replacement): group 1, when present, is the part that stays.
 _RULES = [(re.compile(p), r) for p, r in [
@@ -10,8 +10,9 @@ _RULES = [(re.compile(p), r) for p, r in [
     (r'\b(?:sk-[\w-]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_\w{22,}|(?:AKIA|ASIA)[0-9A-Z]{16}'
      r'|xox[abprs]-[\w-]{10,}|AIza[\w-]{35,}|eyJ[\w-]+\.[\w-]+\.[\w-]+)', H),
     (r'(?i)(\bAuthorization["\']?[ \t]*[:=][ \t]*["\']?(?:\w+[ \t]+)?|\bBearer[ \t]+)[^\s"\',;]{16,}', r'\1' + H),
-    # value: all digits stay; after an opening quote take up to the closing quote, else up to a separator
-    (r'(?i)(' + _NAME + r'["\']?[ \t]*[:=][ \t]*["\']?)(?!\d+\b)(?:(?<=["\'])[^"\'\n]+|[^\s"\',;]+)', r'\1' + H),
+    # value: after an opening quote it runs to the closing quote, else to a separator; a value of only digits stays
+    (r'(?i)(' + _NAME + r'["\']?[ \t]*[:=][ \t]*["\']?)'
+     r'(?:(?<=["\'])(?!\d+(?![^"\'\n]))[^"\'\n]+|(?!\d+(?![^\s"\',;]))[^\s"\',;]+)', r'\1' + H),
 ]]
 
 

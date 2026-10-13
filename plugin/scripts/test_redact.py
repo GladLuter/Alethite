@@ -22,6 +22,17 @@ class RedactTest(unittest.TestCase):
         self.assertEqual(redact('Authorization: Bearer abcdefghijklmnop1234'), 'Authorization: Bearer ' + H)
         self.assertEqual(redact('https://user:s3cret@host/x'), 'https://' + H + '@host/x')
 
+    def test_review_round1(self):
+        for raw, kept in [('password=1234!abc', 'password='), ('password=2024!', 'password='),
+                          ('password=1234-5678', 'password='), ('token=123456.abcdef', 'token='),
+                          ('password: "12 345"', 'password: "'), ('SECRET_KEY=abc123xyz', 'SECRET_KEY='),
+                          ('secret_key = "abc123xyz"', 'secret_key = "'), ('private_key=abc123xyz', 'private_key='),
+                          ('passphrase=abc123xyz', 'passphrase='), ('x-api-key: abc123xyz', 'x-api-key: '),
+                          ('api-key=abc123xyz', 'api-key='), ('"secretAccessKey": "abc123xyz"', '"secretAccessKey": "')]:
+            self.assertEqual(redact(raw), kept + H + ('"' if kept.endswith('"') else ''), raw)
+        for ok in ['pwd: 1234', 'password=123456', 'token: "4096"']:
+            self.assertEqual(redact(ok), ok)
+
     def test_no_false_positives(self):
         for ok in ['max_tokens = 4096', '"input_tokens": 12, "cache_read_input_tokens": 9000',
                    'token budget is tight', 'password reset flow is broken', 'Кэш истёк, ctx 290k',
