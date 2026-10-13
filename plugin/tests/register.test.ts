@@ -216,7 +216,8 @@ const started = async ($: any, on: any, answer: (a: string[]) => unknown, status
   on('ui.toast', (_: unknown, e: { text: string }) => (m.toasts.push(e.text), { value: undefined }))
   on('tool.register', (_: unknown, e: unknown) => (m.specs.push(e), { value: { tool: 'x' } }))
   on('command.register', () => ({ value: { command: 'x' } }))
-  on('session.cwd', () => ({ value: 'C:/w' }))
+  on('session.root', () => ({ value: 'C:/w' }))
+  on('session.cwd', () => ({ value: 'C:/w/plugin/scripts' })) // after a shell `cd`: must not reach the search
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   m.clock = wire(on, statuses, () => ({ value: usage }), (_, e: any) => (m.runs.push({ argv: e.argv.slice(2), timeoutMs: e.init?.timeoutMs }), e.argv.includes('last-turn') ? noTurn() : answer(e.argv.slice(2))), m.store)
   await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false })

@@ -248,7 +248,8 @@ export const register: Register = (on, options) => {
     served($, 'recall', async () => {
       const input = e as unknown as { query: string; scope?: string; limit?: number }
       if (typeof input.query !== 'string' || !input.query.trim()) throw new Error(T.noQuery) // the schema asks for it, but nothing makes the model obey
-      const r = await runCg($, python, recallArgs(input, await $.session.cwd()))
+      // the root, not cwd(): a shell `cd` into a subfolder moves cwd but not the project the conversations are filed under
+      const r = await runCg($, python, recallArgs(input, await $.session.root()))
       await indexErrors($, 'recall', r.errors as IndexError[], true)
       return formatHits(r.hits as Hit[], input.query, input.scope ?? 'project')
     }),
