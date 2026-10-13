@@ -5,6 +5,8 @@ import type { Snap } from '../types'
 import { bandLines, isStale, modelChoices, statusText } from './guard'
 import { healthLines, message, parseCg } from './py'
 import type { LastError } from './py'
+import { formatHits, formatRows, recallArgs } from './recall'
+import type { Hit, IndexError, Row } from './recall'
 import { T } from './text'
 import { launch } from './worker'
 import type { LaunchIO } from './worker'
@@ -32,6 +34,25 @@ const noteError = async ($: EngineInterface, where: string, err: unknown) => $.s
 const fail = async ($: EngineInterface, where: string, err: unknown) => {
   $.ui.toast(T.failed(where, message(err)))
   await noteError($, where, err)
+}
+
+// cg.py skips transcripts it cannot read and retries them next time, but the owner must hear of it: on the status line when nobody asked, in a toast when they did.
+const indexErrors = async ($: EngineInterface, where: string, errors: IndexError[], isAsked: boolean) => {
+  if (errors.length === 0) return
+  const text = T.indexErrors(errors.length)
+  if (isAsked) $.ui.toast(text)
+  else $.ui.status(text)
+  await noteError($, where, T.indexErrorFirst(errors.length, errors[0]!.path, errors[0]!.error))
+}
+
+// A memory tool call: its text for the model, or a refusal the model reads as an error, and the owner sees the failure too.
+const served = async ($: EngineInterface, where: string, work: () => Promise<string>) => {
+  try {
+    return { result: await work() }
+  } catch (err) {
+    await fail($, where, err)
+    return { deny: T.recallFailed(message(err)) }
+  }
 }
 
 // The auto-memory folder is the one the first loaded AutoMem file sits in; none loaded, none known.
@@ -139,8 +160,28 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'cg-band', description: T.cgBandDescription, argumentHint: '[off]' })
     await $.command.register({ name: 'cg-health', description: T.cgHealthDescription })
+    await $.command.register({ name: 'cg-index', description: T.cgIndexDescription, argumentHint: '[rebuild]' })
+    // two short schemas in every request cost less than the extra ToolSearch turn a deferred tool needs in each new chat
+    await $.tool.register({
+      name: 'recall',
+      description: T.recallDescription,
+      inputSchema: {
+        type: 'object',
+        properties: { query: { type: 'string' }, scope: { type: 'string', enum: ['project', 'all'] }, limit: { type: 'integer', minimum: 1, maximum: 20 } },
+        required: ['query'],
+      },
+      isDeferred: false,
+    })
+    await $.tool.register({
+      name: 'recall_more',
+      description: T.recallMoreDescription,
+      inputSchema: { type: 'object', properties: { conv: { type: 'string' }, pos: { type: 'integer' } }, required: ['conv', 'pos'] },
+      isDeferred: false,
+    })
     // timers outlive /clear (no session.start after it), so one tick also keeps a new session's figures fresh
     $.clock.every(30_000, () => void guarded($, 'timer', () => refresh($, python)))
+    // session.end has 1.5 s, too little to index: a closed chat is picked up here, or by the next recall. Never awaited, so session.start is not held.
+    $.clock.after(3_000, () => void guarded($, 'index', async () => indexErrors($, 'index', (await runCg($, python, ['index'], 600_000)).errors as IndexError[], false)))
     await guarded($, 'session.start', () => refresh($, python))
 
     return next(e)
@@ -191,6 +232,31 @@ export const register: Register = (on, options) => {
       return { text: T.cgHealthFailed }
     }
   })
+
+  on('command.run', { command: 'cg-index' }, async ($, e) => {
+    try {
+      const i = await runCg($, python, ['index', ...(e.args.trim() === 'rebuild' ? ['--rebuild'] : [])], 600_000)
+      await indexErrors($, 'cg-index', i.errors as IndexError[], true)
+      return { text: T.cgIndexDone(i) }
+    } catch (err) {
+      await fail($, 'cg-index', err)
+      return { text: T.cgIndexFailed }
+    }
+  })
+
+  on('tool.call', { tool: 'mcp__cacheguard__recall' }, ($, e) =>
+    served($, 'recall', async () => {
+      const input = e as unknown as { query: string; scope?: string; limit?: number }
+      if (typeof input.query !== 'string' || !input.query.trim()) throw new Error(T.noQuery) // the schema asks for it, but nothing makes the model obey
+      const r = await runCg($, python, recallArgs(input, await $.session.cwd()))
+      await indexErrors($, 'recall', r.errors as IndexError[], true)
+      return formatHits(r.hits as Hit[], input.query, input.scope ?? 'project')
+    }),
+  )
+
+  on('tool.call', { tool: 'mcp__cacheguard__recall_more' }, ($, e) =>
+    served($, 'recall_more', async () => formatRows((await runCg($, python, ['expand', `--conv=${e.conv}`, `--pos=${e.pos}`])).rows as Row[])),
+  )
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     // every read first, so the band is subscribed to all of them even when it draws nothing

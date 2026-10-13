@@ -54,6 +54,19 @@ export const T = {
   failed: (where: string, msg: string) => `CacheGuard (${where}): ${msg}`,
   pythonMissing: (python: string) => `Не удалось запустить «${python}»: команды нет или она не ответила вовремя. Проверьте настройку «Команда Python».`,
 
+  // long memory: what the model reads (tool descriptions, results) and what the owner sees about the index
+  recallDescription: 'Поиск по прошлым разговорам владельца: что обсуждали, решали, где что лежит. query — слова искомого, не вопрос. По умолчанию ищет в этом проекте, scope=all — везде. Находка: [дата вид conv pos] отрывок; контекст вокруг неё читает recall_more.',
+  recallMoreDescription: 'Читает записи вокруг находки recall: по conv и pos из её строки возвращает соседние сообщения того разговора по порядку.',
+  noHits: (query: string, scope: string) => `По «${query}» ничего не найдено${scope === 'all' ? '' : ' в этом проекте'}. Попробуй ${scope === 'all' ? '' : 'scope=all или '}другие слова.`,
+  noQuery: 'query не передан: нужны слова, которые встретились бы в разговоре.',
+  noRows: 'Записей нет: проверь conv и pos в строке находки recall.',
+  recallFailed: (msg: string) => `Поиск по памяти не удался: ${msg}`,
+  indexErrors: (n: number) => `CacheGuard: индекс — ${n} ошибок, см. /cg-health`,
+  indexErrorFirst: (n: number, path: string, msg: string) => `не прочитано файлов: ${n}, первый ${path} — ${msg}`,
+  cgIndexDescription: 'Обновить индекс долгой памяти (rebuild: перечитать всё заново)',
+  cgIndexDone: (i: Record<string, unknown>) => `Индекс обновлён: ${i.files} файлов, ${i.rows} записей, всего ${i.convs} чатов, ${(i.seconds as number).toFixed(1)} с`,
+  cgIndexFailed: 'cg-index: не вышло, причина во всплывающем сообщении.',
+
   // /cg-health
   cgHealthDescription: 'Проверить, что мод, индекс и память работают',
   cgHealthFailed: 'cg-health: не вышло, причина во всплывающем сообщении.',

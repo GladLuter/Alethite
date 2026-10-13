@@ -10,7 +10,7 @@ const noTurn = () => ran('{"tokens":null,"at":null,"model":null}')
 
 // stands for the engine beneath the plugin; `statuses` collects what the status line was set to, `answerRun` answers cg.py
 const wire = (on: any, statuses: (string | undefined)[], answerUsage: () => unknown, answerRun: (_: unknown, e: { argv: string[] }) => unknown = noTurn, store = new Map<string, unknown>(), chat = { model: 'claude-opus-5-5' }) => {
-  mock.clock(on, { now: 10_000_000_000 })
+  const clock = mock.clock(on, { now: 10_000_000_000 })
   on('store.get', (_: unknown, e: { key: string }) => ({ value: store.get(e.key) }))
   on('store.set', (_: unknown, e: { key: string; value: unknown }) => (store.set(e.key, e.value), { value: undefined }))
   on('session.id', () => ({ value: 'id' }))
@@ -21,6 +21,7 @@ const wire = (on: any, statuses: (string | undefined)[], answerUsage: () => unkn
   on('ui.status', (_: unknown, e: { text?: string }) => (statuses.push(e.text), { value: undefined }))
   on('ui.render', () => ({ type: 'Text', children: ['no band'] }))
   on('turn.complete', () => ({ text: '' }))
+  return clock
 }
 const buttons = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b: { key: string }) => b.key)
 
@@ -201,4 +202,113 @@ test('new worker: the box refuses the text: readable reason and the saved path, 
   await ui.press({ key: 'model:sonnet' })
 
   expect(toasts).toEqual([T.fillFailed(T.modelStill('claude-opus-5-5'), T.fillRefused.other, 'C:/h/id.md')])
+})
+
+// ---- long memory ----
+const hit = { conv: 'S', parent: '', ts: '2026-10-10T08:00:00Z', kind: 'owner', pos: 42, snippet: '«кэш» истёк' }
+const hitLine = '[2026-10-10 owner conv=S pos=42] «кэш» истёк'
+const bad = { path: 'C:/p/a.jsonl', error: 'PermissionError: x' }
+const failed = (error: string) => ({ value: { exitCode: 1, stdout: JSON.stringify({ error }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+
+// A session that has started: cg.py answers `answer(argv)` and every run is recorded in `runs`; the tools and the index timer exist.
+const started = async ($: any, on: any, answer: (a: string[]) => unknown, statuses: (string | undefined)[] = []) => {
+  const m = { runs: [] as { argv: string[]; timeoutMs?: number }[], toasts: [] as string[], specs: [] as any[], store: new Map<string, unknown>(), clock: undefined as any }
+  on('ui.toast', (_: unknown, e: { text: string }) => (m.toasts.push(e.text), { value: undefined }))
+  on('tool.register', (_: unknown, e: unknown) => (m.specs.push(e), { value: { tool: 'x' } }))
+  on('command.register', () => ({ value: { command: 'x' } }))
+  on('session.cwd', () => ({ value: 'C:/w' }))
+  on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  m.clock = wire(on, statuses, () => ({ value: usage }), (_, e: any) => (m.runs.push({ argv: e.argv.slice(2), timeoutMs: e.init?.timeoutMs }), e.argv.includes('last-turn') ? noTurn() : answer(e.argv.slice(2))), m.store)
+  await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false })
+  return m
+}
+const recall = ($: any, input: object = { query: 'кэш' }) => $.tool.call({ tool: 'mcp__cacheguard__recall', ...input })
+const ofCg = (m: { runs: { argv: string[] }[] }, cmd: string) => m.runs.filter(r => r.argv[0] === cmd)
+
+test('memory tools: both in the prompt, not behind ToolSearch', async ($, on) => {
+  const m = await started($, on, () => ran('{}'))
+  expect(m.specs.map(s => [s.name, s.isDeferred, s.description])).toEqual([['recall', false, T.recallDescription], ['recall_more', false, T.recallMoreDescription]])
+})
+
+test('recall: project by default, scope=all and the limit when asked; the model reads the hits', async ($, on) => {
+  const m = await started($, on, () => ran(JSON.stringify({ hits: [hit], errors: [] })))
+  expect(await recall($)).toEqual({ result: hitLine })
+  await recall($, { query: 'q', scope: 'all', limit: 3 })
+  expect(ofCg(m, 'recall').map(r => r.argv)).toEqual([['recall', '--query=кэш', '--cwd', 'C:/w', '--limit', '8'], ['recall', '--query=q', '--all', '--limit', '3']])
+  expect(m.toasts).toEqual([])
+})
+
+test('recall: nothing found says what to try', async ($, on) => {
+  await started($, on, () => ran('{"hits":[],"errors":[]}'))
+  expect(await recall($)).toEqual({ result: T.noHits('кэш', 'project') })
+})
+
+test('recall: cg.py fails: the model reads an error, the owner a toast, /cg-health the cause', async ($, on) => {
+  const m = await started($, on, () => failed('OperationalError: x'))
+  expect(await recall($)).toEqual({ deny: T.recallFailed('OperationalError: x') })
+  expect(m.toasts).toEqual([T.failed('recall', 'OperationalError: x')])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'recall', msg: 'OperationalError: x' })
+})
+
+test('recall: no query means no search', async ($, on) => {
+  const m = await started($, on, () => ran('{}'))
+  expect(await recall($, {})).toEqual({ deny: T.recallFailed(T.noQuery) })
+  expect(ofCg(m, 'recall')).toEqual([])
+})
+
+test('recall: unreadable transcripts reach the owner, the hits still reach the model', async ($, on) => {
+  const m = await started($, on, () => ran(JSON.stringify({ hits: [hit], errors: [bad, bad] })))
+  expect(await recall($)).toEqual({ result: hitLine })
+  expect(m.toasts).toEqual([T.indexErrors(2)])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'recall', msg: T.indexErrorFirst(2, bad.path, bad.error) })
+})
+
+test('recall_more: reads around a hit', async ($, on) => {
+  const m = await started($, on, () => ran(JSON.stringify({ rows: [{ ts: '2026-10-10T08:00:00Z', kind: 'owner', pos: 42, text: 'привет' }] })))
+  expect(await $.tool.call({ tool: 'mcp__cacheguard__recall_more', conv: 'S', pos: 42 })).toEqual({ result: '[2026-10-10 owner pos=42] привет' })
+  expect(ofCg(m, 'expand')[0]!.argv).toEqual(['expand', '--conv=S', '--pos=42'])
+})
+
+test('recall_more: a failure is an error for the model and a toast for the owner', async ($, on) => {
+  const m = await started($, on, () => failed('boom'))
+  expect(await $.tool.call({ tool: 'mcp__cacheguard__recall_more', conv: 'S', pos: 42 })).toEqual({ deny: T.recallFailed('boom') })
+  expect(m.toasts).toEqual([T.failed('recall_more', 'boom')])
+})
+
+test('index: 3 s after session.start, in the background, with errors on the status line', async ($, on) => {
+  const statuses: (string | undefined)[] = []
+  const m = await started($, on, () => ran(JSON.stringify({ files: 1, rows: 5, convs: 1, seconds: 0.5, errors: [bad] })), statuses)
+  expect(ofCg(m, 'index')).toEqual([]) // session.start did not wait for it, nor run it
+  await m.clock.advance(3_000)
+  expect(ofCg(m, 'index')).toEqual([{ argv: ['index'], timeoutMs: 600_000 }])
+  expect(statuses).toContain(T.indexErrors(1))
+  expect(m.toasts).toEqual([])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'index' })
+})
+
+test('index: a failed background run goes to the status line and /cg-health, not to a toast', async ($, on) => {
+  const statuses: (string | undefined)[] = []
+  const m = await started($, on, () => failed('database is locked'), statuses)
+  await m.clock.advance(3_000)
+  expect(statuses).toContain(T.statusError('database is locked'))
+  expect(m.toasts).toEqual([])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'index', msg: 'database is locked' })
+})
+
+test('/cg-index: updates, "rebuild" re-reads everything, the answer has the figures', async ($, on) => {
+  const stats = { files: 3, rows: 120, convs: 7, seconds: 1.234, errors: [] }
+  const m = await started($, on, () => ran(JSON.stringify(stats)))
+  expect((await $.command.run({ command: 'cg-index', args: '' })).text).toBe(T.cgIndexDone(stats))
+  await $.command.run({ command: 'cg-index', args: 'rebuild' })
+  expect(ofCg(m, 'index').map(r => r.argv)).toEqual([['index'], ['index', '--rebuild']])
+})
+
+test('/cg-index: unreadable transcripts and failures are shown in a toast', async ($, on) => {
+  let answer: unknown = ran(JSON.stringify({ files: 0, rows: 0, convs: 0, seconds: 0, errors: [bad] }))
+  const m = await started($, on, () => answer)
+  await $.command.run({ command: 'cg-index', args: '' })
+  expect(m.toasts).toEqual([T.indexErrors(1)])
+  answer = failed('no such table')
+  expect((await $.command.run({ command: 'cg-index', args: '' })).text).toBe(T.cgIndexFailed)
+  expect(m.toasts[1]).toBe(T.failed('cg-index', 'no such table'))
 })
