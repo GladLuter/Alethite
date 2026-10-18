@@ -15,13 +15,16 @@ CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
   text, conv UNINDEXED, pos UNINDEXED, ts UNINDEXED, kind UNINDEXED,
   tokenize='unicode61 remove_diacritics 2');
+CREATE TABLE IF NOT EXISTS vecs(chunk INTEGER, part INTEGER, conv TEXT, vec BLOB, PRIMARY KEY(chunk, part));
 """
+# a table with a `conv` column and the parameter :p (NULL = every project); a subagent belongs to its parent's project
+IN_PROJECT = """(:p IS NULL
+  OR conv IN (SELECT conv FROM conv_projects WHERE project = :p)
+  OR conv IN (SELECT c.conv FROM convs c JOIN conv_projects p ON p.conv = c.parent WHERE p.project = :p))"""
 _SEARCH = """
 SELECT conv, pos, ts, kind, snippet(chunks, 0, '«', '»', '…', 24),
        (SELECT parent FROM convs WHERE convs.conv = chunks.conv)
-FROM chunks WHERE chunks MATCH :q AND (:p IS NULL
-  OR conv IN (SELECT conv FROM conv_projects WHERE project = :p)
-  OR conv IN (SELECT c.conv FROM convs c JOIN conv_projects p ON p.conv = c.parent WHERE p.project = :p))
+FROM chunks WHERE chunks MATCH :q AND """ + IN_PROJECT + """
 ORDER BY bm25(chunks) * CASE WHEN kind IN ('sub', 'tool') THEN 0.5 ELSE 1.0 END LIMIT :n
 """
 
@@ -44,7 +47,7 @@ def _file(conn, path, conv, parent, rebuild):
             return None
         # rebuild re-reads the files found on disk; rows of transcripts that are gone stay
         if rebuild or (old and size < old[0]):  # shortcut: only a shorter file counts as rewritten; same-size or longer rewrites are not noticed
-            for t in ('chunks', 'conv_projects', 'convs'):
+            for t in ('chunks', 'vecs', 'conv_projects', 'convs'):
                 conn.execute('DELETE FROM %s WHERE conv = ?' % t, (conv,))
             old = None
         recs, off = read_records(path, old[1] if old else 0)
@@ -105,11 +108,13 @@ def update(conn, projects, rebuild=False):
 
 
 def status(conn):
+    from vectors import vector_status  # vectors imports memdb
     db = conn.execute('PRAGMA database_list').fetchone()[2]
     last = conn.execute("SELECT value FROM meta WHERE key = 'last_update'").fetchone()
     return {'db': db, 'convs': conn.execute('SELECT count(*) FROM convs').fetchone()[0],
             'rows': conn.execute('SELECT count(*) FROM chunks').fetchone()[0],
-            'last_update': last[0] if last else None, 'size_mb': round(os.path.getsize(db) / 2 ** 20, 2)}
+            'last_update': last[0] if last else None, 'size_mb': round(os.path.getsize(db) / 2 ** 20, 2),
+            'vectors': vector_status(conn)}
 
 
 def search(conn, query, project=None, limit=8, budget=7000):

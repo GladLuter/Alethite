@@ -1,9 +1,15 @@
+import contextlib
+import gc
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+import cg
+import vectors
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
 TS = '2026-10-13T10:00:00.000Z'
@@ -81,6 +87,22 @@ class CgTest(unittest.TestCase):
         self.assertEqual(hits('--cwd', 'C:\\a'), ['S1'])
         self.assertEqual(hits('--all'), ['S1', 'S2'])
         self.assertEqual(len(self.run_cg('recall', '--query', 'ёжик', '--all', '--limit', '1')[1]['hits']), 1)
+
+    def test_embed_options(self):
+        out = self.run_cg('embed', '--model', 'other', '--max-seconds', '5')  # an empty index: nothing to embed, so no Ollama is called
+        self.assertEqual((out[0], out[1]['model'], out[1]['done'], out[1]['pending'], out[1]['errors']), (0, 'other', 0, 0, []))
+
+    def test_embed_progress_on_stderr(self):
+        self.write('P/S1.jsonl', [owner_line('вопрос'), claude_line('ответ')])
+        self.run_cg('index')
+        self.addCleanup(gc.collect)  # cg never closes its connection; a collected one releases the file that the temp folder cleanup deletes
+        a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'embed'])
+        err = io.StringIO()
+        with mock.patch.object(vectors, 'ollama_embed', lambda texts, model: [[1.0] * 768 for _ in texts]), contextlib.redirect_stderr(err):
+            out = a.fn(a)
+        self.assertEqual((out['done'], out['pending'], out['errors']), (2, 0, []))
+        self.assertIn('посчитано кусков: 2', err.getvalue())
+        self.assertEqual(self.run_cg('status')[1]['vectors']['with_vectors'], 2)
 
 
 if __name__ == '__main__':

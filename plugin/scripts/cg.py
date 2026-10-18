@@ -4,10 +4,12 @@ import datetime
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import memdb
 import stats
+import vectors
 from handoff import build_handoff
 from transcripts import find_session, last_usage, project_key
 
@@ -33,6 +35,18 @@ def _recall(a):
 
 def _expand(a):
     return {'rows': memdb.expand(memdb.connect(a.db), a.conv, a.pos)}
+
+
+def _embed(a):
+    pieces, t0 = [0], time.monotonic()
+
+    def embed(texts, model):  # one progress line per call, for a run from a terminal
+        out = vectors.ollama_embed(texts, model)
+        pieces[0] += len(texts)
+        print('посчитано кусков: %d, прошло %d с' % (pieces[0], time.monotonic() - t0), file=sys.stderr, flush=True)
+        return out
+
+    return vectors.embed_pending(memdb.connect(a.db), a.model, embed, a.max_seconds)
 
 
 def _last_turn(a):
@@ -82,6 +96,9 @@ def _parser():
     s = add('expand', _expand)
     s.add_argument('--conv', required=True)
     s.add_argument('--pos', type=int, required=True)
+    s = add('embed', _embed)
+    s.add_argument('--model', default=vectors.MODEL)
+    s.add_argument('--max-seconds', type=float, default=120)
     add('last-turn', _last_turn).add_argument('--session', required=True)
     s = add('handoff', _handoff)
     s.add_argument('--session', required=True)
@@ -99,6 +116,7 @@ def _parser():
 
 def main(argv):
     sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')  # the progress line of embed
     try:
         a = _parser().parse_args(argv)
         out, code = a.fn(a), 0
