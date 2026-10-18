@@ -33,13 +33,16 @@ def chunks_of(text):
     return [text[i:i + CHUNK] for i in range(0, max(len(text) - OVERLAP, 1), CHUNK - OVERLAP)]
 
 
-def ollama_embed(texts, model=MODEL, url=OLLAMA):
+def ollama_embed(texts, model=MODEL, url=OLLAMA, timeout=120):
     req = urllib.request.Request(url + '/api/embed', json.dumps({'model': model, 'input': texts, 'keep_alive': '30m'}).encode(),
                                  {'Content-Type': 'application/json'})
     try:
         # no proxy: the text of the owner's conversations must stay on this computer
-        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=120) as r:
-            return json.load(r)['embeddings']
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=timeout) as r:
+            out = json.load(r)['embeddings']
+        if len(out) < len(texts):  # an empty answer would otherwise surface as an IndexError far from here
+            raise ValueError('вернул %d векторов вместо %d' % (len(out), len(texts)))
+        return out
     except urllib.error.HTTPError as e:  # before OSError: HTTPError is one
         if e.code == 404:
             raise RuntimeError('модель %s не найдена: выполните ollama pull %s' % (model, model)) from None
@@ -138,26 +141,27 @@ def _best_piece(conn, rowid, qvec):
 def hybrid_search(conn, query, project=None, limit=8, budget=7000, model=MODEL, embed_fn=ollama_embed):
     """memdb.search merged with the vector search by RRF: (hits as in memdb.search, 'ok' or why only the words were used)."""
     words = memdb.search(conn, query, project, 50, 10 ** 9)
-    state, vec, info = 'ok', [], {}
-    try:
+    state, merged = 'ok', words[:limit]
+    try:  # everything that needs the vectors, so that whatever goes wrong (even a transcript rewritten meanwhile) leaves the word hits
         _np()
         have = _meta(conn, 'embed_model')
         if have != model:
             raise LookupError('векторов модели %s нет (в базе: %s)' % (model, have or 'ничего'))
-        qvec = pack(embed_fn([QUERY_PREFIX + query], model)[0])
-        found = search_vectors(conn, qvec, project, 50)
-        vec, info = found, {r[0]: r[1:] for r in conn.execute(  # both or neither: a half-built leg would break the ranking
+        qvec = pack(embed_fn([QUERY_PREFIX + query], model, timeout=45)[0])  # a hung Ollama must leave room for the words inside the mod's 120 s
+        vec = search_vectors(conn, qvec, project, 50)
+        info = {r[0]: r[1:] for r in conn.execute(
             'SELECT rowid, conv, pos, ts, kind, (SELECT parent FROM convs WHERE convs.conv = chunks.conv) FROM chunks WHERE rowid IN (%s)'
-            % ','.join('?' * len(found)), [c for c, _ in found])}
-    except Exception as e:  # whatever went wrong, the words still answer
+            % ','.join('?' * len(vec)), [c for c, _ in vec])}
+        # a few words give the exact match the lead; subagent chatter counts half, as in the word search
+        wv = 0.5 if len(re.findall(r'\w+', query)) <= 2 else 1.0
+        ranked = rrf([[h['id'] for h in words], [c for c, _ in vec]],
+                     [1.0, lambda i: wv * (0.5 if info[i][3] in ('sub', 'tool') else 1.0)])
+        hits = {h['id']: h for h in words}
+        for i in ranked[:limit]:
+            if i not in hits:  # only the vectors found it
+                conv, pos, ts, kind, parent = info[i]
+                hits[i] = {'conv': conv, 'parent': parent or '', 'ts': ts, 'kind': kind, 'pos': pos, 'snippet': _best_piece(conn, i, qvec), 'id': i}
+        merged = [hits[i] for i in ranked[:limit]]
+    except Exception as e:
         state = str(e) or type(e).__name__
-    # a few words give the exact match the lead; subagent chatter counts half, as in the word search
-    wv = 0.5 if len(re.findall(r'\w+', query)) <= 2 else 1.0
-    ranked = rrf([[h['id'] for h in words], [c for c, _ in vec]],
-                 [1.0, lambda i: wv * (0.5 if info[i][3] in ('sub', 'tool') else 1.0)])
-    hits = {h['id']: h for h in words}
-    for i in ranked[:limit]:
-        if i not in hits:  # only the vectors found it
-            conv, pos, ts, kind, parent = info[i]
-            hits[i] = {'conv': conv, 'parent': parent or '', 'ts': ts, 'kind': kind, 'pos': pos, 'snippet': _best_piece(conn, i, qvec), 'id': i}
-    return memdb.cut([hits[i] for i in ranked[:limit]], budget), state
+    return memdb.cut(merged, budget), state

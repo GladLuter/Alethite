@@ -7,6 +7,7 @@ import socket
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.request
 import zlib
@@ -23,7 +24,7 @@ TOOL = dict(type='assistant', timestamp=TS, cwd='C:\\a', message={
     'id': 'm2', 'model': 'claude-opus-5-5', 'role': 'assistant', 'content': [{'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'ls'}}]})
 
 
-def fake(texts, model=MODEL):
+def fake(texts, model=MODEL, timeout=None):
     """A bag of words: each word adds 1 to one of 256 dimensions, so texts with shared words are close."""
     out = []
     for t in texts:
@@ -34,11 +35,11 @@ def fake(texts, model=MODEL):
     return out
 
 
-def synonym(texts, model=MODEL):  # for this embedder «истёк» and «протух» are one word
+def synonym(texts, model=MODEL, timeout=None):  # for this embedder «истёк» and «протух» are one word
     return fake([t.replace('истёк', 'протух') for t in texts])
 
 
-def never(texts, model):
+def never(texts, model, timeout=None):
     raise AssertionError('the model must not be asked')
 
 
@@ -244,10 +245,10 @@ class VectorsTest(unittest.TestCase):
         embed_pending(self.conn, embed_fn=fake)
         words = search(self.conn, 'кэш')
 
-        def down(texts, model):
+        def down(texts, model, timeout):
             raise RuntimeError('Ollama не отвечает: тест')
 
-        def odd(texts, model):
+        def odd(texts, model, timeout):
             raise ValueError('странно')
 
         self.assertEqual(hybrid_search(self.conn, 'кэш', embed_fn=down), (words, 'Ollama не отвечает: тест'))
@@ -259,6 +260,29 @@ class VectorsTest(unittest.TestCase):
             hits, state = hybrid_search(self.conn, 'кэш', embed_fn=fake)
         self.assertEqual(hits, words)
         self.assertIn('numpy', state)
+
+    def test_query_is_embedded_with_a_short_timeout(self):  # a hung Ollama must leave room in the mod's 120 s for the word hits
+        embed_pending(self.conn, embed_fn=fake)
+        seen = []
+        hybrid_search(self.conn, 'кэш', embed_fn=lambda texts, model, timeout: (seen.append(timeout), fake(texts))[1])
+        self.assertEqual(seen, [45])
+
+    def test_hung_ollama_falls_back_to_words_with_reason(self):
+        embed_pending(self.conn, model='slow', embed_fn=fake)
+        _, url, _ = serve(self)
+        t = time.monotonic()
+        hits, state = hybrid_search(self.conn, 'кэш', model='slow', embed_fn=lambda texts, model, timeout: ollama_embed(texts, model, url, 0.2))
+        self.assertLess(time.monotonic() - t, 0.9)
+        self.assertEqual(hits, search(self.conn, 'кэш'))
+        self.assertIn('Ollama не отвечает', state)
+
+    def test_vector_only_hit_failing_to_build_falls_back_to_words(self):  # the transcript may be rewritten between the search and the read
+        embed_pending(self.conn, embed_fn=fake)
+        words = search(self.conn, 'ёжик в тумане')
+        with mock.patch('vectors._best_piece', side_effect=IndexError('гонка')) as piece:
+            hits, state = hybrid_search(self.conn, 'ёжик в тумане', embed_fn=fake)
+        piece.assert_called()
+        self.assertEqual((hits, state), (words, 'гонка'))
 
     def test_one_or_two_words_favour_the_word_search(self):
         embed_pending(self.conn, embed_fn=fake)
@@ -308,33 +332,40 @@ class VectorsTest(unittest.TestCase):
         self.assertEqual(embed_pending(self.conn, embed_fn=fake)['done'], 1)
 
 
+def serve(test):
+    """A fake Ollama on a local port: (server, url, requests seen). Model names pick the answer: missing, broken, garbage, empty, short, slow."""
+    seen = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            seen.append((self.path, body))
+            if body['model'] == 'slow':  # never answers; the client has given up long before
+                time.sleep(1)
+                return
+            code, out = {'missing': (404, {'error': 'model not found'}), 'broken': (500, {'error': 'boom'}),
+                         'garbage': (200, {'oops': 1}), 'empty': (200, {'embeddings': []}),
+                         'short': (200, {'embeddings': [[0.5] * 768 for _ in body['input'][1:]]})}.get(
+                body['model'], (200, {'embeddings': [[0.5] * 768 for _ in body['input']]}))
+            data = json.dumps(out).encode()
+            self.send_response(code)
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass
+
+    srv = http.server.HTTPServer(('127.0.0.1', 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    test.addCleanup(srv.server_close)
+    test.addCleanup(srv.shutdown)
+    return srv, 'http://127.0.0.1:%d' % srv.server_address[1], seen
+
+
 class OllamaEmbedTest(unittest.TestCase):
-    def serve(self):
-        seen = []
-
-        class H(http.server.BaseHTTPRequestHandler):
-            def do_POST(self):
-                body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-                seen.append((self.path, body))
-                code, out = {'missing': (404, {'error': 'model not found'}), 'broken': (500, {'error': 'boom'}),
-                             'garbage': (200, {'oops': 1})}.get(body['model'], (200, {'embeddings': [[0.5] * 768 for _ in body['input']]}))
-                data = json.dumps(out).encode()
-                self.send_response(code)
-                self.send_header('Content-Length', str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-
-            def log_message(self, *args):
-                pass
-
-        srv = http.server.HTTPServer(('127.0.0.1', 0), H)
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
-        self.addCleanup(srv.server_close)
-        self.addCleanup(srv.shutdown)
-        return srv, 'http://127.0.0.1:%d' % srv.server_address[1], seen
-
     def test_ollama_embed_against_a_local_fake_server(self):
-        srv, url, seen = self.serve()
+        srv, url, seen = serve(self)
         self.assertEqual([len(v) for v in ollama_embed(['a', 'b'], url=url)], [768, 768])
         self.assertEqual(seen, [('/api/embed', {'model': MODEL, 'input': ['a', 'b'], 'keep_alive': '30m'})])
         with self.assertRaisesRegex(RuntimeError, 'модель missing не найдена: выполните ollama pull missing'):
@@ -347,8 +378,21 @@ class OllamaEmbedTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'Ollama не отвечает'):
             ollama_embed(['a'], url=url)
 
+    def test_ollama_embed_rejects_too_few_vectors(self):  # hybrid_search takes [0] of the answer: an empty one must not become an IndexError
+        _, url, _ = serve(self)
+        for m in ('empty', 'short'):
+            with self.assertRaisesRegex(RuntimeError, 'Ollama не отвечает: вернул'):
+                ollama_embed(['a', 'b'], m, url)
+
+    def test_ollama_embed_gives_up_after_its_timeout(self):
+        _, url, _ = serve(self)
+        start = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, 'Ollama не отвечает'):
+            ollama_embed(['a'], 'slow', url, timeout=0.2)
+        self.assertLess(time.monotonic() - start, 0.9)  # the server sleeps 1 s
+
     def test_system_proxy_is_not_used(self):  # the owner's conversation text must not travel through a proxy
-        _, url, _ = self.serve()
+        _, url, _ = serve(self)
         with socket.socket() as s:  # a port that nobody listens on
             s.bind(('127.0.0.1', 0))
             dead = s.getsockname()[1]
