@@ -30,7 +30,8 @@ def _status(a):
 def _recall(a):
     conn = memdb.connect(a.db)
     upd = memdb.update(conn, a.projects)  # seconds when nothing is new
-    return {'hits': memdb.search(conn, a.query, None if a.all else project_key(a.cwd), a.limit), 'errors': upd['errors']}
+    hits, vector = vectors.hybrid_search(conn, a.query, None if a.all else project_key(a.cwd), a.limit, model=a.model)
+    return {'hits': hits, 'errors': upd['errors'], 'vector': vector}
 
 
 def _expand(a):
@@ -90,6 +91,7 @@ def _parser():
     s = add('recall', _recall)
     s.add_argument('--query', required=True)
     s.add_argument('--limit', type=int, default=8)
+    s.add_argument('--model', default=vectors.MODEL)
     scope = s.add_mutually_exclusive_group()
     scope.add_argument('--cwd', default=os.getcwd())
     scope.add_argument('--all', action='store_true')

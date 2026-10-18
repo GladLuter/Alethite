@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest import mock
 import cg
+import memdb
 import vectors
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
@@ -87,6 +88,18 @@ class CgTest(unittest.TestCase):
         self.assertEqual(hits('--cwd', 'C:\\a'), ['S1'])
         self.assertEqual(hits('--all'), ['S1', 'S2'])
         self.assertEqual(len(self.run_cg('recall', '--query', 'ёжик', '--all', '--limit', '1')[1]['hits']), 1)
+
+    def test_recall_says_what_the_vector_leg_did(self):
+        self.write('P/S1.jsonl', [owner_line('ёжик в тумане')])
+        code, out = self.run_cg('recall', '--query', 'ёжик', '--all')  # no vectors: words only, and the reason is told
+        self.assertEqual((code, len(out['hits'])), (0, 1))
+        self.assertNotEqual(out['vector'], 'ok')
+        conn = memdb.connect(self.db)
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('embed_model', 'A')")  # vectors of another model: the model is not asked
+        conn.close()
+        self.assertIn(vectors.MODEL, self.run_cg('recall', '--query', 'ёжик', '--all')[1]['vector'])
+        out = self.run_cg('recall', '--query', 'ёжик', '--all', '--model', 'B')[1]
+        self.assertTrue(out['hits'] and 'B' in out['vector'])
 
     def test_embed_options(self):
         out = self.run_cg('embed', '--model', 'other', '--max-seconds', '5')  # an empty index: nothing to embed, so no Ollama is called

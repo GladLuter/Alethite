@@ -169,6 +169,12 @@ class MemdbTest(unittest.TestCase):
         self.assertEqual({h['parent'] for h in hits}, {'', 'S1'})
         self.assertEqual(len(search(self.conn, 'ёжик')), 3)
 
+    def test_hit_carries_the_chunk_rowid(self):
+        self.write('P/S.jsonl', [owner_line('первое'), owner_line('второе ёжик')])
+        self.update()
+        hit = search(self.conn, 'ёжик')[0]
+        self.assertEqual(self.conn.execute('SELECT pos, text FROM chunks WHERE rowid = ?', (hit['id'],)).fetchone(), (hit['pos'], 'второе ёжик'))
+
     def test_fts_syntax_never_raises(self):
         self.write('P/S.jsonl', [owner_line('C++ и foo bar')])
         self.update()

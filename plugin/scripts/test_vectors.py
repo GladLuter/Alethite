@@ -3,19 +3,21 @@ import itertools
 import json
 import os
 import re
+import socket
 import sys
 import tempfile
 import threading
 import unittest
+import urllib.request
 import zlib
 from unittest import mock
 import numpy
 import memdb
-from memdb import connect, status, update
+from memdb import connect, search, status, update
 from test_memdb import TS, claude_line, owner_line
 from transcripts import project_key
-from vectors import (CHUNK, DIMS, DOC_PREFIX, MODEL, OVERLAP, chunks_of, embed_pending, ollama_embed, pack,
-                     search_vectors, vector_status)
+from vectors import (CHUNK, DIMS, DOC_PREFIX, MODEL, OVERLAP, chunks_of, embed_pending, hybrid_search, ollama_embed, pack,
+                     rrf, search_vectors, vector_status)
 
 TOOL = dict(type='assistant', timestamp=TS, cwd='C:\\a', message={
     'id': 'm2', 'model': 'claude-opus-5-5', 'role': 'assistant', 'content': [{'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'ls'}}]})
@@ -30,6 +32,22 @@ def fake(texts, model=MODEL):
             v[zlib.crc32(w.encode()) % DIMS] += 1.0
         out.append(v)
     return out
+
+
+def synonym(texts, model=MODEL):  # for this embedder «истёк» and «протух» are one word
+    return fake([t.replace('истёк', 'протух') for t in texts])
+
+
+def never(texts, model):
+    raise AssertionError('the model must not be asked')
+
+
+class RrfTest(unittest.TestCase):
+    def test_rrf(self):
+        self.assertEqual(rrf([[1, 2, 3], [3, 4]], [1.0, 1.0])[:2], [3, 1])
+        self.assertEqual(rrf([[1, 2], [3]], [1.0, 1.0]), [1, 3, 2])  # a tie keeps the order of the first list
+        self.assertEqual(rrf([[1], [2]], [0.5, 1.0]), [2, 1])
+        self.assertEqual(rrf([[1], [2, 3]], [1.0, lambda i: 0.1 if i == 2 else 1.0]), [1, 3, 2])  # a weight may depend on the id
 
 
 class ChunkingTest(unittest.TestCase):
@@ -172,6 +190,114 @@ class VectorsTest(unittest.TestCase):
         self.assertEqual(len(search_vectors(self.conn, qvec, None, limit=2)), 2)
         self.assertEqual(search_vectors(self.conn, qvec, project_key('C:\\нет')), [])
 
+    def test_model_change_waits_for_proof(self):
+        embed_pending(self.conn, embed_fn=fake)
+        n = self.q('SELECT count(*) FROM vecs')
+
+        def not_found(texts, model):
+            raise RuntimeError('модель %s не найдена: выполните ollama pull %s' % (model, model))
+
+        r = embed_pending(self.conn, model='typo', embed_fn=not_found)  # a typo in the model name must not cost the owner the index
+        self.assertIn('typo', r['errors'][0]['error'])
+        self.assertEqual((self.q('SELECT count(*) FROM vecs'), vector_status(self.conn)['model']), (n, MODEL))
+        self.assertEqual(r['pending'], self.records)  # all of it is still to be recomputed for the new model
+
+    def test_search_vectors_ignores_wrong_length_blobs(self):
+        embed_pending(self.conn, embed_fn=fake)
+        tool = self.q("SELECT rowid FROM chunks WHERE kind = 'tool'")
+        self.conn.execute("INSERT INTO vecs VALUES(?, 0, 'S1', X'0102')", (tool,))
+        hits = search_vectors(self.conn, pack(fake(['ёжик'])[0]), None)
+        self.assertEqual(len(hits), self.records)
+        self.assertNotIn(tool, [c for c, _ in hits])
+
+    def add(self, name, objs):
+        self.write(name, objs)
+        update(self.conn, self.projects)
+
+    def test_hybrid_finds_a_paraphrase_that_words_miss(self):
+        self.add('P1/S3.jsonl', [owner_line('кэш протух')])
+        embed_pending(self.conn, embed_fn=synonym)
+        self.assertEqual(search(self.conn, 'истёк'), [])
+        hits, state = hybrid_search(self.conn, 'истёк', embed_fn=synonym)
+        self.assertEqual(state, 'ok')
+        self.assertEqual((hits[0]['conv'], hits[0]['kind'], hits[0]['snippet']), ('S3', 'owner', 'кэш протух'))
+        self.assertEqual(set(hits[0]), {'conv', 'parent', 'ts', 'kind', 'pos', 'snippet', 'id'})
+
+    def test_hybrid_merges_both_legs(self):
+        embed_pending(self.conn, embed_fn=fake)
+        hits, state = hybrid_search(self.conn, 'ёжик в тумане', embed_fn=fake)
+        words = search(self.conn, 'ёжик в тумане', limit=50, budget=10 ** 9)
+        self.assertEqual(state, 'ok')
+        self.assertEqual(hits[0]['id'], words[0]['id'])
+        self.assertIn('«', hits[0]['snippet'])  # found by both: the snippet of the word search
+        self.assertEqual(len({h['id'] for h in hits}), len(hits))
+        self.assertGreater(len(hits), len(words))  # records that only the vectors found are added
+
+    def test_vector_only_hit_shows_the_best_piece(self):
+        text = 'альфа ' * 250 + 'бета ' * 300 + 'протух ' * 220
+        self.add('P1/S3.jsonl', [owner_line(text)])
+        embed_pending(self.conn, embed_fn=synonym)
+        hits, _ = hybrid_search(self.conn, 'истёк', embed_fn=synonym)
+        self.assertEqual(hits[0]['snippet'], chunks_of(text)[3][:300])  # not the first piece
+
+    def test_vector_leg_down_falls_back_to_words_with_reason(self):
+        embed_pending(self.conn, embed_fn=fake)
+        words = search(self.conn, 'кэш')
+
+        def down(texts, model):
+            raise RuntimeError('Ollama не отвечает: тест')
+
+        def odd(texts, model):
+            raise ValueError('странно')
+
+        self.assertEqual(hybrid_search(self.conn, 'кэш', embed_fn=down), (words, 'Ollama не отвечает: тест'))
+        self.assertEqual(hybrid_search(self.conn, 'кэш', embed_fn=odd), (words, 'странно'))  # any exception, not only RuntimeError
+        hits, state = hybrid_search(self.conn, 'кэш', model='other', embed_fn=never)  # the vectors in the base are of another model
+        self.assertEqual(hits, words)
+        self.assertIn('other', state)
+        with mock.patch.dict(sys.modules, {'numpy': None}):
+            hits, state = hybrid_search(self.conn, 'кэш', embed_fn=fake)
+        self.assertEqual(hits, words)
+        self.assertIn('numpy', state)
+
+    def test_one_or_two_words_favour_the_word_search(self):
+        embed_pending(self.conn, embed_fn=fake)
+        w1, w2, v1 = [r[0] for r in self.conn.execute("SELECT rowid FROM chunks WHERE kind = 'owner' ORDER BY rowid LIMIT 3")]
+        word_hits = [dict(id=i, conv='', parent='', ts='', kind='owner', pos=0, snippet='x') for i in (w1, w2)]
+        with mock.patch.object(memdb, 'search', return_value=word_hits), mock.patch('vectors.search_vectors', return_value=[(v1, 0.9)]):
+            ids = lambda query: [h['id'] for h in hybrid_search(self.conn, query, embed_fn=fake)[0]]
+            self.assertEqual(ids('один два'), [w1, w2, v1])  # the vector hit counts half
+            self.assertEqual(ids('один два три'), [w1, v1, w2])
+
+    def test_no_vectors_falls_back_with_reason(self):
+        hits, state = hybrid_search(self.conn, 'кэш', embed_fn=never)
+        self.assertEqual(hits, search(self.conn, 'кэш'))
+        self.assertNotEqual(state, 'ok')
+
+    def test_scope_and_budget_hold(self):
+        self.add('P1/S4.jsonl', [owner_line('бюджет ' + 'слово ' * 200 + str(i)) for i in range(30)])
+        self.add('P2/S5.jsonl', [owner_line('бюджет другого проекта', cwd='C:\\b')])
+        embed_pending(self.conn, embed_fn=fake)
+        a = project_key('C:\\a')
+        hits, state = hybrid_search(self.conn, 'бюджет', project=a, embed_fn=fake)
+        self.assertEqual(state, 'ok')
+        self.assertTrue(0 < len(hits) <= 8)
+        self.assertLessEqual(sum(len(h['snippet']) for h in hits), 7000)
+        self.assertTrue(all(h['conv'] in ('S1', 'S4', 'agent-a1') for h in hits))
+        small, _ = hybrid_search(self.conn, 'бюджет', project=a, budget=300, embed_fn=fake)
+        self.assertTrue(0 < len(small) < len(hits) and sum(len(h['snippet']) for h in small) <= 300)
+        self.assertEqual(len(hybrid_search(self.conn, 'бюджет', project=a, limit=3, embed_fn=fake)[0]), 3)
+
+    def test_subagent_counts_half_in_the_vector_leg(self):
+        # the subagent row is indexed first: on equal similarity only the weight can put the owner's row ahead
+        self.add('P1/S1/subagents/agent-a2.jsonl', [owner_line('начало'), claude_line('кэш протух'), claude_line('итог')])
+        self.add('P1/S3.jsonl', [owner_line('кэш протух')])
+        embed_pending(self.conn, embed_fn=synonym)
+        hits, state = hybrid_search(self.conn, 'истёк', limit=50, embed_fn=synonym)  # half weight sends the subagent row far down
+        self.assertEqual(state, 'ok')
+        order =[(h['conv'], h['kind']) for h in hits]
+        self.assertLess(order.index(('S3', 'owner')), order.index(('agent-a2', 'sub')))
+
     def test_rewritten_file_drops_its_vectors(self):
         embed_pending(self.conn, embed_fn=fake)
         self.assertGreater(self.q("SELECT count(*) FROM vecs WHERE conv = 'S1'"), 0)
@@ -183,7 +309,7 @@ class VectorsTest(unittest.TestCase):
 
 
 class OllamaEmbedTest(unittest.TestCase):
-    def test_ollama_embed_against_a_local_fake_server(self):
+    def serve(self):
         seen = []
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -203,7 +329,12 @@ class OllamaEmbedTest(unittest.TestCase):
 
         srv = http.server.HTTPServer(('127.0.0.1', 0), H)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
-        url = 'http://127.0.0.1:%d' % srv.server_address[1]
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        return srv, 'http://127.0.0.1:%d' % srv.server_address[1], seen
+
+    def test_ollama_embed_against_a_local_fake_server(self):
+        srv, url, seen = self.serve()
         self.assertEqual([len(v) for v in ollama_embed(['a', 'b'], url=url)], [768, 768])
         self.assertEqual(seen, [('/api/embed', {'model': MODEL, 'input': ['a', 'b'], 'keep_alive': '30m'})])
         with self.assertRaisesRegex(RuntimeError, 'модель missing не найдена: выполните ollama pull missing'):
@@ -215,6 +346,17 @@ class OllamaEmbedTest(unittest.TestCase):
         srv.server_close()  # the port is closed now
         with self.assertRaisesRegex(RuntimeError, 'Ollama не отвечает'):
             ollama_embed(['a'], url=url)
+
+    def test_system_proxy_is_not_used(self):  # the owner's conversation text must not travel through a proxy
+        _, url, _ = self.serve()
+        with socket.socket() as s:  # a port that nobody listens on
+            s.bind(('127.0.0.1', 0))
+            dead = s.getsockname()[1]
+        urllib.request.install_opener(None)  # urlopen caches the proxies it saw first
+        self.addCleanup(urllib.request.install_opener, None)
+        proxy = 'http://127.0.0.1:%d' % dead
+        with mock.patch.dict(os.environ, {'HTTP_PROXY': proxy, 'http_proxy': proxy, 'NO_PROXY': '', 'no_proxy': ''}):
+            self.assertEqual(len(ollama_embed(['a'], url=url)), 1)
 
 
 if __name__ == '__main__':

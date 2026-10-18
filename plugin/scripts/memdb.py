@@ -23,7 +23,7 @@ IN_PROJECT = """(:p IS NULL
   OR conv IN (SELECT c.conv FROM convs c JOIN conv_projects p ON p.conv = c.parent WHERE p.project = :p))"""
 _SEARCH = """
 SELECT conv, pos, ts, kind, snippet(chunks, 0, '«', '»', '…', 24),
-       (SELECT parent FROM convs WHERE convs.conv = chunks.conv)
+       (SELECT parent FROM convs WHERE convs.conv = chunks.conv), rowid
 FROM chunks WHERE chunks MATCH :q AND """ + IN_PROJECT + """
 ORDER BY bm25(chunks) * CASE WHEN kind IN ('sub', 'tool') THEN 0.5 ELSE 1.0 END LIMIT :n
 """
@@ -125,12 +125,18 @@ def search(conn, query, project=None, limit=8, budget=7000):
         rows = conn.execute(_SEARCH, {'q': q, 'p': project, 'n': limit}).fetchall()
         if rows:
             break
+    return cut([{'conv': conv, 'parent': parent or '', 'ts': ts, 'kind': kind, 'pos': pos, 'snippet': snippet, 'id': rowid}
+                for conv, pos, ts, kind, snippet, parent, rowid in rows], budget)
+
+
+def cut(hits, budget):
+    """The leading hits whose snippets together fit in `budget` characters."""
     out, used = [], 0
-    for conv, pos, ts, kind, snippet, parent in rows:
-        used += len(snippet)
+    for h in hits:
+        used += len(h['snippet'])
         if used > budget:
             break
-        out.append({'conv': conv, 'parent': parent or '', 'ts': ts, 'kind': kind, 'pos': pos, 'snippet': snippet})
+        out.append(h)
     return out
 
 
