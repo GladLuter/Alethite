@@ -376,14 +376,20 @@ const flag = (a: string[], name: string) => a[a.indexOf(name) + 1]!
 
 // The Obsidian server beneath the plugin: a vault in memory. `fail(tool)` says which calls break, `failure` how (a throw, or an answer with isError and the server's JSON).
 const fakeVault = (on: any) => {
-  const v = { files: new Map<string, string>(), calls: [] as string[], fail: (_tool: string) => false, failure: 'throws' as 'throws' | 'isError', onWrite: (_path: string) => {} }
+  const v = { files: new Map<string, string>(), calls: [] as string[], listLimit: undefined as number | undefined, fail: (_tool: string) => false, failure: 'throws' as 'throws' | 'isError', onWrite: (_path: string) => {} }
   const ok = (text: string) => ({ value: { content: [{ type: 'text', text }], isError: false } })
-  on('mcp.call', (_: unknown, e: { server: string; tool: string; args: { path: string; directory: string; content?: string } }) => {
+  on('mcp.call', (_: unknown, e: { server: string; tool: string; args: { path: string; directory: string; content?: string; limit?: number } }) => {
     const { path, directory, content } = e.args
     v.calls.push(`${e.server} ${e.tool} ${path ?? directory}`)
     if (v.fail(e.tool)) return v.failure === 'throws' ? { deny: 'connection refused' } : { value: { content: [{ type: 'text', text: JSON.stringify({ error: 'vault locked', errorCode: 'vault_locked' }) }], isError: true } }
     if (e.tool === 'create_vault_file') return v.onWrite(path), v.files.set(path, content!), ok('OK')
-    if (e.tool === 'list_vault_files') return ok(JSON.stringify({ files: [...v.files.keys()].filter(p => p.startsWith(directory + '/')) }))
+    if (e.tool === 'list_vault_files') {
+      // as the server answers: at most `limit` files (200 when not asked), and `truncated` says whether more were there
+      const all = [...v.files.keys()].filter(p => p.startsWith(directory + '/'))
+      const max = e.args.limit ?? 200
+      v.listLimit = e.args.limit
+      return ok(JSON.stringify({ files: all.slice(0, max), truncated: all.length > max, total: all.length }))
+    }
     const front = v.files.get(path)!.split('---')[1] ?? ''
     const frontmatter = Object.fromEntries([...front.matchAll(/^(\w+): (.*)$/gm)].map(([, k, x]) => [k, x === 'null' ? null : isNaN(Number(x)) ? x : Number(x)]))
     return ok(JSON.stringify({ path, frontmatter: Object.keys(frontmatter).length ? frontmatter : null, keys: Object.keys(frontmatter) }))
@@ -499,6 +505,18 @@ test('/cg-stats: the summary cannot be built: the note is safe, the owner is tol
   expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
   expect(m.store.get('outbox')).toEqual([])
   expect(m.toasts[0]).toContain('cg-stats-summary')
+  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-stats-summary' })
+  expect(text).toContain(T.cgStatsSummaryFailed)
+})
+
+test('/cg-stats: the folder listing is truncated: the note is written, the summary is not rebuilt, the owner is told', async ($, on) => {
+  const { vault, m, stats, today } = await statsRig($, on)
+  for (let i = 0; i < 1001; i++) vault.files.set(`${FOLDER}/old-${i}.md`, OTHER)
+  const { text } = await stats()
+  expect(vault.listLimit).toBe(1000)
+  expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
+  expect(vault.files.has(SUMMARY_PATH)).toBe(false)
+  expect(m.toasts[0]).toContain(T.summaryTruncated)
   expect(m.store.get('lastError')).toMatchObject({ where: 'cg-stats-summary' })
   expect(text).toContain(T.cgStatsSummaryFailed)
 })
