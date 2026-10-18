@@ -76,6 +76,16 @@ const guarded = async ($: EngineInterface, where: string, work: () => Promise<un
   }
 }
 
+// Three seconds into a session: bring the index up to date, then give the records without vectors up to 2 minutes of the embedding model (the rest waits for the next start).
+const catchUp = async ($: EngineInterface, python: string, model: string) => {
+  const isIndexed = await guarded($, 'index', async () => indexErrors($, 'index', (await runCg($, python, ['index'], 600_000)).errors as IndexError[], false))
+  if (!isIndexed) return // the same database would fail the same way, and the first cause must stay in /cg-health
+  await guarded($, 'embed', async () => {
+    const [first] = (await runCg($, python, ['embed', '--model', model, '--max-seconds', '120'], 180_000)).errors as { error: string }[]
+    if (first) throw new Error(first.error)
+  })
+}
+
 // chats whose size was already asked of cg.py in this load, so a failure is not retried on every tick
 const asked = new Set<string>()
 
@@ -216,6 +226,8 @@ export const register: Register = (on, options) => {
   const idleMinutes = options.bandIdleMinutes as number
   const showLimits = options.showLimits as boolean
   const python = options.python as string
+  const embedModel = options.embedModel as string
+  let isVectorToasted = false // the owner hears of a missing vector search once per load of the mod, not on every recall
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'cg-band', description: T.cgBandDescription, argumentHint: '[off]' })
@@ -242,7 +254,7 @@ export const register: Register = (on, options) => {
     // timers outlive /clear (no session.start after it), so one tick also keeps a new session's figures fresh
     $.clock.every(30_000, () => void guarded($, 'timer', () => refresh($, python)))
     // session.end has 1.5 s, too little to index: a closed chat is picked up here, or by the next recall. Never awaited, so session.start is not held.
-    $.clock.after(3_000, () => void guarded($, 'index', async () => indexErrors($, 'index', (await runCg($, python, ['index'], 600_000)).errors as IndexError[], false)))
+    $.clock.after(3_000, () => void catchUp($, python, embedModel))
     await guarded($, 'session.start', () => refresh($, python))
 
     return next(e)
@@ -287,7 +299,8 @@ export const register: Register = (on, options) => {
       ])
       const facts = files.filter(f => f.name.endsWith('.md') && f.name !== 'MEMORY.md').length
       const memory = dir === null ? null : { dir, facts }
-      return { text: healthLines({ version, index, memory, lastError: lastError as LastError | undefined }).join('\n') }
+      const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" embed --model ${embedModel} --max-seconds 100000`
+      return { text: healthLines({ version, index, memory, embedCmd, lastError: lastError as LastError | undefined }).join('\n') }
     } catch (err) {
       await fail($, 'cg-health', err)
       return { text: T.cgHealthFailed }
@@ -321,9 +334,16 @@ export const register: Register = (on, options) => {
       const input = e as unknown as { query: string; scope?: string; limit?: number }
       if (typeof input.query !== 'string' || !input.query.trim()) throw new Error(T.noQuery) // the schema asks for it, but nothing makes the model obey
       // the root, not cwd(): a shell `cd` into a subfolder moves cwd but not the project the conversations are filed under
-      const r = await runCg($, python, recallArgs(input, await $.session.root()))
+      const r = await runCg($, python, recallArgs(input, await $.session.root(), embedModel))
       await indexErrors($, 'recall', r.errors as IndexError[], true)
-      return formatHits(r.hits as Hit[], input.query, input.scope ?? 'project')
+      const hits = formatHits(r.hits as Hit[], input.query, input.scope ?? 'project')
+      if (r.vector === 'ok') return hits
+      // only the words were searched: the model reads why, the owner gets a toast once and /cg-health keeps the cause
+      const off = T.vectorOff(String(r.vector))
+      if (!isVectorToasted) $.ui.toast(off)
+      isVectorToasted = true
+      await noteError($, 'recall', off)
+      return `${hits}\n${off}`
     }),
   )
 

@@ -61,6 +61,7 @@ export const T = {
   noQuery: 'query не передан: нужны слова, которые встретились бы в разговоре.',
   noRows: 'Записей нет: проверь conv и pos в строке находки recall.',
   recallFailed: (msg: string) => `Поиск по памяти не удался: ${msg}`,
+  vectorOff: (why: string) => `векторный поиск недоступен: ${why}`,
   indexErrors: (n: number) => `CacheGuard: индекс — ${n} ошибок, см. /cg-health`,
   indexErrorFirst: (n: number, path: string, msg: string) => `не прочитано файлов: ${n}, первый ${path} — ${msg}`,
   cgIndexDescription: 'Обновить индекс долгой памяти (rebuild: перечитать всё заново)',
@@ -77,6 +78,8 @@ export const T = {
   memoryNotLoaded: 'Память: папка auto-memory в этот чат не загружена',
   healthLastError: (when: string, where: string, msg: string) => `Последняя ошибка: ${when}, ${where} — ${msg}`,
   healthNoError: 'Последняя ошибка: нет',
+  vectorsLine: (model: string | null, withVectors: number, total: number, updated: string | null) => `Векторы: ${withVectors} из ${total} записей (${model ?? 'модель не выбрана'}), обновлены ${updated ?? 'ни разу'}`,
+  vectorsHint: (cmd: string) => `Досчитать в терминале (можно остановить и продолжить): ${cmd}`,
 
   // /cg-stats: the reply, and the summary note written into the vault
   cgStatsDescription: 'Замер расходов за N дней (по умолчанию 7): заметка и сводка в Obsidian',

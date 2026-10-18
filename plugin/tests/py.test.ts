@@ -16,12 +16,25 @@ test('parseCg: only the last 300 characters of stderr', () => {
   expect(msg).toBe('x'.repeat(300))
 })
 test('health: empty memory and index error are spelled out', () => {
-  const lines = healthLines({ version: '2.1.295', index: 'OperationalError: x', memory: null })
+  const lines = healthLines({ version: '2.1.295', index: 'OperationalError: x', memory: null, embedCmd: '' })
   expect(lines.join('\n')).toContain('OperationalError: x')
   expect(lines.join('\n')).toContain(T.memoryNotLoaded)
 })
 test('health: last error is shown with where and message', () => {
-  const lines = healthLines({ version: '2.1.295', index: {}, memory: null, lastError: { at: 0, where: 'recall', msg: 'boom' } })
+  const lines = healthLines({ version: '2.1.295', index: {}, memory: null, embedCmd: '', lastError: { at: 0, where: 'recall', msg: 'boom' } })
   expect(lines.join('\n')).toContain('recall')
   expect(lines.join('\n')).toContain('boom')
+})
+const cmd = 'python "C:/p/scripts/cg.py" embed --model embeddinggemma --max-seconds 100000'
+const vectors = { model: 'embeddinggemma', with_vectors: 40, total: 100, updated: '2026-10-18T09:00:00Z' }
+test('health: vectors, and the command to finish them while some records have none', () => {
+  const lines = healthLines({ version: '2.1.295', index: { vectors }, memory: null, embedCmd: cmd })
+  expect(lines).toContain(T.vectorsLine('embeddinggemma', 40, 100, '2026-10-18T09:00:00Z'))
+  expect(lines).toContain(T.vectorsHint(cmd))
+})
+test('health: every record has vectors: no command; nothing about vectors when the index is unreadable', () => {
+  const done = healthLines({ version: '2.1.295', index: { vectors: { ...vectors, with_vectors: 100 } }, memory: null, embedCmd: cmd })
+  expect(done.join(' ')).toContain('100 из 100')
+  expect(done.join(' ')).not.toContain(cmd)
+  expect(healthLines({ version: '2.1.295', index: 'OperationalError: x', memory: null, embedCmd: cmd }).join(' ')).not.toContain('Векторы')
 })

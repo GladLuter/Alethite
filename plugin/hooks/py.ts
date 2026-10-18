@@ -15,14 +15,22 @@ export const parseCg = ({ exitCode, stdout, stderr }: { exitCode: number; stdout
   throw new Error(json?.error || stderr.trim().slice(-300) || `exit ${exitCode}`)
 }
 
+type Vectors = { model: string | null; with_vectors: number; total: number; updated: string | null }
+
+// embedCmd: the terminal command that finishes the vectors, shown while some records have none.
 export const healthLines = (h: {
   version: string
   index: Record<string, unknown> | string
   memory: { dir: string; facts: number } | null
+  embedCmd: string
   lastError?: LastError
-}) => [
-  T.healthVersion(h.version),
-  typeof h.index === 'string' ? T.healthIndexError(h.index) : T.healthIndex(h.index),
-  h.memory ? T.healthMemory(h.memory.dir, h.memory.facts) : T.memoryNotLoaded,
-  h.lastError ? T.healthLastError(new Date(h.lastError.at).toLocaleString('ru-RU'), h.lastError.where, h.lastError.msg) : T.healthNoError,
-]
+}) => {
+  const v = typeof h.index === 'string' ? undefined : (h.index.vectors as Vectors | undefined)
+  return [
+    T.healthVersion(h.version),
+    typeof h.index === 'string' ? T.healthIndexError(h.index) : T.healthIndex(h.index),
+    ...(v ? [T.vectorsLine(v.model, v.with_vectors, v.total, v.updated), ...(v.with_vectors < v.total ? [T.vectorsHint(h.embedCmd)] : [])] : []),
+    h.memory ? T.healthMemory(h.memory.dir, h.memory.facts) : T.memoryNotLoaded,
+    h.lastError ? T.healthLastError(new Date(h.lastError.at).toLocaleString('ru-RU'), h.lastError.where, h.lastError.msg) : T.healthNoError,
+  ]
+}

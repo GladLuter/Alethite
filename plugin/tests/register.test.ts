@@ -81,13 +81,16 @@ test('python missing: one toast, the error is kept for /cg-health', async ($, on
 test('/cg-health: version, index figures, auto-memory folder with its fact count', async ($, on) => {
   const dir = 'C:/mem/memory'
   const files = [{ path: 'C:/p/CLAUDE.md', type: 'Project', tokens: 1 }, { path: `${dir}/MEMORY.md`, type: 'AutoMem', tokens: 1 }]
-  const status = { db: 'C:/x/mem.db', convs: 12, rows: 3400, last_update: '2026-10-13T09:00:00', size_mb: 1.5 }
+  const vectors = { model: 'embeddinggemma', with_vectors: 3000, total: 3400, updated: '2026-10-18T09:00:00Z' }
+  const status = { db: 'C:/x/mem.db', convs: 12, rows: 3400, last_update: '2026-10-13T09:00:00', size_mb: 1.5, vectors }
   wire(on, [], () => ({ value: { context: { window: 1_000_000, breakdown: { memoryFiles: files } }, rateLimits: [] } }), (_, e) => (e.argv.includes('status') ? ran(JSON.stringify(status)) : noTurn()))
   on('fs.list', () => ({ value: ['MEMORY.md', 'a.md', 'b.md', 'notes.txt'].map(name => ({ name, kind: 'file', size: 1, mtimeMs: 0, isLink: false })) }))
   const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
   expect(text).toContain('2.1.295')
   expect(text).toContain('3400')
   expect(text).toContain(T.healthMemory(dir, 2))
+  expect(text).toContain(T.vectorsLine('embeddinggemma', 3000, 3400, '2026-10-18T09:00:00Z'))
+  expect(text).toMatch(/python ".*cg\.py" embed --model embeddinggemma --max-seconds 100000/) // 400 records have no vectors: how to finish them
 })
 
 // What session.model() answers; /model changes it unless `isSticky` (the command printed an error and left the model alone).
@@ -209,6 +212,7 @@ test('new worker: the box refuses the text: readable reason and the saved path, 
 const hit = { conv: 'S', parent: '', ts: '2026-10-10T08:00:00Z', kind: 'owner', pos: 42, snippet: '«кэш» истёк' }
 const hitLine = '[2026-10-10 owner conv=S pos=42] «кэш» истёк'
 const bad = { path: 'C:/p/a.jsonl', error: 'PermissionError: x' }
+const found = (extra: object = {}) => ran(JSON.stringify({ hits: [hit], errors: [], vector: 'ok', ...extra }))
 const failed = (error: string) => ({ value: { exitCode: 1, stdout: JSON.stringify({ error }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
 // A session that has started: cg.py answers `answer(argv)` and every run is recorded in `runs`; the tools and the index timer exist.
@@ -233,15 +237,16 @@ test('memory tools: both in the prompt, not behind ToolSearch', async ($, on) =>
 })
 
 test('recall: project by default, scope=all and the limit when asked; the model reads the hits', async ($, on) => {
-  const m = await started($, on, () => ran(JSON.stringify({ hits: [hit], errors: [] })))
+  const m = await started($, on, () => found())
   expect(await recall($)).toEqual({ result: hitLine })
   await recall($, { query: 'q', scope: 'all', limit: 3 })
-  expect(ofCg(m, 'recall').map(r => r.argv)).toEqual([['recall', '--query=кэш', '--cwd', 'C:/w', '--limit', '8'], ['recall', '--query=q', '--all', '--limit', '3']])
+  const model = ['--model', 'embeddinggemma']
+  expect(ofCg(m, 'recall').map(r => r.argv)).toEqual([['recall', '--query=кэш', '--cwd', 'C:/w', '--limit', '8', ...model], ['recall', '--query=q', '--all', '--limit', '3', ...model]])
   expect(m.toasts).toEqual([])
 })
 
 test('recall: nothing found says what to try', async ($, on) => {
-  await started($, on, () => ran('{"hits":[],"errors":[]}'))
+  await started($, on, () => ran('{"hits":[],"errors":[],"vector":"ok"}'))
   expect(await recall($)).toEqual({ result: T.noHits('кэш', 'project') })
 })
 
@@ -259,10 +264,20 @@ test('recall: no query means no search', async ($, on) => {
 })
 
 test('recall: unreadable transcripts reach the owner, the hits still reach the model', async ($, on) => {
-  const m = await started($, on, () => ran(JSON.stringify({ hits: [hit], errors: [bad, bad] })))
+  const m = await started($, on, () => found({ errors: [bad, bad] }))
   expect(await recall($)).toEqual({ result: hitLine })
   expect(m.toasts).toEqual([T.indexErrors(2)])
   expect(m.store.get('lastError')).toMatchObject({ where: 'recall', msg: T.indexErrorFirst(2, bad.path, bad.error) })
+})
+
+test('recall: no vector search: the model reads why, the owner gets one toast per load, /cg-health keeps the cause', async ($, on) => {
+  const why = 'Ollama не отвечает: тест'
+  const m = await started($, on, () => found({ vector: why }))
+  const told = { result: [hitLine, T.vectorOff(why)].join('\n') }
+  expect(await recall($)).toEqual(told)
+  expect(await recall($)).toEqual(told)
+  expect(m.toasts).toEqual([T.vectorOff(why)])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'recall', msg: T.vectorOff(why) })
 })
 
 test('recall_more: reads around a hit', async ($, on) => {
@@ -277,9 +292,12 @@ test('recall_more: a failure is an error for the model and a toast for the owner
   expect(m.toasts).toEqual([T.failed('recall_more', 'boom')])
 })
 
+const indexed = (errors: unknown[] = []) => ran(JSON.stringify({ files: 1, rows: 5, convs: 1, seconds: 0.5, errors }))
+const embedded = (errors: unknown[] = []) => ran(JSON.stringify({ done: 5, pending: 0, seconds: 1.5, model: 'embeddinggemma', errors }))
+
 test('index: 3 s after session.start, in the background, with errors on the status line', async ($, on) => {
   const statuses: (string | undefined)[] = []
-  const m = await started($, on, () => ran(JSON.stringify({ files: 1, rows: 5, convs: 1, seconds: 0.5, errors: [bad] })), statuses)
+  const m = await started($, on, a => (a[0] === 'embed' ? embedded() : indexed([bad])), statuses)
   expect(ofCg(m, 'index')).toEqual([]) // session.start did not wait for it, nor run it
   await m.clock.advance(3_000)
   expect(ofCg(m, 'index')).toEqual([{ argv: ['index'], timeoutMs: 600_000 }])
@@ -295,7 +313,33 @@ test('index: a failed background run goes to the status line and /cg-health, not
   expect(statuses).toContain(T.statusError('database is locked'))
   expect(m.toasts).toEqual([])
   expect(m.store.get('lastError')).toMatchObject({ where: 'index', msg: 'database is locked' })
+  expect(ofCg(m, 'embed')).toEqual([]) // the same database would fail the same way, and the first cause must stay in /cg-health
 })
+
+test('embed: right after the index in the same timer, 120 s of work at most, and the setting names the model', { options: { embedModel: 'bge-m3' } }, async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'embed' ? embedded() : a[0] === 'recall' ? found() : indexed()))
+  await m.clock.advance(3_000)
+  expect(m.runs.filter(r => r.argv[0] === 'index' || r.argv[0] === 'embed')).toEqual([
+    { argv: ['index'], timeoutMs: 600_000 },
+    { argv: ['embed', '--model', 'bge-m3', '--max-seconds', '120'], timeoutMs: 180_000 },
+  ])
+  await recall($)
+  expect(ofCg(m, 'recall')[0]!.argv.slice(-2)).toEqual(['--model', 'bge-m3'])
+  expect(m.toasts).toEqual([])
+})
+
+// the embed run answers `answer`; the owner must see `msg` on the status line and in /cg-health, and no toast
+const embedGoesWrong = async ($: any, on: any, answer: unknown, msg: string) => {
+  const statuses: (string | undefined)[] = []
+  const m = await started($, on, a => (a[0] === 'embed' ? answer : indexed()), statuses)
+  await m.clock.advance(3_000)
+  expect(statuses).toContain(T.statusError(msg))
+  expect(m.store.get('lastError')).toMatchObject({ where: 'embed', msg })
+  expect(m.toasts).toEqual([])
+}
+
+test('embed: a failed run reaches the status line and /cg-health, not a toast', ($, on) => embedGoesWrong($, on, failed('Ollama не отвечает: x'), 'Ollama не отвечает: x'))
+test('embed: errors in a finished run do too', ($, on) => embedGoesWrong($, on, embedded([{ error: 'RuntimeError: модель m не найдена' }]), 'RuntimeError: модель m не найдена'))
 
 test('/cg-index: updates, "rebuild" re-reads everything, the answer has the figures', async ($, on) => {
   const stats = { files: 3, rows: 120, convs: 7, seconds: 1.234, errors: [] }

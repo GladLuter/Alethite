@@ -7,12 +7,14 @@ export type Row = { ts: string; kind: string; pos: number; text: string }
 export type IndexError = { path: string; error: string }
 
 // The query is one `--query=…` item: one starting with `-` would otherwise be read as a flag.
-export const recallArgs = (input: { query: string; scope?: string; limit?: number }, cwd: string) => [
+export const recallArgs = (input: { query: string; scope?: string; limit?: number }, cwd: string, model: string) => [
   'recall',
   `--query=${input.query}`,
   ...(input.scope === 'all' ? ['--all'] : ['--cwd', cwd]),
   '--limit',
   String(input.limit ?? 8),
+  '--model',
+  model,
 ]
 
 const day = (ts: string) => ts.slice(0, 10)
