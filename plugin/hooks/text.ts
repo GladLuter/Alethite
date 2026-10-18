@@ -75,6 +75,8 @@ export const T = {
   healthVersion: (version: string) => `Claude Code ${version}`,
   healthIndex: (i: Record<string, unknown>) => `Индекс: ${i.convs} чатов, ${i.rows} записей, ${i.size_mb} МБ, обновлён ${i.last_update ?? 'ни разу'} (${i.db})`,
   healthIndexError: (msg: string) => `Индекс: ошибка — ${msg}`,
+  projectLine: (root: string, convs: number) => `Проект: ${root} — разговоров в индексе: ${convs}`,
+  projectEmpty: 'Поиск «в этом проекте» ничего не найдёт: попросите scope=all',
   healthMemory: (dir: string, facts: number) => `Память: ${facts} файлов в ${dir}`,
   memoryNotLoaded: 'Память: папка auto-memory в этот чат не загружена',
   healthLastError: (when: string, where: string, msg: string) => `Последняя ошибка: ${when}, ${where} — ${msg}`,

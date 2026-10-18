@@ -24,7 +24,12 @@ def _index(a):
 
 
 def _status(a):
-    return memdb.status(memdb.connect(a.db))
+    conn = memdb.connect(a.db)
+    out = memdb.status(conn)
+    if a.cwd:  # the scope of «в этом проекте»: a key that matches no conversation makes the project search find nothing
+        key = project_key(a.cwd)
+        out['project'] = {'key': key, 'convs': conn.execute('SELECT count(*) FROM convs WHERE ' + memdb.IN_PROJECT, {'p': key}).fetchone()[0]}
+    return out
 
 
 def _recall(a):
@@ -87,7 +92,7 @@ def _parser():
         return s
 
     add('index', _index).add_argument('--rebuild', action='store_true')
-    add('status', _status)
+    add('status', _status).add_argument('--cwd')
     s = add('recall', _recall)
     s.add_argument('--query', required=True)
     s.add_argument('--limit', type=int, default=8)

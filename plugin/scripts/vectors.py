@@ -60,36 +60,64 @@ def pack(vec):
     return (v / (np.linalg.norm(v) or 1)).tobytes()
 
 
+def _embed(rows, model, embed_fn, batch):
+    """_STORE parameters for every piece of `rows` ((rowid, text, ...) tuples); raises if the model cannot embed them."""
+    parts = [(rid, text, i, p) for rid, text, *_ in rows for i, p in enumerate(chunks_of(text))]
+    texts = [DOC_PREFIX + p[3] for p in parts]
+    # slices of `batch` texts: one huge record must not turn into one request that times out again and again
+    out = [v for i in range(0, len(texts), batch) for v in embed_fn(texts[i:i + batch], model)]
+    if len(out) != len(texts):
+        raise RuntimeError('Ollama вернул %d векторов вместо %d' % (len(out), len(texts)))
+    return [(i, pack(v), rid, text) for (rid, text, i, _), v in zip(parts, out)]
+
+
 def embed_pending(conn, model=MODEL, embed_fn=ollama_embed, max_seconds=120, batch=16, now=time.monotonic):
-    """Embed records that have no vectors yet, `batch` records per transaction, until `max_seconds` pass. Progress is kept on an error."""
+    """Embed records that have no vectors yet, `batch` records per transaction, until `max_seconds` pass. Progress is kept on an error.
+    A failed batch is retried record by record. A record that fails alone while a trivial text still embeds is the record's fault: it gets
+    an empty vector (a sentinel, counted as done until the model changes) and an entry in 'errors'. If the trivial text fails too,
+    Ollama or the model is out (down, hung, no such model): the run stops and marks nothing."""
     _np()
     start, done, errors = now(), 0, []
     # vectors of different models cannot be compared, but the old ones go only once the new model has answered (a typo in its name costs nothing)
     changed = _meta(conn, 'embed_model') != model
     todo = lambda: _RECORDS if changed else _PENDING  # until then every record is to be done again
-    while True:
-        rows = conn.execute('SELECT rowid, text ' + todo() + ' ORDER BY rowid LIMIT ?', (batch,)).fetchall()
+    fmt = lambda e: '%s: %s' % (type(e).__name__, e)
+    is_out = False
+    while not is_out:
+        rows = conn.execute('SELECT rowid, text, conv, pos ' + todo() + ' ORDER BY rowid LIMIT ?', (batch,)).fetchall()
         if not rows:
             break
+        stored, bad, ok = [], [], len(rows)
         try:
-            parts = [(rid, text, i, p) for rid, text in rows for i, p in enumerate(chunks_of(text))]
-            texts = [DOC_PREFIX + p[3] for p in parts]
-            # slices of `batch` texts: one huge record must not turn into one request that times out again and again
-            out = [v for i in range(0, len(texts), batch) for v in embed_fn(texts[i:i + batch], model)]
-            if len(out) != len(texts):
-                raise RuntimeError('Ollama вернул %d векторов вместо %d' % (len(out), len(texts)))
-            blobs = [pack(v) for v in out]  # the model works without the write lock; the transaction is only the inserts
-            conn.execute('BEGIN IMMEDIATE')
-            with conn:
-                if changed:
-                    conn.execute('DELETE FROM vecs')
-                    conn.execute("INSERT OR REPLACE INTO meta VALUES('embed_model', ?)", (model,))
-                conn.executemany(_STORE, [(i, b, rid, text) for (rid, text, i, _), b in zip(parts, blobs)])
+            stored = _embed(rows, model, embed_fn, batch)
+        except Exception:
+            stored, ok = [], 0
+            for row in rows:
+                try:
+                    stored += _embed([row], model, embed_fn, batch)
+                    ok += 1
+                except Exception as e:
+                    try:
+                        _embed([(0, 'ping')], model, embed_fn, batch)
+                    except Exception as gone:
+                        errors.append({'error': fmt(gone)})
+                        is_out = True
+                        break
+                    bad.append(row)
+                    errors.append({'conv': row[2], 'pos': row[3], 'error': fmt(e)})
+        if stored or bad:  # the model has answered without the write lock; the transaction is only the inserts
+            try:
+                conn.execute('BEGIN IMMEDIATE')
+                with conn:
+                    if changed:
+                        conn.execute('DELETE FROM vecs')
+                        conn.execute("INSERT OR REPLACE INTO meta VALUES('embed_model', ?)", (model,))
+                    conn.executemany(_STORE, stored + [(0, b'', rid, text) for rid, text, *_ in bad])
+            except Exception as e:  # e.g. the index is being updated and the database stays locked
+                errors.append({'error': fmt(e)})
+                break
             changed = False
-        except Exception as e:
-            errors.append({'error': '%s: %s' % (type(e).__name__, e)})
-            break
-        done += len(rows)
+        done += ok
         if now() - start > max_seconds:
             break
     if done:
@@ -116,7 +144,8 @@ def search_vectors(conn, qvec, project, limit=50):
 def vector_status(conn):
     total = conn.execute('SELECT count(*) ' + _RECORDS).fetchone()[0]
     return {'model': _meta(conn, 'embed_model'), 'with_vectors': total - conn.execute('SELECT count(*) ' + _PENDING).fetchone()[0],
-            'total': total, 'updated': _meta(conn, 'vec_updated')}
+            'total': total, 'failed': conn.execute('SELECT count(*) FROM vecs WHERE length(vec) = 0').fetchone()[0],  # sentinels, see embed_pending
+            'updated': _meta(conn, 'vec_updated')}
 
 
 def rrf(lists, weights, k=60):

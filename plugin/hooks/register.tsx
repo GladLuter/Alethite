@@ -308,16 +308,18 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'cg-health' }, async $ => {
     try {
       const dir = await memoryDir($)
+      // the root, as recall scopes by it: this is what «в этом проекте» means
+      const root = await $.session.root()
       const [{ version }, index, files, lastError] = await Promise.all([
         $.session.version(),
-        runCg($, python, ['status']).catch((err: Error) => err.message),
+        runCg($, python, ['status', `--cwd=${root}`]).catch((err: Error) => err.message),
         dir === null ? [] : $.fs.list(dir),
         $.store.get('lastError'),
       ])
       const facts = files.filter(f => f.name.endsWith('.md') && f.name !== 'MEMORY.md').length
       const memory = dir === null ? null : { dir, facts }
       const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" embed --model ${embedModel} --max-seconds 100000`
-      return { text: healthLines({ version, index, memory, embedCmd, lastError: lastError as LastError | undefined }).join('\n') }
+      return { text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined }).join('\n') }
     } catch (err) {
       await fail($, 'cg-health', err)
       return { text: T.cgHealthFailed }

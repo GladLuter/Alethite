@@ -110,7 +110,7 @@ class VectorsTest(unittest.TestCase):
             return fake(texts)
 
         self.assertEqual(self.q('SELECT count(*) FROM chunks'), self.records + 1)
-        self.assertEqual(vector_status(self.conn), {'model': None, 'with_vectors': 0, 'total': self.records, 'updated': None})
+        self.assertEqual(vector_status(self.conn), {'model': None, 'with_vectors': 0, 'total': self.records, 'failed': 0, 'updated': None})
         r = embed_pending(self.conn, embed_fn=spy, batch=2)
         self.assertEqual((r['done'], r['pending'], r['model'], r['errors']), (self.records, 0, MODEL, []))
         self.assertTrue(all(m == MODEL and len(t) <= 2 for m, t in calls))
@@ -154,6 +154,88 @@ class VectorsTest(unittest.TestCase):
         self.assertIn('Ollama', r['errors'][0]['error'])
         self.assertFalse(self.conn.in_transaction)
         self.assertEqual(vector_status(self.conn)['with_vectors'], 1)
+        self.assertEqual(vector_status(self.conn)['failed'], 0)  # the second batch failed because Ollama is down, not because of its record
+
+    def poison(self, text='совсем другое про кэш'):
+        """An embedder that cannot embed one record (the way Ollama answers 500 for it) and works for the rest; the rowid of that record."""
+        def bad(texts, model, timeout=None):
+            if any(text in t for t in texts):
+                raise RuntimeError('Ollama не отвечает: HTTP Error 500: Internal Server Error')
+            return fake(texts)
+
+        return bad, self.q("SELECT rowid FROM chunks WHERE text = ?", text)
+
+    def test_one_failing_record_gets_a_sentinel_and_the_run_goes_on(self):
+        bad, rowid = self.poison()
+        r = embed_pending(self.conn, embed_fn=bad)  # the whole batch fails, the records are then tried one by one
+        self.assertEqual((r['done'], r['pending']), (self.records - 1, 0))
+        self.assertEqual(r['errors'], [{'conv': 'S1', 'pos': self.q('SELECT pos FROM chunks WHERE rowid = ?', rowid), 'error': r['errors'][0]['error']}])
+        self.assertIn('Ollama', r['errors'][0]['error'])
+        self.assertNotIn('кэш', json.dumps(r['errors'], ensure_ascii=False))  # the position says which record; its text is not repeated
+        self.assertEqual(self.q('SELECT count(*) FROM vecs WHERE length(vec) = 0'), 1)
+        self.assertEqual(self.q('SELECT count(*) FROM vecs WHERE chunk = ? AND length(vec) = 0', rowid), 1)
+        st = vector_status(self.conn)
+        self.assertEqual((st['failed'], st['with_vectors'], st['total']), (1, self.records, self.records))  # a sentinel counts as done
+        again = embed_pending(self.conn, embed_fn=never)  # the second run does nothing and does not ask the model
+        self.assertEqual((again['done'], again['pending'], again['errors']), (0, 0, []))
+        # search ignores the sentinel, and the record is still found by its words
+        qvec = pack(fake(['кэш'])[0])
+        self.assertEqual(len(search_vectors(self.conn, qvec, None)), self.records - 1)
+        self.assertNotIn(rowid, [c for c, _ in search_vectors(self.conn, qvec, None)])
+        hits, state = hybrid_search(self.conn, 'кэш', embed_fn=fake)
+        self.assertEqual(state, 'ok')
+        self.assertIn(rowid, [h['id'] for h in hits])
+
+    def test_a_dead_ollama_writes_no_sentinels_and_stops(self):
+        calls = []
+
+        def down(texts, model):
+            calls.append(len(texts))
+            raise RuntimeError('Ollama не отвечает: тест')
+
+        r = embed_pending(self.conn, embed_fn=down)
+        self.assertEqual((r['done'], r['pending']), (0, self.records))
+        self.assertEqual(len(r['errors']), 1)
+        self.assertIn('Ollama не отвечает', r['errors'][0]['error'])
+        self.assertEqual(self.q('SELECT count(*) FROM vecs'), 0)
+        self.assertEqual(vector_status(self.conn)['failed'], 0)
+        self.assertLessEqual(len(calls), 3)  # the batch, its first record, one probe: it does not go through all the records
+
+    def test_ollama_dying_during_the_record_by_record_pass_keeps_what_was_done(self):
+        calls = []
+
+        def dies(texts, model):
+            calls.append(1)
+            if len(calls) == 1 or len(calls) > 3:  # the batch fails, two records pass alone, then Ollama is gone
+                raise RuntimeError('Ollama не отвечает: тест')
+            return fake(texts)
+
+        r = embed_pending(self.conn, embed_fn=dies)
+        self.assertEqual((r['done'], r['pending'], len(r['errors'])), (2, self.records - 2, 1))
+        self.assertEqual(vector_status(self.conn)['failed'], 0)
+
+    def test_a_locked_database_is_reported_and_nothing_is_counted(self):
+        self.conn.execute('PRAGMA busy_timeout = 50')
+        other = connect(self.conn.execute('PRAGMA database_list').fetchone()[2])
+        self.addCleanup(other.close)
+        other.execute('BEGIN IMMEDIATE')  # the index is being updated at this moment
+        r = embed_pending(self.conn, embed_fn=fake)
+        self.assertEqual((r['done'], r['pending'], len(r['errors'])), (0, self.records, 1))
+        self.assertIn('locked', r['errors'][0]['error'])
+
+    def test_a_missing_model_does_not_turn_the_records_into_sentinels(self):
+        def not_found(texts, model):
+            raise RuntimeError('модель %s не найдена: выполните ollama pull %s' % (model, model))
+
+        r = embed_pending(self.conn, embed_fn=not_found)
+        self.assertEqual((r['done'], r['pending'], self.q('SELECT count(*) FROM vecs')), (0, self.records, 0))
+
+    def test_model_change_clears_sentinels(self):
+        bad, _ = self.poison()
+        embed_pending(self.conn, embed_fn=bad)
+        self.assertEqual(vector_status(self.conn)['failed'], 1)
+        r = embed_pending(self.conn, model='other', embed_fn=fake)  # the new model may well cope with that record
+        self.assertEqual((r['done'], r['errors'], vector_status(self.conn)['failed']), (self.records, [], 0))
 
     def test_wrong_number_of_vectors_writes_nothing(self):
         r = embed_pending(self.conn, embed_fn=lambda texts, model: fake(texts)[:-1], batch=1000)

@@ -77,6 +77,7 @@ test('python missing: one toast, the error is kept for /cg-health', async ($, on
   const toasts: string[] = []
   on('ui.toast', (_: unknown, e: { text: string }) => (toasts.push(e.text), { value: undefined }))
   wire(on, [], noSize, () => ({ deny: 'ENOENT' }))
+  on('session.root', () => ({ value: 'C:/w' }))
   await ($ as any).command.run({ command: 'cg-band', args: '' })
   await ($ as any).command.run({ command: 'cg-band', args: '' })
   // the engine's own reason follows (a timeout must not read like a missing command), worded by the engine
@@ -93,15 +94,29 @@ test('/cg-health: version, index figures, auto-memory folder with its fact count
   const dir = 'C:/mem/memory'
   const files = [{ path: 'C:/p/CLAUDE.md', type: 'Project', tokens: 1 }, { path: `${dir}/MEMORY.md`, type: 'AutoMem', tokens: 1 }]
   const vectors = { model: 'embeddinggemma', with_vectors: 3000, total: 3400, updated: '2026-10-18T09:00:00Z' }
-  const status = { db: 'C:/x/mem.db', convs: 12, rows: 3400, last_update: '2026-10-13T09:00:00', size_mb: 1.5, vectors }
-  wire(on, [], () => ({ value: { context: { window: 1_000_000, breakdown: { memoryFiles: files } }, rateLimits: [] } }), (_, e) => (e.argv.includes('status') ? ran(JSON.stringify(status)) : noTurn()))
+  const status = { db: 'C:/x/mem.db', convs: 12, rows: 3400, last_update: '2026-10-13T09:00:00', size_mb: 1.5, vectors, project: { key: 'c:/w', convs: 5 } }
+  const argvs: string[][] = []
+  wire(on, [], () => ({ value: { context: { window: 1_000_000, breakdown: { memoryFiles: files } }, rateLimits: [] } }), (_, e) => (argvs.push(e.argv), e.argv.includes('status') ? ran(JSON.stringify(status)) : noTurn()))
+  on('session.root', () => ({ value: 'C:/w' }))
   on('fs.list', () => ({ value: ['MEMORY.md', 'a.md', 'b.md', 'notes.txt'].map(name => ({ name, kind: 'file', size: 1, mtimeMs: 0, isLink: false })) }))
   const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
+  expect(argvs.find(a => a.includes('status'))!.slice(2)).toEqual(['status', '--cwd=C:/w']) // the root, the same folder that recall scopes by
+  expect(text).toContain(T.projectLine('C:/w', 5))
+  expect(text).not.toContain(T.projectEmpty)
   expect(text).toContain('2.1.295')
   expect(text).toContain('3400')
   expect(text).toContain(T.healthMemory(dir, 2))
   expect(text).toContain(T.vectorsLine('embeddinggemma', 3000, 3400, '2026-10-18T09:00:00Z'))
   expect(text).toMatch(/python ".*cg\.py" embed --model embeddinggemma --max-seconds 100000/) // 400 records have no vectors: how to finish them
+})
+
+test('/cg-health: a project that matches no conversation is said so', async ($, on) => {
+  const status = { db: 'C:/x/mem.db', convs: 12, rows: 3400, last_update: null, size_mb: 1.5, project: { key: 'c:/w', convs: 0 } }
+  wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) => (e.argv.includes('status') ? ran(JSON.stringify(status)) : noTurn()))
+  on('session.root', () => ({ value: 'C:/w' }))
+  const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
+  expect(text).toContain(T.projectLine('C:/w', 0))
+  expect(text).toContain(T.projectEmpty)
 })
 
 // What session.model() answers; /model changes it unless `isSticky` (the command printed an error and left the model alone).

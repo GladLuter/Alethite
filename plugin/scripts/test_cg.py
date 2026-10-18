@@ -11,6 +11,7 @@ from unittest import mock
 import cg
 import memdb
 import vectors
+from transcripts import project_key
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
 TS = '2026-10-13T10:00:00.000Z'
@@ -80,6 +81,16 @@ class CgTest(unittest.TestCase):
         hit = self.run_cg('recall', '--query', 'ёжика', '--all')[1]['hits'][0]
         code, out = self.run_cg('expand', '--conv', hit['conv'], '--pos', str(hit['pos']))
         self.assertEqual((code, [r['kind'] for r in out['rows']]), (0, ['owner', 'claude']))
+
+    def test_status_project(self):  # /cg-health shows which project «в этом проекте» means and how many conversations it finds
+        self.write('A/S1.jsonl', [owner_line('здесь', cwd='C:\a')])
+        self.write('A/S1/subagents/agent-a1.jsonl', [owner_line('суб', cwd='')])  # no cwd of its own: the parent's project
+        self.write('B/S2.jsonl', [owner_line('там', cwd='C:\b')])
+        self.run_cg('index')
+        for cwd, n in (('C:\a', 2), ('C:\b', 1), ('C:\нет', 0)):
+            code, out = self.run_cg('status', '--cwd', cwd)
+            self.assertEqual((code, out['project'], out['convs']), (0, {'key': project_key(cwd), 'convs': n}, 3))
+        self.assertNotIn('project', self.run_cg('status')[1])  # without --cwd the answer is as before
 
     def test_recall_scope(self):
         self.write('A/S1.jsonl', [owner_line('ёжик здесь', cwd='C:\\a')])
