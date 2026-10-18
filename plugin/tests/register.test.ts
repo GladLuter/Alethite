@@ -51,6 +51,13 @@ test('"Остаться здесь" and an armed picker last one turn', async ($
   expect(await buttons(ui)).toEqual(['launch', 'stay'])
 })
 
+test('no band while the model is working', async ($, on) => {
+  wire(on, [], () => ({ value: usage }))
+  await ($ as any).command.run({ command: 'cg-band', args: '' }) // forces the band
+  expect(await buttons(await $.ui.mount({ plugin: 'cacheguard', surface: 'terminal', component: 'AbovePrompt', props } as never))).toEqual(['launch', 'stay'])
+  expect(await buttons(await $.ui.mount({ plugin: 'cacheguard', surface: 'terminal', component: 'AbovePrompt', props: { ...props, isWorking: true } } as never))).toEqual([])
+})
+
 const noSize = () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } })
 
 test('after a restart the size comes from cg.py last-turn, asked once per chat', async ($, on) => {
@@ -72,10 +79,14 @@ test('python missing: one toast, the error is kept for /cg-health', async ($, on
   wire(on, [], noSize, () => ({ deny: 'ENOENT' }))
   await ($ as any).command.run({ command: 'cg-band', args: '' })
   await ($ as any).command.run({ command: 'cg-band', args: '' })
-  expect(toasts).toEqual([T.failed('last-turn', T.pythonMissing('python'))])
+  // the engine's own reason follows (a timeout must not read like a missing command), worded by the engine
+  const lead = `${T.pythonMissing('python')} (`
+  expect(toasts).toHaveLength(1)
+  expect(toasts[0]).toContain(T.failed('last-turn', lead))
+  expect(toasts[0]!.endsWith('ENOENT)')).toBe(true)
   const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
-  expect(text).toContain(T.pythonMissing('python'))
   expect(text).toContain('last-turn')
+  expect(text).toContain(lead)
 })
 
 test('/cg-health: version, index figures, auto-memory folder with its fact count', async ($, on) => {
@@ -306,12 +317,12 @@ test('index: 3 s after session.start, in the background, with errors on the stat
   expect(m.store.get('lastError')).toMatchObject({ where: 'index' })
 })
 
-test('index: a failed background run goes to the status line and /cg-health, not to a toast', async ($, on) => {
+test('index: a failed background run goes to the status line, /cg-health and one toast', async ($, on) => {
   const statuses: (string | undefined)[] = []
   const m = await started($, on, () => failed('database is locked'), statuses)
   await m.clock.advance(3_000)
   expect(statuses).toContain(T.statusError('database is locked'))
-  expect(m.toasts).toEqual([])
+  expect(m.toasts).toEqual([T.catchUpFailed('index')])
   expect(m.store.get('lastError')).toMatchObject({ where: 'index', msg: 'database is locked' })
   expect(ofCg(m, 'embed')).toEqual([]) // the same database would fail the same way, and the first cause must stay in /cg-health
 })
@@ -328,18 +339,48 @@ test('embed: right after the index in the same timer, 120 s of work at most, and
   expect(m.toasts).toEqual([])
 })
 
-// the embed run answers `answer`; the owner must see `msg` on the status line and in /cg-health, and no toast
+// the embed run answers `answer`; the owner must see `msg` on the status line and in /cg-health, and hear of it in one toast
 const embedGoesWrong = async ($: any, on: any, answer: unknown, msg: string) => {
   const statuses: (string | undefined)[] = []
   const m = await started($, on, a => (a[0] === 'embed' ? answer : indexed()), statuses)
   await m.clock.advance(3_000)
   expect(statuses).toContain(T.statusError(msg))
   expect(m.store.get('lastError')).toMatchObject({ where: 'embed', msg })
-  expect(m.toasts).toEqual([])
+  expect(m.toasts).toEqual([T.catchUpFailed('embed')])
 }
 
-test('embed: a failed run reaches the status line and /cg-health, not a toast', ($, on) => embedGoesWrong($, on, failed('Ollama не отвечает: x'), 'Ollama не отвечает: x'))
+test('embed: a failed run reaches the status line, /cg-health and a toast', ($, on) => embedGoesWrong($, on, failed('Ollama не отвечает: x'), 'Ollama не отвечает: x'))
 test('embed: errors in a finished run do too', ($, on) => embedGoesWrong($, on, embedded([{ error: 'RuntimeError: модель m не найдена' }]), 'RuntimeError: модель m не найдена'))
+
+test('catch-up: the toast comes once per load of the mod, every failure is kept for /cg-health', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'embed' ? failed('Ollama не отвечает: x') : indexed()))
+  await m.clock.advance(3_000)
+  expect(m.toasts).toEqual([T.catchUpFailed('embed')])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'embed', msg: 'Ollama не отвечает: x' })
+  m.store.delete('lastError')
+  await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false }) // a second catch-up in the same load
+  await m.clock.advance(3_000)
+  expect(m.toasts).toEqual([T.catchUpFailed('embed')])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'embed', msg: 'Ollama не отвечает: x' })
+})
+
+// item 2: the engine refuses a tool schema
+test('session.start: a refused registration leaves the status line, the timers and the other registrations alone', async ($, on) => {
+  const statuses: (string | undefined)[] = []
+  const store = new Map<string, unknown>()
+  const names = { commands: [] as string[], tools: [] as string[] }
+  on('command.register', (_: unknown, e: { name: string }) => (names.commands.push(e.name), { value: { command: e.name } }))
+  on('tool.register', (_: unknown, e: { name: string }) => (names.tools.push(e.name), { deny: 'schema refused' }))
+  on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  const clock = wire(on, statuses, () => ({ value: usage }), (_, e) => (e.argv.includes('index') ? indexed() : e.argv.includes('embed') ? embedded() : noTurn()), store)
+  await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false })
+  expect(statuses[0]).toMatch(/^ctx /) // the first refresh ran
+  expect(statuses.at(-1)).toMatch(/^CacheGuard: ошибка — .*schema refused/) // ...and the refusal is the last word
+  expect(store.get('lastError')).toMatchObject({ where: 'register', msg: expect.stringContaining('schema refused') })
+  expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats'], tools: ['recall', 'recall_more'] }) // both tools were tried, the commands went through
+  await clock.advance(30_000) // the timers run
+  expect(statuses.at(-1)).toMatch(/^ctx /)
+})
 
 test('/cg-index: updates, "rebuild" re-reads everything, the answer has the figures', async ($, on) => {
   const stats = { files: 3, rows: 120, convs: 7, seconds: 1.234, errors: [] }

@@ -1,5 +1,6 @@
 {
   "name": "cacheguard-local",
+  "description": "CacheGuard — local marketplace for this repo",
   "owner": { "name": "Evgenii S" },
   "plugins": [{ "name": "cacheguard", "source": "./plugin" }]
 }

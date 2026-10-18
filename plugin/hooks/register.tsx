@@ -24,8 +24,8 @@ const isBusy = atom({ plugin: 'cacheguard', key: 'isBusy' } as const, false)
 
 const runCg = async ($: EngineInterface, python: string, args: string[], timeoutMs = 120_000) => {
   // run() rejects only when the child cannot start or times out
-  const r = await $.process.run([python, `${$.plugin.root}/scripts/cg.py`, ...args], { timeoutMs }).catch(() => {
-    throw new Error(T.pythonMissing(python))
+  const r = await $.process.run([python, `${$.plugin.root}/scripts/cg.py`, ...args], { timeoutMs }).catch((err: unknown) => {
+    throw new Error(`${T.pythonMissing(python)} (${message(err)})`)
   })
   return parseCg(r)
 }
@@ -77,13 +77,15 @@ const guarded = async ($: EngineInterface, where: string, work: () => Promise<un
 }
 
 // Three seconds into a session: bring the index up to date, then give the records without vectors up to 2 minutes of the embedding model (the rest waits for the next start).
+// Returns the step that failed, if one did.
 const catchUp = async ($: EngineInterface, python: string, model: string) => {
   const isIndexed = await guarded($, 'index', async () => indexErrors($, 'index', (await runCg($, python, ['index'], 600_000)).errors as IndexError[], false))
-  if (!isIndexed) return // the same database would fail the same way, and the first cause must stay in /cg-health
-  await guarded($, 'embed', async () => {
+  if (!isIndexed) return 'index' // the same database would fail the same way, and the first cause must stay in /cg-health
+  const isEmbedded = await guarded($, 'embed', async () => {
     const [first] = (await runCg($, python, ['embed', '--model', model, '--max-seconds', '120'], 180_000)).errors as { error: string }[]
     if (first) throw new Error(first.error)
   })
+  return isEmbedded ? null : 'embed'
 }
 
 // chats whose size was already asked of cg.py in this load, so a failure is not retried on every tick
@@ -228,34 +230,49 @@ export const register: Register = (on, options) => {
   const python = options.python as string
   const embedModel = options.embedModel as string
   let isVectorToasted = false // the owner hears of a missing vector search once per load of the mod, not on every recall
+  let isCatchUpToasted = false // likewise a failed background catch-up: the status line shows it for 30 s only
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'cg-band', description: T.cgBandDescription, argumentHint: '[off]' })
-    await $.command.register({ name: 'cg-health', description: T.cgHealthDescription })
-    await $.command.register({ name: 'cg-index', description: T.cgIndexDescription, argumentHint: '[rebuild]' })
-    await $.command.register({ name: 'cg-stats', description: T.cgStatsDescription, argumentHint: '[дней]' })
-    // two short schemas in every request cost less than the extra ToolSearch turn a deferred tool needs in each new chat
-    await $.tool.register({
-      name: 'recall',
-      description: T.recallDescription,
-      inputSchema: {
-        type: 'object',
-        properties: { query: { type: 'string' }, scope: { type: 'string', enum: ['project', 'all'] }, limit: { type: 'integer', minimum: 1, maximum: 20 } },
-        required: ['query'],
-      },
-      isDeferred: false,
-    })
-    await $.tool.register({
-      name: 'recall_more',
-      description: T.recallMoreDescription,
-      inputSchema: { type: 'object', properties: { conv: { type: 'string' }, pos: { type: 'integer' } }, required: ['conv', 'pos'] },
-      isDeferred: false,
-    })
     // timers outlive /clear (no session.start after it), so one tick also keeps a new session's figures fresh
     $.clock.every(30_000, () => void guarded($, 'timer', () => refresh($, python)))
     // session.end has 1.5 s, too little to index: a closed chat is picked up here, or by the next recall. Never awaited, so session.start is not held.
-    $.clock.after(3_000, () => void catchUp($, python, embedModel))
+    $.clock.after(
+      3_000,
+      () =>
+        void catchUp($, python, embedModel).then(failed => {
+          if (failed && !isCatchUpToasted) $.ui.toast(T.catchUpFailed(failed))
+          if (failed) isCatchUpToasted = true
+        }),
+    )
     await guarded($, 'session.start', () => refresh($, python))
+
+    // after the status line and the timers: a refusal of one schema must not leave the owner without the rest
+    // two short schemas in every request cost less than the extra ToolSearch turn a deferred tool needs in each new chat
+    const registrations = [
+      () => $.command.register({ name: 'cg-band', description: T.cgBandDescription, argumentHint: '[off]' }),
+      () => $.command.register({ name: 'cg-health', description: T.cgHealthDescription }),
+      () => $.command.register({ name: 'cg-index', description: T.cgIndexDescription, argumentHint: '[rebuild]' }),
+      () => $.command.register({ name: 'cg-stats', description: T.cgStatsDescription, argumentHint: '[дней]' }),
+      () =>
+        $.tool.register({
+          name: 'recall',
+          description: T.recallDescription,
+          inputSchema: {
+            type: 'object',
+            properties: { query: { type: 'string' }, scope: { type: 'string', enum: ['project', 'all'] }, limit: { type: 'integer', minimum: 1, maximum: 20 } },
+            required: ['query'],
+          },
+          isDeferred: false,
+        }),
+      () =>
+        $.tool.register({
+          name: 'recall_more',
+          description: T.recallMoreDescription,
+          inputSchema: { type: 'object', properties: { conv: { type: 'string' }, pos: { type: 'integer' } }, required: ['conv', 'pos'] },
+          isDeferred: false,
+        }),
+    ]
+    for (const work of registrations) await guarded($, 'register', work)
 
     return next(e)
   })
@@ -371,7 +388,7 @@ export const register: Register = (on, options) => {
     const armed = await read($, isArmed)
     const busy = await read($, isBusy)
 
-    if (s === null || e.props.hasSurvey || s.id === hidden) return next(e)
+    if (s === null || e.props.hasSurvey || e.props.isWorking || s.id === hidden) return next(e)
     if (!isStale(s, minTokens, idleMinutes) && s.id !== forced) return next(e)
 
     const { Box, Button, Text } = $.ui.resolve(e)

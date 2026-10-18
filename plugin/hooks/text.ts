@@ -52,7 +52,8 @@ export const T = {
 
   // errors: the toast of an owner-started action; cg.py could not be started at all
   failed: (where: string, msg: string) => `CacheGuard (${where}): ${msg}`,
-  pythonMissing: (python: string) => `Не удалось запустить «${python}»: команды нет или она не ответила вовремя. Проверьте настройку «Команда Python».`,
+  pythonMissing: (python: string) => `Python не запустился или не ответил вовремя (команда «${python}», настройка «Команда Python»)`,
+  catchUpFailed: (where: string) => `CacheGuard: фоновое обновление памяти (${where}) не удалось, подробности — /cg-health`,
 
   // long memory: what the model reads (tool descriptions, results) and what the owner sees about the index
   recallDescription: 'Поиск по прошлым разговорам владельца: что обсуждали, решали, где что лежит. query — слова искомого, не вопрос. По умолчанию ищет в этом проекте, scope=all — везде. Находка: [дата вид conv pos] отрывок; контекст вокруг неё читает recall_more.',
