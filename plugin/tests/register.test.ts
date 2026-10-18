@@ -374,19 +374,19 @@ const NOTE = '---\nhost: PC-1\ndate: 2026-10-13\nusd_per_owner_msg: 4.5\n---\n# 
 const OTHER = '---\nhost: PC-2\ndate: 2026-10-01\nusd_per_owner_msg: 5.1\n---\n'
 const flag = (a: string[], name: string) => a[a.indexOf(name) + 1]!
 
-// The Obsidian server beneath the plugin: a vault in memory. `fail(tool)` says which calls break, `failure` how (a throw, or an answer with isError).
+// The Obsidian server beneath the plugin: a vault in memory. `fail(tool)` says which calls break, `failure` how (a throw, or an answer with isError and the server's JSON).
 const fakeVault = (on: any) => {
   const v = { files: new Map<string, string>(), calls: [] as string[], fail: (_tool: string) => false, failure: 'throws' as 'throws' | 'isError', onWrite: (_path: string) => {} }
   const ok = (text: string) => ({ value: { content: [{ type: 'text', text }], isError: false } })
-  on('mcp.call', (_: unknown, e: { server: string; tool: string; args: { path: string; content?: string } }) => {
-    v.calls.push(`${e.server} ${e.tool} ${e.args.path}`)
-    if (v.fail(e.tool)) return v.failure === 'throws' ? { deny: 'connection refused' } : { value: { content: [{ type: 'text', text: 'vault locked' }], isError: true } }
-    if (e.tool === 'vault_write') return v.onWrite(e.args.path), v.files.set(e.args.path, e.args.content!), ok('written')
-    if (e.tool === 'vault_list') return ok(JSON.stringify([...v.files.keys()].filter(p => p.startsWith(e.args.path + '/')).map(p => p.slice(e.args.path.length + 1))))
-    const content = v.files.get(e.args.path)!
-    const front = content.split('---')[1] ?? ''
+  on('mcp.call', (_: unknown, e: { server: string; tool: string; args: { path: string; directory: string; content?: string } }) => {
+    const { path, directory, content } = e.args
+    v.calls.push(`${e.server} ${e.tool} ${path ?? directory}`)
+    if (v.fail(e.tool)) return v.failure === 'throws' ? { deny: 'connection refused' } : { value: { content: [{ type: 'text', text: JSON.stringify({ error: 'vault locked', errorCode: 'vault_locked' }) }], isError: true } }
+    if (e.tool === 'create_vault_file') return v.onWrite(path), v.files.set(path, content!), ok('OK')
+    if (e.tool === 'list_vault_files') return ok(JSON.stringify({ files: [...v.files.keys()].filter(p => p.startsWith(directory + '/')) }))
+    const front = v.files.get(path)!.split('---')[1] ?? ''
     const frontmatter = Object.fromEntries([...front.matchAll(/^(\w+): (.*)$/gm)].map(([, k, x]) => [k, x === 'null' ? null : isNaN(Number(x)) ? x : Number(x)]))
-    return ok(JSON.stringify({ content, frontmatter }))
+    return ok(JSON.stringify({ path, frontmatter: Object.keys(frontmatter).length ? frontmatter : null, keys: Object.keys(frontmatter) }))
   })
   return v
 }
@@ -434,7 +434,7 @@ test('/cg-stats: Obsidian up: the note and the summary are written, the outbox i
   expect(summary).toContain('PC-1')
   expect(summary).toContain('PC-2')
   expect(summary.split('\n').filter(l => /^\| 2026/.test(l))).toHaveLength(2) // the summary does not list itself
-  expect(vault.calls[0]).toBe(`obsidian vault_write ${notePath('PC-1', today())}`)
+  expect(vault.calls[0]).toBe(`obsidian create_vault_file ${notePath('PC-1', today())}`)
   expect(m.store.get('outbox')).toEqual([])
   expect(m.toasts).toEqual([])
   expect(text).toContain(T.cgStatsSent(1))
@@ -475,7 +475,7 @@ test('/cg-stats: what waited from an earlier day goes first', async ($, on) => {
   vault.onWrite = () => duringSend.push(m.store.get('outbox'))
   const { text } = await stats()
   expect(duringSend[0]).toEqual([old, { path: notePath('PC-1', today()), content: NOTE }]) // saved before the first send, in case the send is cut short
-  expect(vault.calls.slice(0, 2)).toEqual([`obsidian vault_write ${old.path}`, `obsidian vault_write ${notePath('PC-1', today())}`])
+  expect(vault.calls.slice(0, 2)).toEqual([`obsidian create_vault_file ${old.path}`, `obsidian create_vault_file ${notePath('PC-1', today())}`])
   expect(vault.files.get(old.path)).toBe('old')
   expect(m.store.get('outbox')).toEqual([])
   expect(text).toContain(T.cgStatsSent(2))
@@ -494,13 +494,25 @@ test('/cg-stats: the vault dies after the first of two: only the rest stays queu
 
 test('/cg-stats: the summary cannot be built: the note is safe, the owner is told', async ($, on) => {
   const { vault, m, stats, today } = await statsRig($, on)
-  vault.fail = tool => tool === 'vault_list'
+  vault.fail = tool => tool === 'list_vault_files'
   const { text } = await stats()
   expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
   expect(m.store.get('outbox')).toEqual([])
   expect(m.toasts[0]).toContain('cg-stats-summary')
   expect(m.store.get('lastError')).toMatchObject({ where: 'cg-stats-summary' })
   expect(text).toContain(T.cgStatsSummaryFailed)
+})
+
+test('/cg-stats: the summary rebuild skips the summary itself, a non-.md file and a note in a subfolder', async ($, on) => {
+  const { vault, stats, today } = await statsRig($, on)
+  vault.files.set(SUMMARY_PATH, 'old summary')
+  vault.files.set(`${FOLDER}/2026-10-01 PC-2.md`, OTHER)
+  vault.files.set(`${FOLDER}/chart.png`, 'x')
+  vault.files.set(`${FOLDER}/old/2026-01-01 PC-3.md`, OTHER)
+  await stats()
+  const read = vault.calls.filter(c => c.startsWith('obsidian get_note_properties')).sort()
+  expect(read).toEqual([`obsidian get_note_properties ${FOLDER}/2026-10-01 PC-2.md`, `obsidian get_note_properties ${notePath('PC-1', today())}`].sort())
+  expect(vault.files.get(SUMMARY_PATH)).toContain('PC-2')
 })
 
 test('/cg-stats: cg.py reports what made the figures wrong: a toast, /cg-health, a word in the reply; the note is written all the same', async ($, on) => {

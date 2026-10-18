@@ -113,15 +113,23 @@ const calendarDay = (now: number) => new Date(now - new Date(now).getTimezoneOff
 const obsidian = async ($: EngineInterface, tool: string, args: Record<string, unknown>) => {
   const r = await $.mcp.call('obsidian', tool, args)
   const text = r.content.map(c => c.text ?? '').join('')
-  if (r.isError) throw new Error(text || tool)
+  if (r.isError) {
+    let why = text || tool // the server's JSON { error, errorCode } when it is one, else the raw text
+    try {
+      const { error, errorCode } = JSON.parse(text)
+      if (error) why = `${error}${errorCode ? ` (${errorCode})` : ''}`
+    } catch {}
+    throw new Error(why)
+  }
   return text
 }
 
-// The summary note: the frontmatter of every note in the folder as one table (the summary itself has none, so summaryNote leaves it out).
+// The summary note: the frontmatter of every .md note directly in the folder, as one table (not the summary itself).
 const rebuildSummary = async ($: EngineInterface) => {
-  const names = JSON.parse(await obsidian($, 'vault_list', { path: FOLDER })) as string[]
-  const fronts = await Promise.all(names.filter(n => n.endsWith('.md')).map(async n => JSON.parse(await obsidian($, 'vault_read', { path: `${FOLDER}/${n}` })).frontmatter ?? {}))
-  await obsidian($, 'vault_write', { path: SUMMARY_PATH, content: summaryNote(fronts) })
+  const { files } = JSON.parse(await obsidian($, 'list_vault_files', { directory: FOLDER })) as { files: string[] }
+  const notes = files.filter(p => p.endsWith('.md') && p !== SUMMARY_PATH && p.startsWith(`${FOLDER}/`) && !p.includes('/', FOLDER.length + 1))
+  const fronts = await Promise.all(notes.map(async path => JSON.parse(await obsidian($, 'get_note_properties', { path })).frontmatter ?? {}))
+  await obsidian($, 'create_vault_file', { path: SUMMARY_PATH, content: summaryNote(fronts) })
 }
 
 // One /cg-stats run: measure, queue the note, send the queue, rebuild the summary. Returns what the owner reads.
@@ -138,7 +146,7 @@ const runStats = async ($: EngineInterface, python: string, days: number) => {
   // one note per computer and day: a note still waiting for this day is replaced, not doubled
   const queue = [...(((await $.store.get('outbox')) as Note[] | undefined) ?? []).filter(n => n.path !== path), { path, content: note }]
   await $.store.set('outbox', queue) // kept before sending, so nothing is lost if the send is cut short
-  const sent = await flush(queue, async n => void (await obsidian($, 'vault_write', n)))
+  const sent = await flush(queue, async n => void (await obsidian($, 'create_vault_file', n)))
   await $.store.set('outbox', sent.left)
   const figures = note.replace(/^---\n[\s\S]*?\n---\n/, '').trim() + (errors.length ? `\n\n${T.cgStatsErrors(errors.length)}` : '') // the frontmatter is for the vault
   if (sent.error !== undefined) {
