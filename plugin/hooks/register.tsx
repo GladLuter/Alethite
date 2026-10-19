@@ -30,12 +30,16 @@ const runCg = async ($: EngineInterface, python: string, args: string[], timeout
   return parseCg(r)
 }
 
+// The one door for each: everything this mod puts on the status line or in a toast starts with its name (the texts in text.ts do not).
+const status = ($: EngineInterface, text: string) => $.ui.status(T.status(text))
+const toast = ($: EngineInterface, text: string) => $.ui.toast(T.toast(text))
+
 // What /cg-health shows as the last error; every path that reports a failure leaves it here.
 const noteError = async ($: EngineInterface, where: string, err: unknown) => $.store.set('lastError', { at: await $.clock.now(), where, msg: message(err) })
 
 // An owner-started action failed: tell them now and keep it for /cg-health.
 const fail = async ($: EngineInterface, where: string, err: unknown) => {
-  $.ui.toast(T.failed(where, message(err)))
+  toast($, T.failed(where, message(err)))
   await noteError($, where, err)
 }
 
@@ -43,8 +47,8 @@ const fail = async ($: EngineInterface, where: string, err: unknown) => {
 const indexErrors = async ($: EngineInterface, where: string, errors: IndexError[], isAsked: boolean) => {
   if (errors.length === 0) return
   const text = T.indexErrors(errors.length)
-  if (isAsked) $.ui.toast(text)
-  else $.ui.status(text)
+  if (isAsked) toast($, text)
+  else status($, text)
   await noteError($, where, T.indexErrorFirst(errors.length, errors[0]!.path, errors[0]!.error))
 }
 
@@ -70,7 +74,7 @@ const guarded = async ($: EngineInterface, where: string, work: () => Promise<un
     await work()
     return true
   } catch (err) {
-    $.ui.status(T.statusError(message(err)))
+    status($, T.statusError(message(err)))
     await noteError($, where, err)
     return false
   }
@@ -114,7 +118,7 @@ const refresh = async ($: EngineInterface, python: string) => {
     at: rec?.at ?? null,
     limits: usage.rateLimits.map(({ kind, percentUsed }) => ({ kind, percentUsed })),
   }
-  $.ui.status(statusText(fresh.tokens, fresh.at, now))
+  status($, statusText(fresh.tokens, fresh.at, now))
   await update($, snap, () => fresh)
 }
 
@@ -207,7 +211,7 @@ const startWorker = async ($: EngineInterface, python: string, model: string | n
         if ((await $.prompt.read()).text === draft) await $.prompt.fill({ text: '' })
       },
       toast: text => {
-        $.ui.toast(text)
+        toast($, text)
         told = text
       },
     }
@@ -240,7 +244,7 @@ export const register: Register = (on, options) => {
       3_000,
       () =>
         void catchUp($, python, embedModel).then(failed => {
-          if (failed && !isCatchUpToasted) $.ui.toast(T.catchUpFailed(failed))
+          if (failed && !isCatchUpToasted) toast($, T.catchUpFailed(failed))
           if (failed) isCatchUpToasted = true
         }),
     )
@@ -359,7 +363,7 @@ export const register: Register = (on, options) => {
       if (r.vector === 'ok') return hits
       // only the words were searched: the model reads why, the owner gets a toast once and /cg-health keeps the cause
       const off = T.vectorOff(String(r.vector))
-      if (!isVectorToasted) $.ui.toast(off)
+      if (!isVectorToasted) toast($, off)
       isVectorToasted = true
       await noteError($, 'recall', off)
       return `${hits}\n${off}`
@@ -377,7 +381,7 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: ['Write', 'Edit'] }, async ($, e, next) => {
     const ran = await next(e)
     await guarded($, 'remembered', async () => {
-      if (ran.deny === undefined && !ran.isError && ran.result?.staged !== true && isMemoryFact(e.file_path)) $.ui.toast(T.remembered(e.file_path.split(/[\\/]/).pop()!.slice(0, -3)))
+      if (ran.deny === undefined && !ran.isError && ran.result?.staged !== true && isMemoryFact(e.file_path)) toast($, T.remembered(e.file_path.split(/[\\/]/).pop()!.slice(0, -3)))
     })
     return ran
   })
@@ -397,6 +401,7 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column">
+        <Text bold>{T.bandTitle}</Text>
         {bandLines(s, showLimits).map(line => (
           <Text>{line}</Text>
         ))}

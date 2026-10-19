@@ -31,7 +31,7 @@ test('a failed refresh shows its error in the status line', async ($, on) => {
   const store = new Map<string, unknown>()
   wire(on, statuses, () => ({ deny: 'boom' }), undefined, store)
   await ($ as any).command.run({ command: 'cg-band', args: '' })
-  expect(statuses.some(t => t?.startsWith('CacheGuard: ошибка — '))).toBe(true)
+  expect(statuses.some(t => t?.startsWith('CacheGuard · ошибка — '))).toBe(true)
   expect(store.get('lastError')).toMatchObject({ at: 10_000_000_000, where: 'cg-band' }) // kept for /cg-health too
 })
 
@@ -68,7 +68,7 @@ test('after a restart the size comes from cg.py last-turn, asked once per chat',
   wire(on, statuses, noSize, (_, e) => (argvs.push(e.argv), ran(JSON.stringify({ tokens: 300_000, at, model: 'm' }))), store)
   await ($ as any).command.run({ command: 'cg-band', args: '' })
   await ($ as any).command.run({ command: 'cg-band', args: '' })
-  expect(statuses).toContain('ctx 300k · кэш истёк')
+  expect(statuses).toContain(T.status('ctx 300k · кэш истёк'))
   expect(argvs.filter(a => a.includes('last-turn')).length).toBe(1)
   expect(store.get('turn:id')).toEqual({ at: Date.parse(at), tokens: 300_000 })
 })
@@ -83,7 +83,7 @@ test('python missing: one toast, the error is kept for /cg-health', async ($, on
   // the engine's own reason follows (a timeout must not read like a missing command), worded by the engine
   const lead = `${T.pythonMissing('python')} (`
   expect(toasts).toHaveLength(1)
-  expect(toasts[0]).toContain(T.failed('last-turn', lead))
+  expect(toasts[0]!.startsWith(T.toast(T.failed('last-turn', lead)))).toBe(true)
   expect(toasts[0]!.endsWith('ENOENT)')).toBe(true)
   const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
   expect(text).toContain('last-turn')
@@ -142,6 +142,13 @@ const mountBand = async ($: any) => {
   return $.ui.mount({ plugin: 'cacheguard', surface: 'terminal', component: 'AbovePrompt', props } as never)
 }
 
+test('the band opens with the CacheGuard title, bold, above its lines and buttons', async ($, on) => {
+  wire(on, [], () => ({ value: usage }))
+  const band = (await (await mountBand($)).drawn()) as unknown as { children: unknown[] }
+  expect(band.children[0]).toMatchObject({ type: 'Text', props: { bold: true }, children: [T.bandTitle] })
+  expect(band.children.length).toBeGreaterThan(2)
+})
+
 test('new worker: /clear, /model, then handoff + draft as the first message, draft taken out of the box, band idle', async ($, on) => {
   const log: string[] = []
   const argvs: string[][] = []
@@ -196,7 +203,7 @@ test('new worker: a failed handoff leaves the chat alone, tells why and is kept 
   await ui.press({ key: 'model:sonnet' })
 
   expect(log).toEqual([])
-  expect(toasts).toEqual([T.handoffFailed('no transcript')])
+  expect(toasts).toEqual([T.toast(T.handoffFailed('no transcript'))])
   expect(store.get('lastError')).toMatchObject({ where: 'launch', msg: T.handoffFailed('no transcript') })
   expect(await buttons(ui)).toEqual(['launch', 'stay'])
   expect(await ui.findAll({ type: 'Button', text: T.newWorker })).toHaveLength(1) // busy ended
@@ -216,7 +223,7 @@ test('new worker: /model that leaves the model unchanged stops the launch, hando
 
   expect(log).toEqual(['/clear', '/model sonnet']) // no submit
   expect(state.text).toBe('[cg-handoff]x[/cg-handoff]\n\nx')
-  expect(toasts).toEqual([T.modelFailed('sonnet', T.modelStill('claude-opus-5-5'), 'C:/h/id.md')])
+  expect(toasts).toEqual([T.toast(T.modelFailed('sonnet', T.modelStill('claude-opus-5-5'), 'C:/h/id.md'))])
   expect(await buttons(ui)).toEqual(['launch', 'stay'])
 })
 
@@ -231,7 +238,7 @@ test('new worker: the box refuses the text: readable reason and the saved path, 
   await ui.press({ key: 'launch' })
   await ui.press({ key: 'model:sonnet' })
 
-  expect(toasts).toEqual([T.fillFailed(T.modelStill('claude-opus-5-5'), T.fillRefused.other, 'C:/h/id.md')])
+  expect(toasts).toEqual([T.toast(T.fillFailed(T.modelStill('claude-opus-5-5'), T.fillRefused.other, 'C:/h/id.md'))])
 })
 
 // ---- long memory ----
@@ -279,7 +286,7 @@ test('recall: nothing found says what to try', async ($, on) => {
 test('recall: cg.py fails: the model reads an error, the owner a toast, /cg-health the cause', async ($, on) => {
   const m = await started($, on, () => failed('OperationalError: x'))
   expect(await recall($)).toEqual({ deny: T.recallFailed('OperationalError: x') })
-  expect(m.toasts).toEqual([T.failed('recall', 'OperationalError: x')])
+  expect(m.toasts).toEqual([T.toast(T.failed('recall', 'OperationalError: x'))])
   expect(m.store.get('lastError')).toMatchObject({ where: 'recall', msg: 'OperationalError: x' })
 })
 
@@ -292,7 +299,7 @@ test('recall: no query means no search', async ($, on) => {
 test('recall: unreadable transcripts reach the owner, the hits still reach the model', async ($, on) => {
   const m = await started($, on, () => found({ errors: [bad, bad] }))
   expect(await recall($)).toEqual({ result: hitLine })
-  expect(m.toasts).toEqual([T.indexErrors(2)])
+  expect(m.toasts).toEqual([T.toast(T.indexErrors(2))])
   expect(m.store.get('lastError')).toMatchObject({ where: 'recall', msg: T.indexErrorFirst(2, bad.path, bad.error) })
 })
 
@@ -302,7 +309,7 @@ test('recall: no vector search: the model reads why, the owner gets one toast pe
   const told = { result: [hitLine, T.vectorOff(why)].join('\n') }
   expect(await recall($)).toEqual(told)
   expect(await recall($)).toEqual(told)
-  expect(m.toasts).toEqual([T.vectorOff(why)])
+  expect(m.toasts).toEqual([T.toast(T.vectorOff(why))])
   expect(m.store.get('lastError')).toMatchObject({ where: 'recall', msg: T.vectorOff(why) })
 })
 
@@ -315,7 +322,7 @@ test('recall_more: reads around a hit', async ($, on) => {
 test('recall_more: a failure is an error for the model and a toast for the owner', async ($, on) => {
   const m = await started($, on, () => failed('boom'))
   expect(await $.tool.call({ tool: 'mcp__cacheguard__recall_more', conv: 'S', pos: 42 })).toEqual({ deny: T.recallFailed('boom') })
-  expect(m.toasts).toEqual([T.failed('recall_more', 'boom')])
+  expect(m.toasts).toEqual([T.toast(T.failed('recall_more', 'boom'))])
 })
 
 const indexed = (errors: unknown[] = []) => ran(JSON.stringify({ files: 1, rows: 5, convs: 1, seconds: 0.5, errors }))
@@ -327,7 +334,7 @@ test('index: 3 s after session.start, in the background, with errors on the stat
   expect(ofCg(m, 'index')).toEqual([]) // session.start did not wait for it, nor run it
   await m.clock.advance(3_000)
   expect(ofCg(m, 'index')).toEqual([{ argv: ['index'], timeoutMs: 600_000 }])
-  expect(statuses).toContain(T.indexErrors(1))
+  expect(statuses).toContain(T.status(T.indexErrors(1)))
   expect(m.toasts).toEqual([])
   expect(m.store.get('lastError')).toMatchObject({ where: 'index' })
 })
@@ -336,8 +343,8 @@ test('index: a failed background run goes to the status line, /cg-health and one
   const statuses: (string | undefined)[] = []
   const m = await started($, on, () => failed('database is locked'), statuses)
   await m.clock.advance(3_000)
-  expect(statuses).toContain(T.statusError('database is locked'))
-  expect(m.toasts).toEqual([T.catchUpFailed('index')])
+  expect(statuses).toContain(T.status(T.statusError('database is locked')))
+  expect(m.toasts).toEqual([T.toast(T.catchUpFailed('index'))])
   expect(m.store.get('lastError')).toMatchObject({ where: 'index', msg: 'database is locked' })
   expect(ofCg(m, 'embed')).toEqual([]) // the same database would fail the same way, and the first cause must stay in /cg-health
 })
@@ -359,9 +366,9 @@ const embedGoesWrong = async ($: any, on: any, answer: unknown, msg: string) => 
   const statuses: (string | undefined)[] = []
   const m = await started($, on, a => (a[0] === 'embed' ? answer : indexed()), statuses)
   await m.clock.advance(3_000)
-  expect(statuses).toContain(T.statusError(msg))
+  expect(statuses).toContain(T.status(T.statusError(msg)))
   expect(m.store.get('lastError')).toMatchObject({ where: 'embed', msg })
-  expect(m.toasts).toEqual([T.catchUpFailed('embed')])
+  expect(m.toasts).toEqual([T.toast(T.catchUpFailed('embed'))])
 }
 
 test('embed: a failed run reaches the status line, /cg-health and a toast', ($, on) => embedGoesWrong($, on, failed('Ollama не отвечает: x'), 'Ollama не отвечает: x'))
@@ -370,13 +377,25 @@ test('embed: errors in a finished run do too', ($, on) => embedGoesWrong($, on, 
 test('catch-up: the toast comes once per load of the mod, every failure is kept for /cg-health', async ($, on) => {
   const m = await started($, on, a => (a[0] === 'embed' ? failed('Ollama не отвечает: x') : indexed()))
   await m.clock.advance(3_000)
-  expect(m.toasts).toEqual([T.catchUpFailed('embed')])
+  expect(m.toasts).toEqual([T.toast(T.catchUpFailed('embed'))])
   expect(m.store.get('lastError')).toMatchObject({ where: 'embed', msg: 'Ollama не отвечает: x' })
   m.store.delete('lastError')
   await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false }) // a second catch-up in the same load
   await m.clock.advance(3_000)
-  expect(m.toasts).toEqual([T.catchUpFailed('embed')])
+  expect(m.toasts).toEqual([T.toast(T.catchUpFailed('embed'))])
   expect(m.store.get('lastError')).toMatchObject({ where: 'embed', msg: 'Ollama не отвечает: x' })
+})
+
+test('every status line and toast starts with the mod name, once', async ($, on) => {
+  const statuses: (string | undefined)[] = []
+  const m = await started($, on, a => (a[0] === 'embed' ? failed('Ollama не отвечает: x') : a[0] === 'recall' ? found({ errors: [bad], vector: 'нет' }) : a[0] === 'expand' ? failed('boom') : indexed([bad])), statuses)
+  await m.clock.advance(3_000) // refresh, unreadable transcripts and a failed embed on the status line; the failed catch-up in a toast
+  await recall($) // unreadable transcripts and no vector search: two toasts
+  await $.tool.call({ tool: 'mcp__cacheguard__recall_more', conv: 'S', pos: 1 }) // a failure: a toast
+  expect(statuses).toHaveLength(3)
+  expect(m.toasts).toHaveLength(4)
+  for (const t of statuses) expect(t).toMatch(/^CacheGuard · (?!.*CacheGuard)/s)
+  for (const t of m.toasts) expect(t).toMatch(/^CacheGuard: (?!.*CacheGuard)/s)
 })
 
 // item 2: the engine refuses a tool schema
@@ -389,12 +408,12 @@ test('session.start: a refused registration leaves the status line, the timers a
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   const clock = wire(on, statuses, () => ({ value: usage }), (_, e) => (e.argv.includes('index') ? indexed() : e.argv.includes('embed') ? embedded() : noTurn()), store)
   await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false })
-  expect(statuses[0]).toMatch(/^ctx /) // the first refresh ran
-  expect(statuses.at(-1)).toMatch(/^CacheGuard: ошибка — .*schema refused/) // ...and the refusal is the last word
+  expect(statuses[0]).toMatch(/^CacheGuard · ctx /) // the first refresh ran
+  expect(statuses.at(-1)).toMatch(/^CacheGuard · ошибка — .*schema refused/) // ...and the refusal is the last word
   expect(store.get('lastError')).toMatchObject({ where: 'register', msg: expect.stringContaining('schema refused') })
   expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats'], tools: ['recall', 'recall_more'] }) // both tools were tried, the commands went through
   await clock.advance(30_000) // the timers run
-  expect(statuses.at(-1)).toMatch(/^ctx /)
+  expect(statuses.at(-1)).toMatch(/^CacheGuard · ctx /)
 })
 
 test('/cg-index: updates, "rebuild" re-reads everything, the answer has the figures', async ($, on) => {
@@ -409,10 +428,10 @@ test('/cg-index: unreadable transcripts and failures are shown in a toast', asyn
   let answer: unknown = ran(JSON.stringify({ files: 0, rows: 0, convs: 0, seconds: 0, errors: [bad] }))
   const m = await started($, on, () => answer)
   await $.command.run({ command: 'cg-index', args: '' })
-  expect(m.toasts).toEqual([T.indexErrors(1)])
+  expect(m.toasts).toEqual([T.toast(T.indexErrors(1))])
   answer = failed('no such table')
   expect((await $.command.run({ command: 'cg-index', args: '' })).text).toBe(T.cgIndexFailed)
-  expect(m.toasts[1]).toBe(T.failed('cg-index', 'no such table'))
+  expect(m.toasts[1]).toBe(T.toast(T.failed('cg-index', 'no such table')))
 })
 
 // ---- short memory ----
@@ -441,7 +460,7 @@ test('remembered: a fact written into the auto-memory folder is toasted by name,
   const r = rig($, on)
   expect(await r.write(fact)).toEqual(done)
   await r.write(fact, 'Edit')
-  expect(r.toasts).toEqual([T.remembered('feedback_cache'), T.remembered('feedback_cache')])
+  expect(r.toasts).toEqual([T.toast(T.remembered('feedback_cache')), T.toast(T.remembered('feedback_cache'))])
 })
 
 test('remembered: no toast for MEMORY.md, a file elsewhere, a refused, an errored or a staged write; each result comes back as it was', async ($, on) => {
@@ -464,7 +483,7 @@ test('remembered: a throw while judging the write does not break it; the cause g
   wire(on, statuses, () => ({ value: usage }), undefined, store)
   // a path that is no string still looks like a fact to the regex (it is coerced) and then has no .split
   expect(await r.write([fact] as unknown as string)).toEqual(done)
-  expect(statuses.some(t => t?.startsWith('CacheGuard: ошибка — '))).toBe(true)
+  expect(statuses.some(t => t?.startsWith('CacheGuard · ошибка — '))).toBe(true)
   expect(store.get('lastError')).toMatchObject({ where: 'remembered' })
   expect(r.toasts).toEqual([])
 })
@@ -637,7 +656,7 @@ test('/cg-stats: cg.py reports what made the figures wrong: a toast, /cg-health,
   const errors = [{ path: 'audit', error: 'files_unreadable: 2' }]
   const { vault, m, stats, today } = await statsRig($, on, () => ran(JSON.stringify({ metrics: {}, note: NOTE, errors })))
   const { text } = await stats()
-  expect(m.toasts).toEqual([T.indexErrors(1)])
+  expect(m.toasts).toEqual([T.toast(T.indexErrors(1))])
   expect(m.store.get('lastError')).toMatchObject({ where: 'cg-stats', msg: T.indexErrorFirst(1, 'audit', 'files_unreadable: 2') })
   expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
   expect(text).toContain(T.cgStatsErrors(1))
@@ -647,7 +666,7 @@ test('/cg-stats: cg.py reports what made the figures wrong: a toast, /cg-health,
 test('/cg-stats: cg.py fails: a toast, nothing is queued or sent', async ($, on) => {
   const { vault, m, stats } = await statsRig($, on, () => failed('PermissionError: x'))
   expect((await stats()).text).toBe(T.cgStatsFailed)
-  expect(m.toasts).toEqual([T.failed('cg-stats', 'PermissionError: x')])
+  expect(m.toasts).toEqual([T.toast(T.failed('cg-stats', 'PermissionError: x'))])
   expect(m.store.get('outbox')).toBeUndefined()
   expect(vault.calls).toEqual([])
 })
@@ -655,6 +674,6 @@ test('/cg-stats: cg.py fails: a toast, nothing is queued or sent', async ($, on)
 test('/cg-stats: no computer name, no note', async ($, on) => {
   const { vault, m, stats } = await statsRig($, on, undefined, {})
   expect((await stats()).text).toBe(T.cgStatsFailed)
-  expect(m.toasts).toEqual([T.failed('cg-stats', T.noHost)])
+  expect(m.toasts).toEqual([T.toast(T.failed('cg-stats', T.noHost))])
   expect(vault.calls).toEqual([])
 })

@@ -6,6 +6,11 @@ export const T = {
   cacheExpired: 'истёк',
   cacheUnknown: '?',
 
+  // marks: whose a band, a status line and a toast are, so none is taken for another mod's. Every other text here is written without the name.
+  bandTitle: '🛡 CacheGuard',
+  status: (text: string) => `CacheGuard · ${text}`,
+  toast: (text: string) => `CacheGuard: ${text}`,
+
   // band
   head: (k: string, ago: string, cache: string) => `Этот чат: ${k} тыс. токенов · последний ответ ${ago} · ${cache}`,
   bandCache: { expired: 'кэш истёк', warm: 'кэш тёплый', unknown: 'кэш ?' },
@@ -42,7 +47,7 @@ export const T = {
   dropped: (why: string, path: string) => `Новый работник: отправку отклонили (${why}). Передача сохранена: ${path}`,
 
   // refresh failed: the status line shows it until the next good refresh
-  statusError: (msg: string) => `CacheGuard: ошибка — ${msg}`,
+  statusError: (msg: string) => `ошибка — ${msg}`,
 
   // /cg-band
   cgBandDescription: 'Показать полосу принудительно (off: вернуть пороги)',
@@ -51,9 +56,9 @@ export const T = {
   cgBandFailed: 'cg-band: не вышло, причина в строке состояния.',
 
   // errors: the toast of an owner-started action; cg.py could not be started at all
-  failed: (where: string, msg: string) => `CacheGuard (${where}): ${msg}`,
+  failed: (where: string, msg: string) => `${where} — ${msg}`,
   pythonMissing: (python: string) => `Python не запустился или не ответил вовремя (команда «${python}», настройка «Команда Python»)`,
-  catchUpFailed: (where: string) => `CacheGuard: фоновое обновление памяти (${where}) не удалось, подробности — /cg-health`,
+  catchUpFailed: (where: string) => `фоновое обновление памяти (${where}) не удалось, подробности — /cg-health`,
 
   // long memory: what the model reads (tool descriptions, results) and what the owner sees about the index
   recallDescription: 'Поиск по прошлым разговорам владельца: что обсуждали, решали, где что лежит. query — слова искомого, не вопрос. По умолчанию ищет в этом проекте, scope=all — везде. Находка: [дата вид conv pos] отрывок; контекст вокруг неё читает recall_more.',
@@ -63,7 +68,7 @@ export const T = {
   noRows: 'Записей нет: проверь conv и pos в строке находки recall.',
   recallFailed: (msg: string) => `Поиск по памяти не удался: ${msg}`,
   vectorOff: (why: string) => `векторный поиск недоступен: ${why}`,
-  indexErrors: (n: number) => `CacheGuard: индекс — ${n} ошибок, см. /cg-health`,
+  indexErrors: (n: number) => `индекс — ${n} ошибок, см. /cg-health`,
   indexErrorFirst: (n: number, path: string, msg: string) => `не прочитано файлов: ${n}, первый ${path} — ${msg}`,
   cgIndexDescription: 'Обновить индекс долгой памяти (rebuild: перечитать всё заново)',
   cgIndexDone: (i: Record<string, unknown>) => `Индекс обновлён: ${i.files} файлов, ${i.rows} записей, всего ${i.convs} чатов, ${(i.seconds as number).toFixed(1)} с`,
