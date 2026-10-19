@@ -13,6 +13,7 @@ import stats
 import sync
 import texts
 import vectors
+from compress import LEVELS, compress
 from handoff import build_handoff
 from transcripts import find_session, last_usage, project_key
 
@@ -54,11 +55,22 @@ def _recall(a):
     conn = memdb.connect(a.db)
     upd = memdb.update(conn, a.projects)  # seconds when nothing is new
     hits, vector = vectors.hybrid_search(conn, a.query, None if a.all else project_key(a.cwd), a.limit, model=a.model)
-    return {'hits': hits, 'errors': upd['errors'], 'vector': vector}
+    return {'hits': _squeeze(hits, 'snippet', a.compress), 'errors': upd['errors'], 'vector': vector}
+
+
+def _squeeze(items, field, level):
+    """`items` with `field` compressed at `level` (stage 3): what the model reads of the memory."""
+    return [dict(i, **{field: compress(i[field], level)}) for i in items]
 
 
 def _expand(a):
-    return {'rows': memdb.expand(memdb.connect(a.db), a.conv, a.pos)}
+    return {'rows': _squeeze(memdb.expand(memdb.connect(a.db), a.conv, a.pos), 'text', a.compress)}
+
+
+def _compress(a):  # the owner's preview of a level: cg.py compress --level ultra < text.txt
+    text = sys.stdin.read()
+    out = compress(text, a.level)
+    return {'text': out, 'chars_in': len(text), 'chars_out': len(out)}
 
 
 def _embed(a):
@@ -79,7 +91,7 @@ def _last_turn(a):
 
 
 def _handoff(a):
-    text = build_handoff(a.projects, _session(a.session), a.today, a.memory_dir)
+    text = build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress)
     folder = os.path.join(os.path.dirname(a.db), 'handoffs')  # next to the index: ~/.claude/cacheguard/handoffs by default
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, a.session + '.md')
@@ -107,7 +119,8 @@ def _day(s):  # argparse reports a ValueError from a type function as a bad argu
 def _stats(a):
     errors = []
     m = stats.metrics(a.projects, memdb.connect(a.db), a.since, a.until, errors)
-    return {'metrics': m, 'note': stats.note_markdown(m, a.host, a.today, json.loads(a.limits), a.rule_chars), 'errors': errors}
+    return {'metrics': m, 'note': stats.note_markdown(m, a.host, a.today, json.loads(a.limits), a.rule_chars, a.memory_tokens, a.compression),
+            'errors': errors}
 
 
 def _parser():
@@ -130,12 +143,15 @@ def _parser():
     s.add_argument('--query', required=True)
     s.add_argument('--limit', type=int, default=8)
     s.add_argument('--model', default=vectors.MODEL)
+    s.add_argument('--compress', choices=LEVELS, default='off')  # what the model reads of the memory (stage 3); the mod passes its setting
     scope = s.add_mutually_exclusive_group()
     scope.add_argument('--cwd', default=os.getcwd())
     scope.add_argument('--all', action='store_true')
     s = add('expand', _expand)
     s.add_argument('--conv', required=True)
     s.add_argument('--pos', type=int, required=True)
+    s.add_argument('--compress', choices=LEVELS, default='off')
+    add('compress', _compress).add_argument('--level', choices=LEVELS, default='ultra')
     s = add('embed', _embed)
     s.add_argument('--model', default=vectors.MODEL)
     s.add_argument('--max-seconds', type=float, default=120)
@@ -144,6 +160,7 @@ def _parser():
     s.add_argument('--session', required=True)
     s.add_argument('--today', required=True)
     s.add_argument('--memory-dir')
+    s.add_argument('--compress', choices=LEVELS, default='off')
     s = add('sync', _sync)
     s.add_argument('--sync-dir', required=True)
     s.add_argument('--machine')
@@ -162,12 +179,15 @@ def _parser():
     s.add_argument('--today', type=_day, required=True)
     s.add_argument('--limits', required=True)  # JSON: [{"kind", "percentUsed"}, ...]
     s.add_argument('--rule-chars', type=int, required=True)
+    s.add_argument('--memory-tokens', type=int, default=0)  # MEMORY.md in the context now, as the engine counts it
+    s.add_argument('--compression', choices=LEVELS, default='off')
     return p
 
 
 def main(argv):
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')  # the progress line of embed
+    sys.stdin.reconfigure(encoding='utf-8')  # the text cg.py compress reads
     try:
         a = _parser().parse_args(argv)
         texts.lang = a.lang

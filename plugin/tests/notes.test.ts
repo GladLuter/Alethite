@@ -28,6 +28,7 @@ const front = (host: string, date: string, usd: number | null) => ({
   idle60_share: 0.2,
   median_main_context: 400000,
   owner_msgs: 120,
+  recall_share: 0.031,
 })
 
 test('summary: one row per note, newest first, then by computer', () => {
@@ -37,6 +38,7 @@ test('summary: one row per note, newest first, then by computer', () => {
   expect(rows[0]).toContain('$4.00')
   expect(rows[0]).toContain('31.2%')
   expect(rows[0]).toContain('400 000')
+  expect(rows[0]!.split('|')[8]!.trim()).toBe('3.1%') // stage 3: what recall's results cost
 })
 test('summary: a missing figure is a dash, a file that is no note is left out', () => {
   const s = summaryNote([front('A', '2026-11-13', null), { title: 'not a measurement' }, {}])

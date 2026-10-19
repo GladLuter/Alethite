@@ -88,6 +88,8 @@ export const ru: Partial<Texts> = {
   projectLine: (root: string, convs: number) => `Проект: ${root} — разговоров в индексе: ${convs}`,
   projectEmpty: 'Поиск «в этом проекте» ничего не найдёт: попросите scope=all',
   healthMemory: (dir: string, facts: number) => `Память: ${facts} файлов в ${dir}`,
+  memoryIndexTokens: (n: number) => `MEMORY.md в каждом запросе: ~${n} токенов`,
+  compressionLine: (level: string) => `Сжатие памяти: ${level} (настройка «Memory compression»: off, lite, full, ultra)`,
   memoryNotLoaded: 'Память: папка auto-memory в этот чат не загружена',
   healthLastError: (when: string, where: string, msg: string) => `Последняя ошибка: ${when}, ${where} — ${msg}`,
   healthNoError: 'Последняя ошибка: нет',
@@ -136,7 +138,7 @@ export const ru: Partial<Texts> = {
   cgStatsFailed: 'cg-stats: не вышло, причина во всплывающем сообщении.',
   summaryTitle: '# Сводка замеров',
   summaryHint: 'Собрана командой /cg-stats из заметок по компьютерам; руками не править.',
-  summaryColumns: ['дата', 'компьютер', '$ на сообщение владельца', 'перезаписи кэша', 'из них после паузы ≥ 60 мин', 'медианный контекст', 'сообщений владельца'],
+  summaryColumns: ['дата', 'компьютер', '$ на сообщение владельца', 'перезаписи кэша', 'из них после паузы ≥ 60 мин', 'медианный контекст', 'сообщений владельца', 'результаты recall'],
 
   // short memory: the rule the model reads in every prompt, and the owner's note that a fact was saved
   memoryRule:

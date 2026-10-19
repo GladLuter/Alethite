@@ -89,6 +89,8 @@ export const en = {
   projectLine: (root: string, convs: number) => `Project: ${root} — conversations in the index: ${convs}`,
   projectEmpty: 'A search "in this project" will find nothing: ask for scope=all',
   healthMemory: (dir: string, facts: number) => `Memory: ${facts} files in ${dir}`,
+  memoryIndexTokens: (n: number) => `MEMORY.md is in every request: ~${n} tokens`,
+  compressionLine: (level: string) => `Memory compression: ${level} (setting "Memory compression": off, lite, full, ultra)`,
   memoryNotLoaded: 'Memory: no auto-memory folder is loaded in this chat',
   healthLastError: (when: string, where: string, msg: string) => `Last error: ${when}, ${where} — ${msg}`,
   healthNoError: 'Last error: none',
@@ -138,7 +140,7 @@ export const en = {
   cgStatsFailed: 'cg-stats: did not work, the reason is in the toast.',
   summaryTitle: '# Measurement summary',
   summaryHint: 'Built by /cg-stats from the notes of each computer; do not edit by hand.',
-  summaryColumns: ['date', 'computer', '$ per owner message', 'cache rewrites', 'of them after a pause ≥ 60 min', 'median context', 'owner messages'],
+  summaryColumns: ['date', 'computer', '$ per owner message', 'cache rewrites', 'of them after a pause ≥ 60 min', 'median context', 'owner messages', 'recall results'],
 
   // short memory: the rule the model reads in every prompt, and the owner's note that a fact was saved
   memoryRule:

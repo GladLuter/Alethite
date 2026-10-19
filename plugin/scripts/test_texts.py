@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 import texts
-from texts import EN, RU, TABLES, t
+from texts import EN, TABLES, t
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
 
@@ -26,6 +26,11 @@ class TextsTest(unittest.TestCase):
         self.assertEqual(t('ollama_down', e='x'), 'Ollama не отвечает: x')
         self.assertEqual(t('handoff_owner'), '**Ты:** ')
 
+    def test_ukrainian(self):
+        use_lang(self, 'uk')
+        self.assertEqual(t('ollama_down', e='x'), 'Ollama не відповідає: x')
+        self.assertEqual(t('handoff_owner'), '**Ти:** ')
+
     def test_a_missing_key_comes_from_english(self):
         with mock.patch.dict(TABLES, {'xx': {'nothing': 'nada'}}):
             use_lang(self, 'xx')
@@ -43,8 +48,9 @@ class TextsTest(unittest.TestCase):
     def test_the_fields_of_a_text_are_the_same_in_every_language(self):  # a field only one language knows would raise KeyError there
         import string
         fields = lambda s: sorted(f for _, f, _, _ in string.Formatter().parse(s) if f)
-        for key, text in RU.items():
-            self.assertEqual(fields(text), fields(EN[key]), key)
+        for name, table in TABLES.items():
+            for key, text in table.items():
+                self.assertEqual(fields(text), fields(EN[key]), (name, key))
 
     def test_cli_lang(self):
         with tempfile.TemporaryDirectory() as d:
@@ -56,6 +62,7 @@ class TextsTest(unittest.TestCase):
                 f.write('{"type":"user","timestamp":"2026-10-19T10:00:00Z","cwd":"C:\\\\a","message":{"role":"user","content":"hi"}}\n')
             self.assertIn('Handoff from the previous chat', run())
             self.assertIn('Передача дел от предыдущего чата', run('--lang', 'ru'))
+            self.assertIn('Передача справ від попереднього чату', run('--lang', 'uk'))
 
 
 if __name__ == '__main__':

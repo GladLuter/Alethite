@@ -1,5 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { ru } from '../hooks/lang/ru'
+import { uk } from '../hooks/lang/uk'
 import { FOLDER, notePath, SUMMARY_PATH } from '../hooks/notes'
 import { T } from '../hooks/text'
 
@@ -136,11 +137,22 @@ const mountBand = async ($: any) => {
   return $.ui.mount({ plugin: 'cacheguard', surface: 'terminal', component: 'AbovePrompt', props } as never)
 }
 
-test('the band opens with the CacheGuard title, bold, above its lines and buttons', async ($, on) => {
+type Drawn = { type: string; props?: Record<string, unknown>; children: Drawn[] }
+
+test('the band is a frame of its own, the CacheGuard title first in it, bold, above its lines and buttons', async ($, on) => {
   wire(on, [], () => ({ value: usage }))
-  const band = (await (await mountBand($)).drawn()) as unknown as { children: unknown[] }
-  expect(band.children[0]).toMatchObject({ type: 'Text', props: { bold: true }, children: [T.bandTitle] })
-  expect(band.children.length).toBeGreaterThan(2)
+  const band = (await (await mountBand($)).drawn()) as unknown as Drawn
+  const frame = band.children[0]!
+  expect(frame).toMatchObject({ type: 'Box', props: { borderStyle: 'round' } })
+  expect(frame.children[0]).toMatchObject({ type: 'Text', props: { bold: true }, children: [T.bandTitle] })
+  expect(frame.children.length).toBeGreaterThan(2)
+})
+
+test("another mod's band beneath ours is not covered: it stays, under our frame", async ($, on) => {
+  wire(on, [], () => ({ value: usage })) // what is drawn beneath the plugin under test: the text 'no band', standing for another mod's band
+  const band = (await (await mountBand($)).drawn()) as unknown as Drawn
+  expect(band.children).toHaveLength(2)
+  expect(band.children[1]).toMatchObject({ type: 'Text', children: ['no band'] })
 })
 
 test('new worker: the first press arms the band: two ways to go, cancel and the @files hint; cancel disarms', async ($, on) => {
@@ -171,7 +183,7 @@ test('new worker, send at once: /clear, then handoff + draft as the first messag
   expect(log).toEqual(['/clear', 'submit [cg-handoff]x[/cg-handoff]\n\nпродолжаем']) // no /model
   expect(state.text).toBe('')
   const a = argvs[0]!
-  expect(a.slice(a.indexOf('handoff'))).toEqual(['handoff', '--session', 'id', '--today', expect.stringMatching(/^\d{4}-\d\d-\d\d$/), '--memory-dir', 'C:/mem/memory'])
+  expect(a.slice(a.indexOf('handoff'))).toEqual(['handoff', '--session', 'id', '--today', expect.stringMatching(/^\d{4}-\d\d-\d\d$/), '--memory-dir', 'C:/mem/memory', '--compress', 'ultra'])
   expect(await buttons(ui)).toEqual(['launch', 'stay']) // not armed, not busy
   expect(await ui.findAll({ type: 'Button', text: T.busy })).toEqual([])
 })
@@ -281,7 +293,7 @@ test('recall: project by default, scope=all and the limit when asked; the model 
   const m = await started($, on, () => found())
   expect(await recall($)).toEqual({ result: hitLine })
   await recall($, { query: 'q', scope: 'all', limit: 3 })
-  const model = ['--model', 'embeddinggemma']
+  const model = ['--model', 'embeddinggemma', '--compress', 'ultra']
   expect(ofCg(m, 'recall').map(r => r.argv)).toEqual([['recall', '--query=кэш', '--cwd', 'C:/w', '--limit', '8', ...model], ['recall', '--query=q', '--all', '--limit', '3', ...model]])
   expect(m.toasts).toEqual([])
 })
@@ -332,7 +344,7 @@ test('recall: a later error is not pushed out of /cg-health by every search with
 test('recall_more: reads around a hit', async ($, on) => {
   const m = await started($, on, () => ran(JSON.stringify({ rows: [{ ts: '2026-10-10T08:00:00Z', kind: 'owner', pos: 42, text: 'привет' }] })))
   expect(await $.tool.call({ tool: 'mcp__cacheguard__recall_more', conv: 'S', pos: 42 })).toEqual({ result: '[2026-10-10 owner pos=42] привет' })
-  expect(ofCg(m, 'expand')[0]!.argv).toEqual(['expand', '--conv=S', '--pos=42'])
+  expect(ofCg(m, 'expand')[0]!.argv).toEqual(['expand', '--conv=S', '--pos=42', '--compress', 'ultra'])
 })
 
 test('recall_more: a failure is an error for the model and a toast for the owner', async ($, on) => {
@@ -373,7 +385,7 @@ test('embed: right after the index in the same timer, 120 s of work at most, and
     { argv: ['embed', '--model', 'bge-m3', '--max-seconds', '120'], timeoutMs: 180_000 },
   ])
   await recall($)
-  expect(ofCg(m, 'recall')[0]!.argv.slice(-2)).toEqual(['--model', 'bge-m3'])
+  expect(ofCg(m, 'recall')[0]!.argv.slice(-4, -2)).toEqual(['--model', 'bge-m3'])
   expect(m.toasts).toEqual([])
 })
 
@@ -714,6 +726,14 @@ test('language ru: the mod speaks Russian to the owner and to the model, and so 
   expect((await ($ as any).prompt.compose(facts)).sections).toEqual([{ id: 'cacheguard:memory-rule', text: ru.memoryRule, scope: 'session' }])
 })
 
+test('language uk: Ukrainian to the owner and to the model, and to cg.py', { options: { language: 'uk' } }, async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'embed' ? embedded() : indexed()))
+  await m.clock.advance(3_000)
+  for (const lang of m.langs) expect(lang).toEqual(['--lang', 'uk'])
+  expect((await ($ as any).command.run({ command: 'cg-band', args: '' })).text).toBe(uk.cgBandOn)
+  expect(m.specs.map(s => s.description)).toEqual([uk.recallDescription, uk.recallMoreDescription])
+})
+
 test('a language the mod does not know is English', { options: { language: 'xx' } }, async ($, on) => {
   const m = await started($, on, () => indexed())
   await m.clock.advance(3_000)
@@ -842,4 +862,32 @@ test('/cg-health: sync off is said', async ($, on) => {
   wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) => (e.argv.includes('status') ? ran('{"db":"d","convs":0,"rows":0,"size_mb":0}') : noTurn()))
   on('session.root', () => ({ value: 'C:/w' }))
   expect((await ($ as any).command.run({ command: 'cg-health', args: '' })).text).toContain(T.healthSyncOff)
+})
+
+// ---- stage 3: compression and the memory in the context ----
+test('compression: the setting reaches recall, recall_more and the handoff', { options: { compression: 'lite' } }, async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'expand' ? ran('{"rows":[]}') : found()))
+  await recall($)
+  await $.tool.call({ tool: 'mcp__cacheguard__recall_more', conv: 'S', pos: 1 })
+  expect(ofCg(m, 'recall')[0]!.argv.slice(-2)).toEqual(['--compress', 'lite'])
+  expect(ofCg(m, 'expand')[0]!.argv.slice(-2)).toEqual(['--compress', 'lite'])
+})
+
+test('/cg-health: the compression level and what MEMORY.md takes of every request', { options: { compression: 'full' } }, async ($, on) => {
+  const files = [{ path: 'C:/mem/memory/MEMORY.md', type: 'AutoMem', tokens: 950 }]
+  wire(on, [], () => ({ value: { context: { window: 1_000_000, breakdown: { memoryFiles: files } }, rateLimits: [] } }), (_, e) =>
+    e.argv.includes('status') ? ran('{"db":"d","convs":0,"rows":0,"size_mb":0}') : noTurn(),
+  )
+  on('session.root', () => ({ value: 'C:/w' }))
+  on('fs.list', () => ({ value: [] }))
+  const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
+  expect(text).toContain(T.compressionLine('full'))
+  expect(text).toContain(T.memoryIndexTokens(950))
+})
+
+test('/cg-stats: cg.py gets what MEMORY.md takes and the compression level', async ($, on) => {
+  const { m, stats } = await statsRig($, on)
+  await stats()
+  const { argv } = ofCg(m, 'stats')[0]!
+  expect([flag(argv, '--memory-tokens'), flag(argv, '--compression')]).toEqual(['0', 'ultra'])
 })

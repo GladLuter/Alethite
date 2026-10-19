@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { en } from '../hooks/lang/en'
 import { ru } from '../hooks/lang/ru'
+import { uk } from '../hooks/lang/uk'
 import { language, LANGUAGES, setLanguage, T } from '../hooks/text'
 
 // `body` with the texts of `code` (or of `dictionary` under that code), then back to English. The module is this file's own: the plugin's
@@ -54,13 +55,22 @@ test('an unknown language is English, and switching back leaves nothing of the o
   })
 })
 
-test('Russian is whole: every key of English, and no other', () => {
+test('Russian and Ukrainian are whole: every key of English, and no other', () => {
   expect(Object.keys(ru).sort()).toEqual(Object.keys(en).sort())
-  expect(Object.keys(LANGUAGES).sort()).toEqual(['en', 'ru'])
+  expect(Object.keys(uk).sort()).toEqual(Object.keys(en).sort())
+  expect(Object.keys(LANGUAGES).sort()).toEqual(['en', 'ru', 'uk'])
 })
+
+test('uk gives Ukrainian', () =>
+  speaking('uk', () => {
+    expect(language()).toBe('uk')
+    expect(T.newWorker).toBe('Новий працівник')
+    expect(T.ctx('290k', T.cacheLeft(42))).toBe('ctx 290k · кеш ~42 хв')
+  }))
 
 test('the memory rule: at most 80 words, and the CLAUDE.md sentence right after its title, in every language', () => {
   for (const texts of Object.values(LANGUAGES)) expect(texts.memoryRule!.split(/\s+/).length).toBeLessThanOrEqual(80)
   expect(en.memoryRule.startsWith("Worker memory (CacheGuard). The owner's CLAUDE.md rules outrank skill instructions")).toBe(true)
   expect(ru.memoryRule!.startsWith('Память работника (CacheGuard). Правила из CLAUDE.md владельца важнее инструкций навыков')).toBe(true)
+  expect(uk.memoryRule!.startsWith("Пам'ять працівника (CacheGuard). Правила з CLAUDE.md власника важливіші за інструкції навичок")).toBe(true)
 })

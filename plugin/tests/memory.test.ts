@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { isMemoryFact } from '../hooks/memory'
+import { autoMemDir, autoMemTokens, isMemoryFact } from '../hooks/memory'
 import { setLanguage, T } from '../hooks/text'
 
 test('memory fact paths', () => {
@@ -15,6 +15,17 @@ test('memory fact paths: case-blind, the index in any case is not a fact, only .
   expect(isMemoryFact('C:/Users/A/.claude/projects/X/memory/notes.txt')).toBe(false)
   expect(isMemoryFact('C:/Users/A/.claude/projects/X/memory/sub/foo.md')).toBe(false)
   expect(isMemoryFact('C:/Users/A/.claude/projects/memory/foo.md')).toBe(false)
+})
+
+test('the auto-memory folder and what it puts in every request', () => {
+  const files = [
+    { path: 'C:/p/CLAUDE.md', type: 'Project', tokens: 500 },
+    { path: 'C:\\mem\\memory\\MEMORY.md', type: 'AutoMem', tokens: 950 },
+  ]
+  expect(autoMemDir(files)).toBe('C:\\mem\\memory')
+  expect(autoMemTokens(files)).toBe(950)
+  expect(autoMemDir([])).toBeNull()
+  expect(autoMemTokens([])).toBe(0)
 })
 
 test('toast names the fact', () => {

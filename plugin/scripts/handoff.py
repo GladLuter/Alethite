@@ -3,6 +3,7 @@ import glob
 import os
 import subprocess
 
+from compress import compress
 from texts import t
 from transcripts import HANDOFF_END, HANDOFF_START, find_session, read_records
 
@@ -50,7 +51,8 @@ def _repos(dirs):
     return blocks
 
 
-def build_handoff(projects, session_id, today, memory_dir=None):
+def build_handoff(projects, session_id, today, memory_dir=None, level='off'):
+    """The handoff text; the quotes of the conversation are compressed at `level` (stage 3), the rest is left as it is."""
     main, subs = find_session(projects, session_id)
     if not main:
         raise ValueError('session %s not found in %s' % (session_id, projects))
@@ -69,14 +71,14 @@ def build_handoff(projects, session_id, today, memory_dir=None):
     def stopped(items):
         return t('handoff_stopped') + '\n' + '\n\n'.join(s for _, s in sorted(items))  # by pos: the order of the conversation
 
-    fixed = [(r['pos'], t('handoff_owner') + _clip(r['text'], 1500)) for r in owner[-4:]]
+    fixed = [(r['pos'], t('handoff_owner') + _clip(compress(r['text'], level), 1500)) for r in owner[-4:]]
     if turns and (not owner or turns[-1][0] > owner[-1]['pos']):
         pos, parts = turns.pop()
-        s = '\n\n'.join(parts)  # the tail is kept: the probe lost the decisive last paragraph by clipping the head only
+        s = compress('\n\n'.join(parts), level)  # the tail is kept: the probe lost the decisive last paragraph by clipping the head only
         fixed.append((pos, t('handoff_claude') + (s if len(s) <= 2400 else s[:1200] + '\n…\n' + s[-1000:])))
     early = []  # newest first
     for pos, parts in reversed(turns):
-        item = (pos, t('handoff_claude') + _clip('\n\n'.join(parts), 800))
+        item = (pos, t('handoff_claude') + _clip(compress('\n\n'.join(parts), level), 800))
         if len(stopped(fixed + early + [item])) > _STOPPED_CAP:
             break
         early.append(item)

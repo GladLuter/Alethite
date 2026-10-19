@@ -3,10 +3,11 @@
 import { en } from './lang/en'
 import type { Texts } from './lang/en'
 import { ru } from './lang/ru'
+import { uk } from './lang/uk'
 
 export type { Texts }
 
-export const LANGUAGES: Record<string, Partial<Texts>> = { en, ru }
+export const LANGUAGES: Record<string, Partial<Texts>> = { en, ru, uk }
 
 // The texts of the language chosen in /config, filled in from English. One object that register() fills before anything is drawn or
 // said, so every file that imports it reads the chosen language.

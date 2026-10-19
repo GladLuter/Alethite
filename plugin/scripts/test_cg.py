@@ -127,6 +127,24 @@ class CgTest(unittest.TestCase):
         out = self.run_cg('recall', '--query', 'ёжик', '--all', '--model', 'B')[1]
         self.assertTrue(out['hits'] and 'B' in out['vector'])
 
+    def test_compression_of_what_the_model_reads(self):  # stage 3
+        self.write('P/S1.jsonl', [owner_line('Это очень важный ёжик, и он живёт в `C:\\x\\y.py`.'), claude_line('Ответ: это ёжик.')])
+        hit = lambda *c: self.run_cg('recall', '--query', 'важный', '--all', *c)[1]['hits'][0]
+        self.assertIn('Это очень', hit()['snippet'])  # off unless asked: a terminal user sees the text as it is
+        snippet = hit('--compress', 'ultra')['snippet']
+        self.assertNotIn('очень', snippet)
+        self.assertIn('`C:\\x\\y.py`', snippet)
+        self.assertIn('ёжик', snippet)
+        h = hit()
+        rows = self.run_cg('expand', '--conv', h['conv'], '--pos', str(h['pos']), '--compress', 'full')[1]['rows']
+        self.assertEqual(rows[1]['text'], 'Ответ: ёжик.')
+        self.assertEqual(self.run_cg('recall', '--query', 'ёжик', '--compress', 'max')[0], 1)
+
+    def test_compress_previews_a_level(self):
+        env = {k: v for k, v in os.environ.items() if k not in ('PYTHONIOENCODING', 'PYTHONUTF8')}
+        p = subprocess.run([sys.executable, CG, 'compress', '--level', 'ultra'], input='Это очень просто, правда.'.encode('utf-8'), capture_output=True, env=env)
+        self.assertEqual(json.loads(p.stdout.decode('utf-8')), {'text': 'правда', 'chars_in': 25, 'chars_out': 6})
+
     def test_embed_options(self):
         out = self.run_cg('embed', '--model', 'other', '--max-seconds', '5')  # an empty index: nothing to embed, so no Ollama is called
         self.assertEqual((out[0], out[1]['model'], out[1]['done'], out[1]['pending'], out[1]['errors']), (0, 'other', 0, 0, []))

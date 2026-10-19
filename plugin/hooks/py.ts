@@ -25,11 +25,12 @@ type Project = { key: string; convs: number }
 export const healthLines = (h: {
   version: string
   index: Record<string, unknown> | string
-  memory: { dir: string; facts: number } | null
+  memory: { dir: string; facts: number; tokens?: number } | null
   root: string
   embedCmd: string
   lastError?: LastError
   syncDir?: string
+  compression?: string
 }) => {
   const v = typeof h.index === 'string' ? undefined : (h.index.vectors as Vectors | undefined)
   const p = typeof h.index === 'string' ? undefined : (h.index.project as Project | undefined)
@@ -40,7 +41,8 @@ export const healthLines = (h: {
     ...(v
       ? [T.vectorsLine(v.model, v.with_vectors, v.total, v.updated), ...(v.failed ? [T.vectorsFailed(v.failed)] : []), ...(v.with_vectors < v.total ? [T.vectorsHint(h.embedCmd)] : [])]
       : []),
-    h.memory ? T.healthMemory(h.memory.dir, h.memory.facts) : T.memoryNotLoaded,
+    ...(h.memory ? [T.healthMemory(h.memory.dir, h.memory.facts), ...(h.memory.tokens ? [T.memoryIndexTokens(h.memory.tokens)] : [])] : [T.memoryNotLoaded]),
+    ...(h.compression === undefined ? [] : [T.compressionLine(h.compression)]),
     ...(h.syncDir === undefined ? [] : syncHealth(h.syncDir, typeof h.index === 'string' ? undefined : (h.index.sync as SyncStatus | undefined))),
     h.lastError ? T.healthLastError(new Date(h.lastError.at).toLocaleString(T.locale), h.lastError.where, h.lastError.msg) : T.healthNoError,
   ]

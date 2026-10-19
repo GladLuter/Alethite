@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Snap } from '../types'
 import { bandLines, isStale, statusText } from './guard'
-import { isMemoryFact } from './memory'
+import { autoMemDir, autoMemTokens, isMemoryFact } from './memory'
 import { FOLDER, flush, notePath, SUMMARY_PATH, summaryNote } from './notes'
 import type { Note } from './notes'
 import { healthLines, message, parseCg } from './py'
@@ -63,11 +63,10 @@ const served = async ($: EngineInterface, where: string, work: () => Promise<str
   }
 }
 
-// The auto-memory folder is the one the first loaded AutoMem file sits in; none loaded, none known.
-const memoryDir = async ($: EngineInterface) => {
-  const files = (await $.session.usage({ breakdown: 'summary' })).context.breakdown?.memoryFiles
-  return files?.find(f => f.type === 'AutoMem')?.path.replace(/[\\/][^\\/]*$/, '') ?? null
-}
+// The memory files loaded in this chat, as the engine counts them.
+const memoryFiles = async ($: EngineInterface) => (await $.session.usage({ breakdown: 'summary' })).context.breakdown?.memoryFiles ?? []
+
+const memoryDir = async ($: EngineInterface) => autoMemDir(await memoryFiles($))
 
 // The periodic and background paths: the error goes to the status line (a toast every 30 s would be spam) and is kept for /cg-health.
 const guarded = async ($: EngineInterface, where: string, work: () => Promise<unknown>) => {
@@ -168,13 +167,14 @@ const rebuildSummary = async ($: EngineInterface) => {
 }
 
 // One /cg-stats run: measure, queue the note, send the queue, rebuild the summary. Returns what the owner reads.
-const runStats = async ($: EngineInterface, python: string, days: number) => {
-  const [now, host, usage] = await Promise.all([$.clock.now(), $.env.get('COMPUTERNAME'), $.session.usage()])
+const runStats = async ($: EngineInterface, python: string, days: number, compression: string) => {
+  const [now, host, usage, files] = await Promise.all([$.clock.now(), $.env.get('COMPUTERNAME'), $.session.usage(), memoryFiles($)])
   if (!host) throw new Error(T.noHost)
   const today = calendarDay(now)
   const since = new Date(Date.parse(today) - days * 86_400_000).toISOString().slice(0, 10)
   const limits = usage.rateLimits.map(({ kind, percentUsed }) => ({ kind, percentUsed }))
   const args = ['stats', '--since', since, '--host', host, '--today', today, '--limits', JSON.stringify(limits), '--rule-chars', String(T.memoryRule.length)]
+  args.push('--memory-tokens', String(autoMemTokens(files)), '--compression', compression) // what the memory takes of every request (stage 3)
   const { note, errors } = (await runCg($, python, args, 600_000)) as { note: string; errors: IndexError[] }
   await indexErrors($, 'cg-stats', errors, true) // an unreadable transcript lowers the figures; the note is written all the same
   const path = notePath(host, today)
@@ -198,7 +198,7 @@ const runStats = async ($: EngineInterface, python: string, days: number) => {
 }
 
 // "Новый работник": binds launch() to the engine through closures made here. One launch at a time.
-const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill') => {
+const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill', compression: string) => {
   let wasBusy = false
   await update($, isBusy, busy => ((wasBusy = busy), true)) // atomic: a second press before the redraw is refused here
   if (wasBusy) return
@@ -209,7 +209,8 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
       draft: async () => (await $.prompt.read()).text,
       handoff: async () => {
         const [id, now, dir] = await Promise.all([$.session.id(), $.clock.now(), memoryDir($)])
-        return (await runCg($, python, ['handoff', '--session', id, '--today', calendarDay(now), ...(dir ? ['--memory-dir', dir] : [])])) as { text: string; path: string }
+        const args = ['handoff', '--session', id, '--today', calendarDay(now), ...(dir ? ['--memory-dir', dir] : []), '--compress', compression]
+        return (await runCg($, python, args)) as { text: string; path: string }
       },
       clear: () => $.command.run({ command: 'clear' }),
       submit: text => $.prompt.submit({ text, asUser: true }),
@@ -247,6 +248,7 @@ export const register: Register = (on, options) => {
   const showLimits = options.showLimits as boolean
   const python = options.python as string
   const embedModel = options.embedModel as string
+  const compression = options.compression as string // what the model reads of the memory: off, lite, full, ultra (stage 3)
   let isVectorToasted = false // the owner hears of a missing vector search once per load of the mod, not on every recall
   let isCatchUpToasted = false // likewise a failed background catch-up: the status line shows it for 30 s only
 
@@ -326,7 +328,8 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'cg-health' }, async $ => {
     try {
-      const dir = await memoryDir($)
+      const mem = await memoryFiles($)
+      const dir = autoMemDir(mem)
       // the root, as recall scopes by it: this is what «в этом проекте» means
       const root = await $.session.root()
       const [{ version }, index, files, lastError] = await Promise.all([
@@ -336,9 +339,9 @@ export const register: Register = (on, options) => {
         $.store.get('lastError'),
       ])
       const facts = files.filter(f => f.name.endsWith('.md') && f.name !== 'MEMORY.md').length
-      const memory = dir === null ? null : { dir, facts }
+      const memory = dir === null ? null : { dir, facts, tokens: autoMemTokens(mem) }
       const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" --lang ${language()} embed --model ${embedModel} --max-seconds 100000`
-      return { text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir }).join('\n') }
+      return { text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression }).join('\n') }
     } catch (err) {
       await fail($, 'cg-health', err)
       return { text: T.cgHealthFailed }
@@ -378,7 +381,7 @@ export const register: Register = (on, options) => {
     const days = Number(e.args.trim() || 7)
     if (!Number.isInteger(days) || days < 1) return { text: T.cgStatsDays }
     try {
-      return { text: await runStats($, python, days) }
+      return { text: await runStats($, python, days, compression) }
     } catch (err) {
       await fail($, 'cg-stats', err)
       return { text: T.cgStatsFailed }
@@ -390,7 +393,7 @@ export const register: Register = (on, options) => {
       const input = e as unknown as { query: string; scope?: string; limit?: number }
       if (typeof input.query !== 'string' || !input.query.trim()) throw new Error(T.noQuery) // the schema asks for it, but nothing makes the model obey
       // the root, not cwd(): a shell `cd` into a subfolder moves cwd but not the project the conversations are filed under
-      const r = await runCg($, python, recallArgs(input, await $.session.root(), embedModel))
+      const r = await runCg($, python, recallArgs(input, await $.session.root(), embedModel, compression))
       await indexErrors($, 'recall', r.errors as IndexError[], true)
       const hits = formatHits(r.hits as Hit[], input.query, input.scope ?? 'project')
       if (r.vector === 'ok') return hits
@@ -407,7 +410,7 @@ export const register: Register = (on, options) => {
   )
 
   on('tool.call', { tool: 'mcp__cacheguard__recall_more' }, ($, e) =>
-    served($, 'recall_more', async () => formatRows((await runCg($, python, ['expand', `--conv=${e.conv}`, `--pos=${e.pos}`])).rows as Row[])),
+    served($, 'recall_more', async () => formatRows((await runCg($, python, ['expand', `--conv=${e.conv}`, `--pos=${e.pos}`, '--compress', compression])).rows as Row[])),
   )
 
   // last and on the session side: every shared section must precede it, and the text never varies, so the prompt cache is not spent
@@ -434,29 +437,35 @@ export const register: Register = (on, options) => {
     if (!isStale(s, minTokens, idleMinutes) && s.id !== forced) return next(e)
 
     const { Box, Button, Text } = $.ui.resolve(e)
+    // the band above the prompt is one area for every mod: ours goes in a frame of its own, so it never reads as part of another mod's,
+    // and what the mods beneath draw stays, under the frame, instead of being covered by it
+    const below = await next(e)
 
     return (
       <Box flexDirection="column">
-        <Text bold>{T.bandTitle}</Text>
-        {bandLines(s, showLimits).map(line => (
-          <Text>{line}</Text>
-        ))}
-        {armed ? (
-          <Box flexDirection="column">
-            <Text>{T.willClear}</Text>
-            <Box gap={1} flexWrap="wrap">
-              <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send')} />
-              <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill')} />
-              <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
+        <Box borderStyle="round" borderDimColor flexDirection="column" paddingX={1}>
+          <Text bold>{T.bandTitle}</Text>
+          {bandLines(s, showLimits).map(line => (
+            <Text>{line}</Text>
+          ))}
+          {armed ? (
+            <Box flexDirection="column">
+              <Text>{T.willClear}</Text>
+              <Box gap={1} flexWrap="wrap">
+                <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send', compression)} />
+                <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill', compression)} />
+                <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
+              </Box>
+              <Text dimColor>{T.atFilesHint}</Text>
             </Box>
-            <Text dimColor>{T.atFilesHint}</Text>
-          </Box>
-        ) : (
-          <Box gap={1} flexWrap="wrap">
-            <Button key="launch" label={busy ? T.busy : T.newWorker} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />
-            <Button key="stay" label={T.stayHere} onPress={() => update($, hiddenId, () => s.id)} />
-          </Box>
-        )}
+          ) : (
+            <Box gap={1} flexWrap="wrap">
+              <Button key="launch" label={busy ? T.busy : T.newWorker} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />
+              <Button key="stay" label={T.stayHere} onPress={() => update($, hiddenId, () => s.id)} />
+            </Box>
+          )}
+        </Box>
+        {below}
       </Box>
     )
   })
