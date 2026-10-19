@@ -1,14 +1,16 @@
 {
   "name": "cacheguard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": { "name": "Evgenii S" },
-  "description": "Claude-CacheGuard: price a send into a big idle chat, offer a clean new worker, remember what was learned.",
+  "description": "Claude-CacheGuard: price a send into a big idle chat, offer a clean new worker, remember what was learned, share the memory between computers.",
   "types": "./types/index.d.ts",
   "userConfig": {
-    "bandMinTokens": { "type": "number", "title": "Полоса: от скольких токенов контекста", "description": "Полоса с ценой отправки появляется, когда в чате больше стольких токенов (и прошло достаточно минут).", "default": 100000 },
-    "bandIdleMinutes": { "type": "number", "title": "Полоса: через сколько минут после ответа", "description": "Полоса появляется, когда с последнего ответа прошло больше стольких минут. Кэш живёт 60 минут.", "default": 55 },
-    "showLimits": { "type": "boolean", "title": "Полоса: показывать проценты лимитов", "description": "Добавлять в полосу строку с использованными процентами лимитов (5 часов, неделя).", "default": true },
-    "python": { "type": "string", "title": "Команда Python", "description": "Команда, которой мод запускает свои скрипты на Python.", "default": "python" },
-    "embedModel": { "type": "string", "title": "Модель эмбеддингов", "description": "Модель Ollama для векторного поиска по памяти (ollama pull <имя>). При смене все векторы считаются заново.", "default": "embeddinggemma" }
+    "language": { "type": "string", "title": "Language / Язык", "description": "Language of the mod and of its texts for the model: en or ru (ru — русский).", "default": "en", "options": ["en", "ru"] },
+    "syncDir": { "type": "string", "title": "Sync folder", "description": "A folder on the network share that every computer of yours reaches, for example \\\\NAS\\share\\cacheguard or Z:\\cacheguard; create it once. Each computer writes only into its own subfolder. Empty: no sync.", "default": "" },
+    "bandMinTokens": { "type": "number", "title": "Band: from how many context tokens", "description": "The band with the price of a send appears when the chat holds more tokens than this (and enough minutes have passed).", "default": 100000 },
+    "bandIdleMinutes": { "type": "number", "title": "Band: how many minutes after a reply", "description": "The band appears when more minutes than this have passed since the last reply. The cache lives 60 minutes.", "default": 55 },
+    "showLimits": { "type": "boolean", "title": "Band: show the limit percentages", "description": "Add a line with the used percentages of the limits (5 hours, week) to the band.", "default": true },
+    "python": { "type": "string", "title": "Python command", "description": "The command the mod runs its Python scripts with.", "default": "python" },
+    "embedModel": { "type": "string", "title": "Embedding model", "description": "The Ollama model of the vector search in the memory (ollama pull <name>). On a change every vector is computed again.", "default": "embeddinggemma" }
   }
 }

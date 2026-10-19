@@ -34,9 +34,9 @@ test('health: vectors, and the command to finish them while some records have no
 })
 test('health: every record has vectors: no command; nothing about vectors when the index is unreadable', () => {
   const done = healthLines({ version: '2.1.295', index: { vectors: { ...vectors, with_vectors: 100 } }, memory: null, root: 'C:/w', embedCmd: cmd })
-  expect(done.join(' ')).toContain('100 из 100')
+  expect(done).toContain(T.vectorsLine('embeddinggemma', 100, 100, '2026-10-18T09:00:00Z'))
   expect(done.join(' ')).not.toContain(cmd)
-  expect(healthLines({ version: '2.1.295', index: 'OperationalError: x', memory: null, root: 'C:/w', embedCmd: cmd }).join(' ')).not.toContain('Векторы')
+  expect(healthLines({ version: '2.1.295', index: 'OperationalError: x', memory: null, root: 'C:/w', embedCmd: cmd }).join(' ')).not.toContain('Vectors')
 })
 test('health: the project scope is shown, and a hint when it matches no conversation', () => {
   const health = (convs: number) => healthLines({ version: '2.1.295', index: { project: { key: 'c:/w', convs } }, memory: null, root: 'C:/w', embedCmd: cmd })
@@ -45,6 +45,11 @@ test('health: the project scope is shown, and a hint when it matches no conversa
   expect(health(0)).toContain(T.projectLine('C:/w', 0))
   expect(health(0)).toContain(T.projectEmpty)
   // nothing to say when the index could not be read, or cg.py did not report a project
-  expect(healthLines({ version: '2.1.295', index: 'OperationalError: x', memory: null, root: 'C:/w', embedCmd: cmd }).join(' ')).not.toContain('Проект')
-  expect(healthLines({ version: '2.1.295', index: {}, memory: null, root: 'C:/w', embedCmd: cmd }).join(' ')).not.toContain('Проект')
+  expect(healthLines({ version: '2.1.295', index: 'OperationalError: x', memory: null, root: 'C:/w', embedCmd: cmd }).join(' ')).not.toContain('Project')
+  expect(healthLines({ version: '2.1.295', index: {}, memory: null, root: 'C:/w', embedCmd: cmd }).join(' ')).not.toContain('Project')
+})
+test('health: records the model could not embed are counted; none, no line', () => {
+  const lines = (failed: number) => healthLines({ version: '2.1.295', index: { vectors: { ...vectors, failed } }, memory: null, root: 'C:/w', embedCmd: cmd })
+  expect(lines(3)).toContain(T.vectorsFailed(3))
+  expect(lines(0).join(' ')).not.toContain(T.vectorsFailed(0))
 })

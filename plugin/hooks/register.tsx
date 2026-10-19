@@ -10,7 +10,9 @@ import { healthLines, message, parseCg } from './py'
 import type { LastError } from './py'
 import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
-import { T } from './text'
+import { skipArgs, syncArgs, syncReport } from './sync'
+import type { SyncResult } from './sync'
+import { language, setLanguage, T } from './text'
 import { launch } from './worker'
 import type { LaunchIO } from './worker'
 
@@ -23,8 +25,8 @@ const isBusy = atom({ plugin: 'cacheguard', key: 'isBusy' } as const, false)
 // The helpers below take `$` and so stay in this file: the loader follows `$` only into functions declared here, never across an import.
 
 const runCg = async ($: EngineInterface, python: string, args: string[], timeoutMs = 120_000) => {
-  // run() rejects only when the child cannot start or times out
-  const r = await $.process.run([python, `${$.plugin.root}/scripts/cg.py`, ...args], { timeoutMs }).catch((err: unknown) => {
+  // run() rejects only when the child cannot start or times out; cg.py speaks the language of the mod
+  const r = await $.process.run([python, `${$.plugin.root}/scripts/cg.py`, '--lang', language(), ...args], { timeoutMs }).catch((err: unknown) => {
     throw new Error(`${T.pythonMissing(python)} (${message(err)})`)
   })
   return parseCg(r)
@@ -79,16 +81,32 @@ const guarded = async ($: EngineInterface, where: string, work: () => Promise<un
   }
 }
 
-// Three seconds into a session: bring the index up to date, then give the records without vectors up to 2 minutes of the embedding model (the rest waits for the next start).
-// Returns the step that failed, if one did.
-const catchUp = async ($: EngineInterface, python: string, model: string) => {
+// One sync with the other computers through the shared folder, for the current project's short memory too (none known, none synced).
+// cg.py stops itself after 60 s and leaves the rest for the next run.
+const runSync = async ($: EngineInterface, python: string, syncDir: string, model: string, skip: string[] = []) => {
+  const [dir, root] = await Promise.all([memoryDir($), $.session.root()])
+  return (await runCg($, python, syncArgs(syncDir, model, dir, root, skip), 120_000)) as unknown as SyncResult
+}
+
+// Three seconds into a session: bring the index up to date, give the records without vectors up to 2 minutes of the embedding model
+// (the rest waits for the next start), then push our new records and take in the other computers'.
+// Returns the steps that failed, if any did.
+const catchUp = async ($: EngineInterface, python: string, model: string, syncDir: string) => {
   const isIndexed = await guarded($, 'index', async () => indexErrors($, 'index', (await runCg($, python, ['index'], 600_000)).errors as IndexError[], false))
   if (!isIndexed) return 'index' // the same database would fail the same way, and the first cause must stay in /cg-health
   const isEmbedded = await guarded($, 'embed', async () => {
     const [first] = (await runCg($, python, ['embed', '--model', model, '--max-seconds', '120'], 180_000)).errors as { error: string }[]
     if (first) throw new Error(first.error)
   })
-  return isEmbedded ? null : 'embed'
+  // records without vectors go out all the same, and their vectors with a later batch
+  const isSynced =
+    syncDir === '' ||
+    (await guarded($, 'sync', async () => {
+      const [first] = (await runSync($, python, syncDir, model)).errors
+      if (first) throw new Error(first.error)
+    }))
+  const failed = [...(isEmbedded ? [] : ['embed']), ...(isSynced ? [] : ['sync'])]
+  return failed.length ? failed.join(', ') : null
 }
 
 // chats whose size was already asked of cg.py in this load, so a failure is not retried on every tick
@@ -222,6 +240,8 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
 }
 
 export const register: Register = (on, options) => {
+  setLanguage(options.language as string)
+  const syncDir = (options.syncDir as string).trim()
   const minTokens = options.bandMinTokens as number
   const idleMinutes = options.bandIdleMinutes as number
   const showLimits = options.showLimits as boolean
@@ -237,7 +257,7 @@ export const register: Register = (on, options) => {
     $.clock.after(
       3_000,
       () =>
-        void catchUp($, python, embedModel).then(failed => {
+        void catchUp($, python, embedModel, syncDir).then(failed => {
           if (failed && !isCatchUpToasted) toast($, T.catchUpFailed(failed))
           if (failed) isCatchUpToasted = true
         }),
@@ -249,8 +269,9 @@ export const register: Register = (on, options) => {
     const registrations = [
       () => $.command.register({ name: 'cg-band', description: T.cgBandDescription, argumentHint: '[off]' }),
       () => $.command.register({ name: 'cg-health', description: T.cgHealthDescription }),
-      () => $.command.register({ name: 'cg-index', description: T.cgIndexDescription, argumentHint: '[rebuild]' }),
-      () => $.command.register({ name: 'cg-stats', description: T.cgStatsDescription, argumentHint: '[дней]' }),
+      () => $.command.register({ name: 'cg-index', description: T.cgIndexDescription, argumentHint: T.cgIndexHint }),
+      () => $.command.register({ name: 'cg-stats', description: T.cgStatsDescription, argumentHint: T.cgStatsHint }),
+      () => $.command.register({ name: 'cg-sync', description: T.cgSyncDescription, argumentHint: T.cgSyncHint }),
       () =>
         $.tool.register({
           name: 'recall',
@@ -316,8 +337,8 @@ export const register: Register = (on, options) => {
       ])
       const facts = files.filter(f => f.name.endsWith('.md') && f.name !== 'MEMORY.md').length
       const memory = dir === null ? null : { dir, facts }
-      const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" embed --model ${embedModel} --max-seconds 100000`
-      return { text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined }).join('\n') }
+      const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" --lang ${language()} embed --model ${embedModel} --max-seconds 100000`
+      return { text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir }).join('\n') }
     } catch (err) {
       await fail($, 'cg-health', err)
       return { text: T.cgHealthFailed }
@@ -332,6 +353,24 @@ export const register: Register = (on, options) => {
     } catch (err) {
       await fail($, 'cg-index', err)
       return { text: T.cgIndexFailed }
+    }
+  })
+
+  on('command.run', { command: 'cg-sync' }, async ($, e) => {
+    if (syncDir === '') return { text: T.cgSyncOff }
+    const skip = skipArgs(e.args)
+    if (skip === null) return { text: T.cgSyncSkipUsage }
+    try {
+      const r = await runSync($, python, syncDir, embedModel, skip)
+      if (r.errors.length) {
+        // the reply lists them all; the toast and /cg-health keep the first one for when the reply has scrolled away
+        toast($, T.syncErrors(r.errors.length))
+        await noteError($, 'cg-sync', r.errors[0]!.error)
+      }
+      return { text: syncReport(r).join('\n') }
+    } catch (err) {
+      await fail($, 'cg-sync', err)
+      return { text: T.cgSyncFailed }
     }
   })
 
@@ -355,11 +394,14 @@ export const register: Register = (on, options) => {
       await indexErrors($, 'recall', r.errors as IndexError[], true)
       const hits = formatHits(r.hits as Hit[], input.query, input.scope ?? 'project')
       if (r.vector === 'ok') return hits
-      // only the words were searched: the model reads why, the owner gets a toast once and /cg-health keeps the cause
+      // only the words were searched: the model reads why every time; the owner gets a toast once per load, and /cg-health keeps
+      // that cause without it pushing out every later error
       const off = T.vectorOff(String(r.vector))
-      if (!isVectorToasted) toast($, off)
+      if (!isVectorToasted) {
+        toast($, off)
+        await noteError($, 'recall', off)
+      }
       isVectorToasted = true
-      await noteError($, 'recall', off)
       return `${hits}\n${off}`
     }),
   )

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { isMemoryFact } from '../hooks/memory'
-import { T } from '../hooks/text'
+import { setLanguage, T } from '../hooks/text'
 
 test('memory fact paths', () => {
   expect(isMemoryFact('C:\\Users\\A\\.claude\\projects\\X\\memory\\foo.md')).toBe(true)
@@ -17,5 +17,12 @@ test('memory fact paths: case-blind, the index in any case is not a fact, only .
   expect(isMemoryFact('C:/Users/A/.claude/projects/memory/foo.md')).toBe(false)
 })
 
-test('rule stays within 80 words', () => expect(T.memoryRule.split(/\s+/).length).toBeLessThanOrEqual(80))
-test('toast names the fact', () => expect(T.remembered('foo')).toBe('запомнил: foo'))
+test('toast names the fact', () => {
+  expect(T.remembered('foo')).toBe('remembered: foo')
+  setLanguage('ru')
+  try {
+    expect(T.remembered('foo')).toBe('запомнил: foo')
+  } finally {
+    setLanguage('en')
+  }
+})

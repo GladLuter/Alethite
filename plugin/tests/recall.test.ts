@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { formatHits, formatRows, recallArgs } from '../hooks/recall'
-import { T } from '../hooks/text'
+import { LANGUAGES, T } from '../hooks/text'
 
 test('args: project scope by default, with the embedding model', () =>
   expect(recallArgs({ query: 'кэш' }, 'C:\w', 'embeddinggemma')).toEqual(['recall', '--query=кэш', '--cwd', 'C:\w', '--limit', '8', '--model', 'embeddinggemma']))
@@ -19,7 +19,10 @@ test('rows format: in order, none says what to check', () => {
   )
   expect(formatRows([])).toBe(T.noRows)
 })
-test('tool descriptions fit the 300 characters the model reads', () => {
+test('tool descriptions fit the 300 characters the model reads, in every language', () => {
+  for (const texts of Object.values(LANGUAGES)) {
+    expect(texts.recallDescription!.length).toBeLessThanOrEqual(300)
+    expect(texts.recallMoreDescription!.length).toBeLessThanOrEqual(300)
+  }
   expect(T.recallDescription.length).toBeLessThanOrEqual(300)
-  expect(T.recallMoreDescription.length).toBeLessThanOrEqual(300)
 })

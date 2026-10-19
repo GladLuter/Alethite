@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import { ru } from '../hooks/lang/ru'
 import { FOLDER, notePath, SUMMARY_PATH } from '../hooks/notes'
 import { T } from '../hooks/text'
 
@@ -31,7 +32,7 @@ test('a failed refresh shows its error in the status line', async ($, on) => {
   const store = new Map<string, unknown>()
   wire(on, statuses, () => ({ deny: 'boom' }), undefined, store)
   await ($ as any).command.run({ command: 'cg-band', args: '' })
-  expect(statuses.some(t => t?.startsWith('ошибка — '))).toBe(true)
+  expect(statuses.some(t => t?.startsWith(T.statusError('')))).toBe(true)
   expect(store.get('lastError')).toMatchObject({ at: 10_000_000_000, where: 'cg-band' }) // kept for /cg-health too
 })
 
@@ -68,7 +69,7 @@ test('after a restart the size comes from cg.py last-turn, asked once per chat',
   wire(on, statuses, noSize, (_, e) => (argvs.push(e.argv), ran(JSON.stringify({ tokens: 300_000, at, model: 'm' }))), store)
   await ($ as any).command.run({ command: 'cg-band', args: '' })
   await ($ as any).command.run({ command: 'cg-band', args: '' })
-  expect(statuses).toContain('ctx 300k · кэш истёк')
+  expect(statuses).toContain(T.ctx('300k', T.cacheExpired))
   expect(argvs.filter(a => a.includes('last-turn')).length).toBe(1)
   expect(store.get('turn:id')).toEqual({ at: Date.parse(at), tokens: 300_000 })
 })
@@ -100,14 +101,14 @@ test('/cg-health: version, index figures, auto-memory folder with its fact count
   on('session.root', () => ({ value: 'C:/w' }))
   on('fs.list', () => ({ value: ['MEMORY.md', 'a.md', 'b.md', 'notes.txt'].map(name => ({ name, kind: 'file', size: 1, mtimeMs: 0, isLink: false })) }))
   const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
-  expect(argvs.find(a => a.includes('status'))!.slice(2)).toEqual(['status', '--cwd=C:/w']) // the root, the same folder that recall scopes by
+  expect(argvs.find(a => a.includes('status'))!.slice(4)).toEqual(['status', '--cwd=C:/w']) // the root, the same folder that recall scopes by
   expect(text).toContain(T.projectLine('C:/w', 5))
   expect(text).not.toContain(T.projectEmpty)
   expect(text).toContain('2.1.295')
   expect(text).toContain('3400')
   expect(text).toContain(T.healthMemory(dir, 2))
   expect(text).toContain(T.vectorsLine('embeddinggemma', 3000, 3400, '2026-10-18T09:00:00Z'))
-  expect(text).toMatch(/python ".*cg\.py" embed --model embeddinggemma --max-seconds 100000/) // 400 records have no vectors: how to finish them
+  expect(text).toMatch(/python ".*cg\.py" --lang en embed --model embeddinggemma --max-seconds 100000/) // 400 records have no vectors: how to finish them, in the mod's language
 })
 
 test('/cg-health: a project that matches no conversation is said so', async ($, on) => {
@@ -203,7 +204,7 @@ test('new worker: busy for the whole launch, the arm button is ignored meanwhile
   await ui.press({ key: 'launch' })
   const pressed = ui.press({ key: 'send' })
   const again = ui.press({ key: 'send' }).catch(() => undefined) // a double click: either the button is gone or the launch refuses it
-  for (let i = 0; i < 100 && !log.some(l => l.startsWith('submit')); i++) await new Promise(r => setTimeout(r, 10))
+  for (let i = 0; i < 100 && !log.some(l => l.startsWith('submit')); i++) await new Promise(r => (globalThis as any).setTimeout(r, 10))
   expect(await ui.findAll({ type: 'Button', text: T.busy })).toHaveLength(1)
   await ui.press({ key: 'launch' })
   expect(await buttons(ui)).toEqual(['launch', 'stay']) // the picker did not open
@@ -255,20 +256,21 @@ const found = (extra: object = {}) => ran(JSON.stringify({ hits: [hit], errors: 
 const failed = (error: string) => ({ value: { exitCode: 1, stdout: JSON.stringify({ error }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
 // A session that has started: cg.py answers `answer(argv)` and every run is recorded in `runs`; the tools and the index timer exist.
-const started = async ($: any, on: any, answer: (a: string[]) => unknown, statuses: (string | undefined)[] = []) => {
-  const m = { runs: [] as { argv: string[]; timeoutMs?: number }[], toasts: [] as string[], specs: [] as any[], store: new Map<string, unknown>(), clock: undefined as any }
+const started = async ($: any, on: any, answer: (a: string[]) => unknown, statuses: (string | undefined)[] = [], answerUsage: () => unknown = () => ({ value: usage })) => {
+  const m = { runs: [] as { argv: string[]; timeoutMs?: number }[], langs: [] as string[][], toasts: [] as string[], specs: [] as any[], store: new Map<string, unknown>(), clock: undefined as any }
   on('ui.toast', (_: unknown, e: { text: string }) => (m.toasts.push(e.text), { value: undefined }))
   on('tool.register', (_: unknown, e: unknown) => (m.specs.push(e), { value: { tool: 'x' } }))
   on('command.register', () => ({ value: { command: 'x' } }))
   on('session.root', () => ({ value: 'C:/w' }))
   on('session.cwd', () => ({ value: 'C:/w/plugin/scripts' })) // after a shell `cd`: must not reach the search
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
-  m.clock = wire(on, statuses, () => ({ value: usage }), (_, e: any) => (m.runs.push({ argv: e.argv.slice(2), timeoutMs: e.init?.timeoutMs }), e.argv.includes('last-turn') ? noTurn() : answer(e.argv.slice(2))), m.store)
+  // argv: python, cg.py, --lang, <language>, then the command
+  m.clock = wire(on, statuses, answerUsage, (_, e: any) => (m.runs.push({ argv: e.argv.slice(4), timeoutMs: e.init?.timeoutMs }), m.langs.push(e.argv.slice(2, 4)), e.argv.includes('last-turn') ? noTurn() : answer(e.argv.slice(4))), m.store)
   await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false })
   return m
 }
 const recall = ($: any, input: object = { query: 'кэш' }) => $.tool.call({ tool: 'mcp__cacheguard__recall', ...input })
-const ofCg = (m: { runs: { argv: string[] }[] }, cmd: string) => m.runs.filter(r => r.argv[0] === cmd)
+const ofCg = <R extends { argv: string[] }>(m: { runs: R[] }, cmd: string) => m.runs.filter(r => r.argv[0] === cmd)
 
 test('memory tools: both in the prompt, not behind ToolSearch', async ($, on) => {
   const m = await started($, on, () => ran('{}'))
@@ -317,6 +319,14 @@ test('recall: no vector search: the model reads why, the owner gets one toast pe
   expect(await recall($)).toEqual(told)
   expect(m.toasts).toEqual([T.toast(T.vectorOff(why))])
   expect(m.store.get('lastError')).toMatchObject({ where: 'recall', msg: T.vectorOff(why) })
+})
+
+test('recall: a later error is not pushed out of /cg-health by every search without vectors', async ($, on) => {
+  const m = await started($, on, () => found({ vector: 'Ollama is not answering: x' }))
+  await recall($)
+  m.store.set('lastError', { at: 1, where: 'sync', msg: 'later' })
+  await recall($)
+  expect(m.store.get('lastError')).toEqual({ at: 1, where: 'sync', msg: 'later' })
 })
 
 test('recall_more: reads around a hit', async ($, on) => {
@@ -415,9 +425,10 @@ test('session.start: a refused registration leaves the status line, the timers a
   const clock = wire(on, statuses, () => ({ value: usage }), (_, e) => (e.argv.includes('index') ? indexed() : e.argv.includes('embed') ? embedded() : noTurn()), store)
   await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false })
   expect(statuses[0]).toMatch(/^ctx /) // the first refresh ran
-  expect(statuses.at(-1)).toMatch(/^ошибка — .*schema refused/) // ...and the refusal is the last word
+  expect(statuses.at(-1)!.startsWith(T.statusError(''))).toBe(true) // ...and the refusal is the last word
+  expect(statuses.at(-1)).toContain('schema refused')
   expect(store.get('lastError')).toMatchObject({ where: 'register', msg: expect.stringContaining('schema refused') })
-  expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats'], tools: ['recall', 'recall_more'] }) // both tools were tried, the commands went through
+  expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats', 'cg-sync'], tools: ['recall', 'recall_more'] }) // both tools were tried, the commands went through
   await clock.advance(30_000) // the timers run
   expect(statuses.at(-1)).toMatch(/^ctx /)
 })
@@ -425,18 +436,18 @@ test('session.start: a refused registration leaves the status line, the timers a
 test('/cg-index: updates, "rebuild" re-reads everything, the answer has the figures', async ($, on) => {
   const stats = { files: 3, rows: 120, convs: 7, seconds: 1.234, errors: [] }
   const m = await started($, on, () => ran(JSON.stringify(stats)))
-  expect((await $.command.run({ command: 'cg-index', args: '' })).text).toBe(T.cgIndexDone(stats))
-  await $.command.run({ command: 'cg-index', args: 'rebuild' })
+  expect((await ($ as any).command.run({ command: 'cg-index', args: '' })).text).toBe(T.cgIndexDone(stats))
+  await ($ as any).command.run({ command: 'cg-index', args: 'rebuild' })
   expect(ofCg(m, 'index').map(r => r.argv)).toEqual([['index'], ['index', '--rebuild']])
 })
 
 test('/cg-index: unreadable transcripts and failures are shown in a toast', async ($, on) => {
   let answer: unknown = ran(JSON.stringify({ files: 0, rows: 0, convs: 0, seconds: 0, errors: [bad] }))
   const m = await started($, on, () => answer)
-  await $.command.run({ command: 'cg-index', args: '' })
+  await ($ as any).command.run({ command: 'cg-index', args: '' })
   expect(m.toasts).toEqual([T.toast(T.indexErrors(1))])
   answer = failed('no such table')
-  expect((await $.command.run({ command: 'cg-index', args: '' })).text).toBe(T.cgIndexFailed)
+  expect((await ($ as any).command.run({ command: 'cg-index', args: '' })).text).toBe(T.cgIndexFailed)
   expect(m.toasts[1]).toBe(T.toast(T.failed('cg-index', 'no such table')))
 })
 
@@ -444,7 +455,7 @@ test('/cg-index: unreadable transcripts and failures are shown in a toast', asyn
 const facts = { model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: [], tools: [], outputStyle: null, traits: [] }
 
 test('prompt: the memory rule is the last section, on the session side, the same text every time', async ($, on) => {
-  const engine = [{ id: 'intro', text: 'a', scope: 'shared' }, { id: 'env', text: 'b', scope: 'session' }]
+  const engine = [{ id: 'intro', text: 'a', scope: 'shared' as const }, { id: 'env', text: 'b', scope: 'session' as const }]
   on('prompt.compose', () => ({ sections: engine }))
   const first = (await ($ as any).prompt.compose(facts)).sections
   expect(first).toEqual([...engine, { id: 'cacheguard:memory-rule', text: T.memoryRule, scope: 'session' }])
@@ -489,7 +500,7 @@ test('remembered: a throw while judging the write does not break it; the cause g
   wire(on, statuses, () => ({ value: usage }), undefined, store)
   // a path that is no string still looks like a fact to the regex (it is coerced) and then has no .split
   expect(await r.write([fact] as unknown as string)).toEqual(done)
-  expect(statuses.some(t => t?.startsWith('ошибка — '))).toBe(true)
+  expect(statuses.some(t => t?.startsWith(T.statusError('')))).toBe(true)
   expect(store.get('lastError')).toMatchObject({ where: 'remembered' })
   expect(r.toasts).toEqual([])
 })
@@ -682,4 +693,153 @@ test('/cg-stats: no computer name, no note', async ($, on) => {
   expect((await stats()).text).toBe(T.cgStatsFailed)
   expect(m.toasts).toEqual([T.toast(T.failed('cg-stats', T.noHost))])
   expect(vault.calls).toEqual([])
+})
+
+// ---- languages ----
+test('cg.py is told the language of the mod: English by default', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'embed' ? embedded() : indexed()))
+  await m.clock.advance(3_000)
+  expect(m.langs.length).toBeGreaterThan(1)
+  for (const lang of m.langs) expect(lang).toEqual(['--lang', 'en'])
+  expect((await ($ as any).command.run({ command: 'cg-band', args: '' })).text).toBe(T.cgBandOn)
+})
+
+test('language ru: the mod speaks Russian to the owner and to the model, and so does cg.py', { options: { language: 'ru' } }, async ($, on) => {
+  on('prompt.compose', () => ({ sections: [] }))
+  const m = await started($, on, a => (a[0] === 'embed' ? embedded() : indexed()))
+  await m.clock.advance(3_000)
+  for (const lang of m.langs) expect(lang).toEqual(['--lang', 'ru'])
+  expect((await ($ as any).command.run({ command: 'cg-band', args: '' })).text).toBe(ru.cgBandOn)
+  expect(m.specs.map(s => s.description)).toEqual([ru.recallDescription, ru.recallMoreDescription])
+  expect((await ($ as any).prompt.compose(facts)).sections).toEqual([{ id: 'cacheguard:memory-rule', text: ru.memoryRule, scope: 'session' }])
+})
+
+test('a language the mod does not know is English', { options: { language: 'xx' } }, async ($, on) => {
+  const m = await started($, on, () => indexed())
+  await m.clock.advance(3_000)
+  expect(m.langs[0]).toEqual(['--lang', 'en'])
+  expect((await ($ as any).command.run({ command: 'cg-band', args: '' })).text).toBe(T.cgBandOn)
+})
+
+// ---- sync of two computers ----
+const SHARE = '\\\\NAS\\share\\cacheguard'
+const synced = (over: object = {}) =>
+  ran(JSON.stringify({ machine: 'AIJ-HP', pushed: 3, pulled: 5, vectors: { pushed: 3, pulled: 5 }, forgotten: 0, skipped_vectors: 0, peers: { MTLAPTOP: 2 }, memory: { pushed: 0, pulled: 1, conflicts: 0 }, warnings: [], errors: [], ...over }))
+const unreachable = { where: 'sync', error: `the sync folder is unavailable: ${SHARE} (FileNotFoundError: x)` }
+
+test('/cg-sync: off without a folder: says where to set it and runs nothing', async ($, on) => {
+  const m = await started($, on, () => synced())
+  expect((await ($ as any).command.run({ command: 'cg-sync', args: '' })).text).toBe(T.cgSyncOff)
+  expect(ofCg(m, 'sync')).toEqual([])
+})
+
+test('/cg-sync: the folder, the model, the auto-memory folder and the project root go to cg.py; the reply sums it up', { options: { syncDir: ` ${SHARE} ` } }, async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')), [], () => withMemory)
+  const { text } = await ($ as any).command.run({ command: 'cg-sync', args: '' })
+  const [run] = ofCg(m, 'sync')
+  expect(run).toEqual({ argv: ['sync', `--sync-dir=${SHARE}`, '--model', 'embeddinggemma', '--max-seconds', '60', '--memory-dir=C:/mem/memory', '--project-cwd=C:/w'], timeoutMs: 120_000 })
+  expect(text.split('\n')).toEqual([
+    T.cgSyncDone({ pushed: 3, pulled: 5, vectors: { pushed: 3, pulled: 5 } }),
+    T.cgSyncPeers('MTLAPTOP 2'),
+    T.syncMemory({ pushed: 0, pulled: 1, conflicts: 0 }),
+  ])
+  expect(m.toasts).toEqual([])
+})
+
+test('/cg-sync: no auto-memory folder in this chat: no memory step, and the reply says so', { options: { syncDir: SHARE } }, async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'sync' ? synced({ memory: null }) : ran('{}')))
+  const { text } = await ($ as any).command.run({ command: 'cg-sync', args: '' })
+  expect(ofCg(m, 'sync')[0]!.argv.some(a => a.startsWith('--memory-dir'))).toBe(false)
+  expect(text).toContain(T.syncMemoryOff)
+})
+
+test('/cg-sync skip: the owner goes on past a broken batch; without a computer and a number, how to ask', { options: { syncDir: SHARE } }, async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')))
+  await ($ as any).command.run({ command: 'cg-sync', args: 'skip MTLAPTOP 12' })
+  expect(ofCg(m, 'sync')[0]!.argv.slice(-3)).toEqual(['--skip-batch', 'MTLAPTOP', '12'])
+  expect((await ($ as any).command.run({ command: 'cg-sync', args: 'skip 12' })).text).toBe(T.cgSyncSkipUsage)
+  expect(ofCg(m, 'sync')).toHaveLength(1)
+})
+
+test('/cg-sync: errors of the run are in the reply, in one toast, and /cg-health keeps the first', { options: { syncDir: SHARE } }, async ($, on) => {
+  const broken = { where: 'pull', machine: 'MTLAPTOP', batch: 3, error: 'batch 3 is broken' }
+  const m = await started($, on, a => (a[0] === 'sync' ? synced({ errors: [broken, unreachable] }) : ran('{}')))
+  const { text } = await ($ as any).command.run({ command: 'cg-sync', args: '' })
+  expect(text).toContain(T.cgSyncError('batch 3 is broken'))
+  expect(text).toContain(T.cgSyncError(unreachable.error))
+  expect(m.toasts).toEqual([T.toast(T.syncErrors(2))])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-sync', msg: 'batch 3 is broken' })
+})
+
+test('/cg-sync: cg.py fails: a toast and a short reply', { options: { syncDir: SHARE } }, async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'sync' ? failed('OperationalError: database is locked') : ran('{}')))
+  expect((await ($ as any).command.run({ command: 'cg-sync', args: '' })).text).toBe(T.cgSyncFailed)
+  expect(m.toasts).toEqual([T.toast(T.failed('cg-sync', 'OperationalError: database is locked'))])
+})
+
+test('background: the sync follows the index and the vectors, 60 s in cg.py, 120 s for the process', { options: { syncDir: SHARE } }, async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'sync' ? synced() : a[0] === 'embed' ? embedded() : indexed()))
+  await m.clock.advance(3_000)
+  expect(m.runs.filter(r => r.argv[0] !== 'last-turn').map(r => [r.argv[0], r.timeoutMs])).toEqual([['index', 600_000], ['embed', 180_000], ['sync', 120_000]])
+  expect(ofCg(m, 'sync')[0]!.argv).toContain('--max-seconds')
+  expect(m.toasts).toEqual([])
+})
+
+test('background: no folder, no sync', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'embed' ? embedded() : indexed()))
+  await m.clock.advance(3_000)
+  expect(ofCg(m, 'sync')).toEqual([])
+})
+
+test('background: the sync runs even when the vectors failed; both are told', { options: { syncDir: SHARE } }, async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'sync' ? synced() : a[0] === 'embed' ? failed('Ollama is not answering: x') : indexed()))
+  await m.clock.advance(3_000)
+  expect(ofCg(m, 'sync')).toHaveLength(1)
+  expect(m.toasts).toEqual([T.toast(T.catchUpFailed('embed'))])
+})
+
+test('background: an unavailable folder: the status line, /cg-health and one toast per load; the local memory goes on', { options: { syncDir: SHARE } }, async ($, on) => {
+  const statuses: (string | undefined)[] = []
+  const m = await started($, on, a => (a[0] === 'sync' ? synced({ pushed: 0, pulled: 0, errors: [unreachable] }) : a[0] === 'embed' ? embedded() : a[0] === 'recall' ? found() : indexed()), statuses)
+  await m.clock.advance(3_000)
+  expect(statuses).toContain(T.statusError(unreachable.error))
+  expect(m.store.get('lastError')).toMatchObject({ where: 'sync', msg: unreachable.error })
+  expect(m.toasts).toEqual([T.toast(T.catchUpFailed('sync'))])
+  await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false }) // a second catch-up in the same load: no second toast
+  await m.clock.advance(3_000)
+  expect(m.toasts).toEqual([T.toast(T.catchUpFailed('sync'))])
+  expect(await recall($)).toEqual({ result: hitLine })
+})
+
+test('/cg-health: the folder, the computers, their last batches, the errors', { options: { syncDir: SHARE } }, async ($, on) => {
+  const sync = {
+    machine: 'AIJ-HP',
+    last: { at: '2026-10-19T10:00:00Z', dir: SHARE, pushed: 3, pulled: 5, memory: null, errors: 1, error: 'batch 8 is broken' },
+    peers: [
+      { machine: 'AIJ-HP', last_batch: 9, skipped: [], model: 'embeddinggemma', error: null },
+      { machine: 'MTLAPTOP', last_batch: 7, skipped: [4], model: 'embeddinggemma', error: 'batch 8 is broken' },
+    ],
+    origins: { 'AIJ-HP': 100, MTLAPTOP: 40 },
+  }
+  const status = { db: 'C:/x/mem.db', convs: 12, rows: 140, last_update: null, size_mb: 1.5, sync }
+  wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) => (e.argv.includes('status') ? ran(JSON.stringify(status)) : noTurn()))
+  on('session.root', () => ({ value: 'C:/w' }))
+  const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
+  for (const line of [
+    T.healthSync(SHARE, 'AIJ-HP'),
+    T.healthOrigins('AIJ-HP 100, MTLAPTOP 40'),
+    T.healthOwnBatches('AIJ-HP', 9),
+    T.healthPeer('MTLAPTOP', 7, 'embeddinggemma'),
+    T.healthPeerSkipped('MTLAPTOP', '4'),
+    T.healthPeerError('MTLAPTOP', 'batch 8 is broken'),
+    T.healthSyncError('batch 8 is broken'),
+    T.syncMemoryOff,
+  ])
+    expect(text).toContain(line)
+})
+
+test('/cg-health: sync off is said', async ($, on) => {
+  wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) => (e.argv.includes('status') ? ran('{"db":"d","convs":0,"rows":0,"size_mb":0}') : noTurn()))
+  on('session.root', () => ({ value: 'C:/w' }))
+  expect((await ($ as any).command.run({ command: 'cg-health', args: '' })).text).toContain(T.healthSyncOff)
 })
