@@ -21,10 +21,11 @@ CREATE TABLE IF NOT EXISTS vecs(chunk INTEGER, part INTEGER, conv TEXT, vec BLOB
 IN_PROJECT = """(:p IS NULL
   OR conv IN (SELECT conv FROM conv_projects WHERE project = :p)
   OR conv IN (SELECT c.conv FROM convs c JOIN conv_projects p ON p.conv = c.parent WHERE p.project = :p))"""
+# the mod's own tool calls are no memory; rows of them from before transcripts.py stopped emitting them are left out here
 _SEARCH = """
 SELECT conv, pos, ts, kind, snippet(chunks, 0, '«', '»', '…', 24),
        (SELECT parent FROM convs WHERE convs.conv = chunks.conv), rowid
-FROM chunks WHERE chunks MATCH :q AND """ + IN_PROJECT + """
+FROM chunks WHERE chunks MATCH :q AND NOT (kind = 'tool' AND text GLOB 'mcp__cacheguard__*') AND """ + IN_PROJECT + """
 ORDER BY bm25(chunks) * CASE WHEN kind IN ('sub', 'tool') THEN 0.5 ELSE 1.0 END LIMIT :n
 """
 
@@ -117,25 +118,35 @@ def status(conn):
             'vectors': vector_status(conn)}
 
 
-def search(conn, query, project=None, limit=8, budget=7000):
-    """Hits containing all the words of the query, else any of them; best first, cut at `limit` hits or `budget` snippet characters."""
-    words = ['"%s"' % w for w in re.findall(r'\w+', query)]
+def word_hits(conn, query, project=None, n=50):
+    """At most `n` hits containing all the words of the query, else any of them; best first, repeats still in."""
+    terms = ['"%s"' % w for w in re.findall(r'\w+', query)]
     rows = []
-    for q in ((' '.join(words), ' OR '.join(words)) if words else ()):
-        rows = conn.execute(_SEARCH, {'q': q, 'p': project, 'n': limit}).fetchall()
+    for q in ((' '.join(terms), ' OR '.join(terms)) if terms else ()):
+        rows = conn.execute(_SEARCH, {'q': q, 'p': project, 'n': n}).fetchall()
         if rows:
             break
-    return cut([{'conv': conv, 'parent': parent or '', 'ts': ts, 'kind': kind, 'pos': pos, 'snippet': snippet, 'id': rowid}
-                for conv, pos, ts, kind, snippet, parent, rowid in rows], budget)
+    return [{'conv': conv, 'parent': parent or '', 'ts': ts, 'kind': kind, 'pos': pos, 'snippet': snippet, 'id': rowid}
+            for conv, pos, ts, kind, snippet, parent, rowid in rows]
 
 
-def cut(hits, budget):
-    """The leading hits whose snippets together fit in `budget` characters."""
-    out, used = [], 0
+def search(conn, query, project=None, limit=8, budget=7000):
+    """Hits containing all the words of the query, else any of them; best first, cut at `limit` hits or `budget` snippet characters."""
+    return cut(word_hits(conn, query, project, max(limit, 50)), budget, limit)  # the rows beyond `limit` stand in for the repeats cut drops
+
+
+def cut(hits, budget, limit=None):
+    """The leading hits that fit in `budget` snippet characters and `limit` hits. A hit that repeats an earlier one is dropped and counts
+    for nothing: Claude Code copies the history of a resumed session into the new transcript, so one message sits under two convs."""
+    out, seen, used = [], set(), 0
     for h in hits:
+        key = (h['kind'], h['ts'], h['snippet'])
+        if key in seen:
+            continue
         used += len(h['snippet'])
-        if used > budget:
+        if used > budget or len(out) == limit:
             break
+        seen.add(key)
         out.append(h)
     return out
 

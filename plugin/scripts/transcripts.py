@@ -80,7 +80,7 @@ def _items(o, sub):
         for b in _blocks(m.get('content')):
             if b.get('type') == 'text' and isinstance(b.get('text'), str) and b['text'].strip():
                 out.append(('sub' if sub else 'claude', b['text'].strip(), None))
-            elif b.get('type') == 'tool_use':
+            elif b.get('type') == 'tool_use' and not str(b.get('name')).startswith('mcp__cacheguard__'):  # the summary of a recall would be the top hit of the very query that made it
                 out.append(_tool(b))
     return out
 

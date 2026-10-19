@@ -316,6 +316,24 @@ class VectorsTest(unittest.TestCase):
         self.assertEqual(len({h['id'] for h in hits}), len(hits))
         self.assertGreater(len(hits), len(words))  # records that only the vectors found are added
 
+    def test_hybrid_skips_the_mods_own_calls(self):
+        own = self.conn.execute("INSERT INTO chunks(text, conv, pos, ts, kind) VALUES('mcp__cacheguard__recall: кэш', 'S1', 1, ?, 'tool')", (TS,)).lastrowid
+        embed_pending(self.conn, embed_fn=fake)
+        hits, state = hybrid_search(self.conn, 'кэш', embed_fn=fake)
+        self.assertEqual(state, 'ok')
+        self.assertTrue(hits)
+        self.assertNotIn(own, [h['id'] for h in hits])
+
+    def test_hybrid_shows_a_resumed_copy_once(self):
+        self.add('P1/S3.jsonl', [owner_line('ёжик в тумане')])  # S1's first message, copied
+        self.add('P1/S4.jsonl', [owner_line('кэш протух')])
+        self.add('P1/S5.jsonl', [owner_line('кэш протух')])
+        embed_pending(self.conn, embed_fn=synonym)
+        for query, said in (('ёжик в тумане', 'ёжик в тумане'), ('истёк', 'кэш протух')):  # found by words and vectors, and by vectors alone
+            hits, state = hybrid_search(self.conn, query, embed_fn=synonym)
+            self.assertEqual(state, 'ok')
+            self.assertEqual(len([h for h in hits if h['kind'] == 'owner' and h['snippet'].replace('«', '').replace('»', '') == said]), 1)
+
     def test_vector_only_hit_shows_the_best_piece(self):
         text = 'альфа ' * 250 + 'бета ' * 300 + 'протух ' * 220
         self.add('P1/S3.jsonl', [owner_line(text)])
@@ -369,8 +387,8 @@ class VectorsTest(unittest.TestCase):
     def test_one_or_two_words_favour_the_word_search(self):
         embed_pending(self.conn, embed_fn=fake)
         w1, w2, v1 = [r[0] for r in self.conn.execute("SELECT rowid FROM chunks WHERE kind = 'owner' ORDER BY rowid LIMIT 3")]
-        word_hits = [dict(id=i, conv='', parent='', ts='', kind='owner', pos=0, snippet='x') for i in (w1, w2)]
-        with mock.patch.object(memdb, 'search', return_value=word_hits), mock.patch('vectors.search_vectors', return_value=[(v1, 0.9)]):
+        word_hits = [dict(id=i, conv='', parent='', ts='', kind='owner', pos=0, snippet='x%d' % i) for i in (w1, w2)]
+        with mock.patch.object(memdb, 'word_hits', return_value=word_hits), mock.patch('vectors.search_vectors', return_value=[(v1, 0.9)]):
             ids = lambda query: [h['id'] for h in hybrid_search(self.conn, query, embed_fn=fake)[0]]
             self.assertEqual(ids('один два'), [w1, w2, v1])  # the vector hit counts half
             self.assertEqual(ids('один два три'), [w1, v1, w2])
@@ -381,7 +399,7 @@ class VectorsTest(unittest.TestCase):
         self.assertNotEqual(state, 'ok')
 
     def test_scope_and_budget_hold(self):
-        self.add('P1/S4.jsonl', [owner_line('бюджет ' + 'слово ' * 200 + str(i)) for i in range(30)])
+        self.add('P1/S4.jsonl', [owner_line('бюджет ' + 'слово ' * 200 + str(i), ts='2026-10-13T10:00:%02d.000Z' % i) for i in range(30)])
         self.add('P2/S5.jsonl', [owner_line('бюджет другого проекта', cwd='C:\\b')])
         embed_pending(self.conn, embed_fn=fake)
         a = project_key('C:\\a')

@@ -169,8 +169,9 @@ def _best_piece(conn, rowid, qvec):
 
 def hybrid_search(conn, query, project=None, limit=8, budget=7000, model=MODEL, embed_fn=ollama_embed):
     """memdb.search merged with the vector search by RRF: (hits as in memdb.search, 'ok' or why only the words were used)."""
-    words = memdb.search(conn, query, project, 50, 10 ** 9)
-    state, merged = 'ok', words[:limit]
+    # repeats are cut only at the end: both copies of a message are word hits with one snippet there, but the vector leg shows one of them with another
+    words = memdb.word_hits(conn, query, project, 50)
+    state, merged = 'ok', words
     try:  # everything that needs the vectors, so that whatever goes wrong (even a transcript rewritten meanwhile) leaves the word hits
         _np()
         have = _meta(conn, 'embed_model')
@@ -186,11 +187,12 @@ def hybrid_search(conn, query, project=None, limit=8, budget=7000, model=MODEL, 
         ranked = rrf([[h['id'] for h in words], [c for c, _ in vec]],
                      [1.0, lambda i: wv * (0.5 if info[i][3] in ('sub', 'tool') else 1.0)])
         hits = {h['id']: h for h in words}
-        for i in ranked[:limit]:
+        ranked = ranked[:3 * limit]  # the spare ones stand in for the repeats cut drops
+        for i in ranked:
             if i not in hits:  # only the vectors found it
                 conv, pos, ts, kind, parent = info[i]
                 hits[i] = {'conv': conv, 'parent': parent or '', 'ts': ts, 'kind': kind, 'pos': pos, 'snippet': _best_piece(conn, i, qvec), 'id': i}
-        merged = [hits[i] for i in ranked[:limit]]
+        merged = [hits[i] for i in ranked]
     except Exception as e:
         state = str(e) or type(e).__name__
-    return memdb.cut(merged, budget), state
+    return memdb.cut(merged, budget, limit), state

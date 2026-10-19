@@ -20,6 +20,11 @@ def claude_line(text, ts=TS, cwd='C:\\a'):
     return dict(type='assistant', timestamp=ts, cwd=cwd, message=m)
 
 
+def tool_line(name, ts=TS, **inp):
+    m = {'id': 'm1', 'model': 'claude-opus-5-5', 'role': 'assistant', 'content': [{'type': 'tool_use', 'name': name, 'input': inp}]}
+    return dict(type='assistant', timestamp=ts, cwd='C:\\a', message=m)
+
+
 class MemdbTest(unittest.TestCase):
     def setUp(self):
         d = tempfile.TemporaryDirectory()
@@ -191,7 +196,7 @@ class MemdbTest(unittest.TestCase):
         self.assertEqual([h['kind'] for h in search(self.conn, 'редкослово')], ['owner', 'sub'])
 
     def test_budget_and_limit(self):
-        self.write('P/S.jsonl', [owner_line('бюджет ' + 'слово ' * 200 + str(i)) for i in range(50)])
+        self.write('P/S.jsonl', [owner_line('бюджет ' + 'слово ' * 200 + str(i), ts='2026-10-13T10:00:%02d.000Z' % i) for i in range(50)])  # one timestamp each: a same snippet at one time is a repeat
         self.update()
         hits = search(self.conn, 'бюджет')
         self.assertLessEqual(len(hits), 8)
@@ -199,6 +204,36 @@ class MemdbTest(unittest.TestCase):
         self.assertEqual(len(search(self.conn, 'бюджет', limit=3)), 3)
         small = search(self.conn, 'бюджет', budget=300)
         self.assertTrue(0 < len(small) < len(hits) and sum(len(h['snippet']) for h in small) <= 300)
+
+    def test_the_mods_own_calls_are_not_hits(self):
+        self.write('P/S.jsonl', [owner_line('проба кнопки'), tool_line('Bash', command='проба кнопки'), tool_line('mcp__cacheguard__recall', query='проба кнопки')])
+        self.update()
+        self.assertEqual(self.kinds_of('S'), ['owner', 'tool'])  # index time: the mod's own call gets no row
+        # an index built before that holds such rows, and a person may quote one
+        ins = "INSERT INTO chunks(text, conv, pos, ts, kind) VALUES('mcp__cacheguard__recall: проба кнопки', 'S', ?, ?, ?)"
+        self.conn.execute(ins, (1, TS, 'tool'))
+        self.conn.execute(ins, (2, TS, 'owner'))
+        found = [self.conn.execute('SELECT kind, text FROM chunks WHERE rowid = ?', (h['id'],)).fetchone() for h in search(self.conn, 'проба кнопки')]
+        self.assertEqual(sorted(found), [('owner', 'mcp__cacheguard__recall: проба кнопки'), ('owner', 'проба кнопки'), ('tool', 'Bash: проба кнопки')])
+
+    def test_resumed_session_copy_is_one_hit(self):
+        # Claude Code copies the history of a resumed session into the new transcript: the same message under two convs
+        later = '2026-10-14T10:00:00.000Z'
+        self.write('P/S1.jsonl', [owner_line('ёжик в тумане'), owner_line('второй ёжик', ts=later)])
+        self.write('P/S2.jsonl', [owner_line('ёжик в тумане'), owner_line('второй ёжик', ts=later), owner_line('новый ёжик', ts=later)])
+        self.update()
+        hits = search(self.conn, 'ёжик')
+        self.assertEqual(len(hits), 3)
+        self.assertEqual(len({(h['kind'], h['ts'], h['snippet']) for h in hits}), 3)
+        self.assertEqual(search(self.conn, 'ёжик', limit=3), hits)  # the limit counts kept hits: 5 rows match, 3 messages are shown
+        self.assertEqual(search(self.conn, 'ёжик', budget=sum(len(h['snippet']) for h in hits)), hits)  # and so does the budget
+        self.assertEqual(len(search(self.conn, 'ёжик', limit=2)), 2)
+
+    def test_same_text_at_another_time_is_not_a_repeat(self):
+        self.write('P/S1.jsonl', [owner_line('ёжик в тумане')])
+        self.write('P/S2.jsonl', [owner_line('ёжик в тумане', ts='2026-10-14T10:00:00.000Z')])
+        self.update()
+        self.assertEqual(len(search(self.conn, 'ёжик')), 2)
 
     def test_last_subagent_text_is_report(self):
         self.write('P/S/subagents/agent-a1.jsonl', [owner_line('сделай'), claude_line('шаг1'), claude_line('итог1')])

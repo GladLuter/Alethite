@@ -117,6 +117,12 @@ class TranscriptsTest(unittest.TestCase):
         self.assertEqual([r['edit'] for r in recs if 'edit' in r], ['C:\\r\\a.py', 'n.ipynb'])
         self.assertEqual([r['text'] for r in recs if r['kind'] == 'claude'], ['готово'])
 
+    def test_the_mods_own_tool_calls_get_no_record(self):
+        # recall's own summary would be the top hit of the very query that made it
+        path = self.write('s.jsonl', [a([text('ответ'), tool('mcp__cacheguard__recall', query='проба кнопки'), tool('mcp__cacheguard__recall_more', conv='S', pos=1),
+                                         tool('mcp__other__recall', query='проба')])])
+        self.assertEqual([(r['kind'], r['text']) for r in read_records(path)[0]], [('claude', 'ответ'), ('tool', 'mcp__other__recall: проба')])
+
     def test_subagent_kinds(self):
         path = self.write('S/subagents/agent-a1.jsonl', [
             u('сделай Y'), a([text('шаг')]), u([{'type': 'tool_result', 'tool_use_id': 't1', 'content': 'ок'}]), a([text('отчёт')], mid='m2')])
