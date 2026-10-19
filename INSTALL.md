@@ -8,7 +8,7 @@
   ```powershell
   Get-ChildItem "$env:USERPROFILE\.claude\projects" -Recurse -Filter *.jsonl | Sort-Object LastWriteTime | Select-Object -Last 1 | Get-Content -Tail 50 | Select-String '"version":"([^"]+)"' | Select-Object -Last 1 | ForEach-Object { $_.Matches[0].Groups[1].Value }
   ```
-- **Python 3.8 или новее и numpy.** Проверка: `python -c "import numpy; print(numpy.__version__)"`. Если numpy нет: `python -m pip install numpy`.
+- **Python 3.8 или новее и numpy.** Проверка: `python -c "import numpy; print(numpy.__version__)"`. Если numpy нет: `python -m pip install numpy`. Ставить из обычного окна PowerShell, не изнутри Claude: `pip` из Claude Desktop (сборка из Microsoft Store) ставит пакеты в свою песочницу, и обычный Python их не видит.
 - **Ollama с моделью эмбеддингов**, нужна для поиска по смыслу. Если Ollama ещё нет, поставить её с ollama.com. Затем:
   ```powershell
   ollama pull embeddinggemma
@@ -47,6 +47,12 @@
    python C:\_git\Claude-CacheGuard\plugin\scripts\cg.py embed --max-seconds 100000
    ```
    Дальше новые записи досчитываются сами при старте сессии, до 2 минут за раз.
+   - **Ноутбук:** на время расчёта не дайте ему заснуть. На зарядке он засыпает без ввода и останавливает расчёт. После пробуждения команду можно просто запустить снова.
+   - **Встроенная видеокарта Intel (Iris Xe):** на ней разовый расчёт идёт примерно вдвое быстрее, а векторы получаются те же (замер 2026-10-19 на MTLAPTOP: 2,44 длинных куска в секунду против 1,15 на процессоре). Ollama видит такую карту, только если её запустить с `OLLAMA_IGPU_ENABLE=1`. Для этого остановите обычную Ollama в трее, затем в окне PowerShell:
+     ```powershell
+     $env:OLLAMA_IGPU_ENABLE = '1'; ollama serve
+     ```
+     В другом окне запустите расчёт, а после него закройте это окно и снова запустите Ollama из меню «Пуск». Насовсем не включать: текстовые модели на встроенной карте медленнее.
 6. **Проверить:** в новом чате набрать `/cg-health`. Там должны быть версия, индекс, папка автопамяти, проект и векторы «N из M».
 
 ## Полезно знать

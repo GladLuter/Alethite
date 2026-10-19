@@ -441,7 +441,7 @@ def serve(test):
             body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             seen.append((self.path, body))
             if body['model'] == 'slow':  # never answers; the client has given up long before
-                time.sleep(1)
+                time.sleep(3)  # long enough that a loaded CPU cannot blur the 0.2 s give-up
                 return
             code, out = {'missing': (404, {'error': 'model not found'}), 'broken': (500, {'error': 'boom'}),
                          'garbage': (200, {'oops': 1}), 'empty': (200, {'embeddings': []}),
@@ -489,7 +489,7 @@ class OllamaEmbedTest(unittest.TestCase):
         start = time.monotonic()
         with self.assertRaisesRegex(RuntimeError, 'Ollama не отвечает'):
             ollama_embed(['a'], 'slow', url, timeout=0.2)
-        self.assertLess(time.monotonic() - start, 0.9)  # the server sleeps 1 s
+        self.assertLess(time.monotonic() - start, 2.0)  # the server sleeps 3 s
 
     def test_system_proxy_is_not_used(self):  # the owner's conversation text must not travel through a proxy
         _, url, _ = serve(self)
