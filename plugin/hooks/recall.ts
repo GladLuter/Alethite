@@ -6,8 +6,8 @@ export type Hit = { conv: string; parent: string; ts: string; kind: string; pos:
 export type Row = { ts: string; kind: string; pos: number; text: string }
 export type IndexError = { path: string; error: string }
 
-// The query is one `--query=…` item: one starting with `-` would otherwise be read as a flag.
-export const recallArgs = (input: { query: string; scope?: string; limit?: number }, cwd: string, model: string) => [
+// The query is one `--query=…` item: one starting with `-` would otherwise be read as a flag. `compression`: the level of the setting.
+export const recallArgs = (input: { query: string; scope?: string; limit?: number }, cwd: string, model: string, compression: string) => [
   'recall',
   `--query=${input.query}`,
   ...(input.scope === 'all' ? ['--all'] : ['--cwd', cwd]),
@@ -15,6 +15,8 @@ export const recallArgs = (input: { query: string; scope?: string; limit?: numbe
   String(input.limit ?? 8),
   '--model',
   model,
+  '--compress',
+  compression,
 ]
 
 const day = (ts: string) => ts.slice(0, 10)

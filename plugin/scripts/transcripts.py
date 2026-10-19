@@ -1,5 +1,7 @@
 import json
+import ntpath
 import os
+import posixpath
 import re
 
 HANDOFF_START = '[cg-handoff]'
@@ -26,9 +28,25 @@ def strip_handoff(text):
     return _HANDOFF.sub('', text)
 
 
-def project_key(cwd):
-    """Same key for a project folder and for any of its worktrees."""
-    return _WORKTREE.sub('', os.path.normcase(os.path.normpath(cwd)))
+def _norm(p):
+    """A path in the one form keys are compared in on every computer: a Windows path (a drive or a share, and every path on Windows)
+    by Windows rules, lower case and backslashes, whatever system reads it; a relative one made absolute."""
+    m = ntpath if os.name == 'nt' or re.match(r'[A-Za-z]:|[\\/]{2}[^\\/]', p) else posixpath
+    if not m.isabs(p):
+        p = os.path.abspath(p)
+    return m.normcase(m.normpath(p)), m.sep
+
+
+def project_key(cwd, home=None):
+    """Same key for a project folder and for any of its worktrees. Under the home folder (`home`, by default this computer's) it starts
+    with ~, so one project inside two profiles (C:\\Users\\AIJ, C:\\Users\\gladl) has one key on both computers."""
+    key, sep = _norm(cwd)
+    key = _WORKTREE.sub('', key)
+    h, hsep = _norm(os.path.expanduser('~') if home is None else home)
+    h = h.rstrip(hsep)
+    if h and hsep == sep and (key == h or key.startswith(h + sep)):
+        key = '~' + key[len(h):]
+    return key
 
 
 def _load(raw):
@@ -56,7 +74,7 @@ def _typed(text, kind):
 
 def _tool(b):
     inp = b.get('input') if isinstance(b.get('input'), dict) else {}
-    name = b.get('name') or 'unknown'
+    name = b.get('name') if isinstance(b.get('name'), str) and b.get('name') else 'unknown'  # a broken line must not stop the file
     arg = next((inp[k] for k in _ARGS if isinstance(inp.get(k), str) and inp[k].strip()), '')
     path = inp.get('file_path') or inp.get('notebook_path')
     edit = path if name in ('Edit', 'Write', 'NotebookEdit') and isinstance(path, str) and path else None
@@ -75,7 +93,10 @@ def _items(o, sub):
     elif t == 'attachment' and isinstance(o.get('attachment'), dict):
         a = o['attachment']  # a message typed while Claude was busy
         if a.get('type') == 'queued_command' and not a.get('isMeta') and a.get('commandMode') != 'task-notification':
-            out += _typed(a.get('prompt'), 'task' if sub else 'owner')
+            prompt = a.get('prompt')
+            if isinstance(prompt, list):  # a queued message with a picture is a list of blocks: its text is the message
+                prompt = '\n'.join(b['text'] for b in _blocks(prompt) if b.get('type') == 'text' and isinstance(b.get('text'), str))
+            out += _typed(prompt, 'task' if sub else 'owner')
     elif t == 'assistant' and m.get('model') != '<synthetic>':
         for b in _blocks(m.get('content')):
             if b.get('type') == 'text' and isinstance(b.get('text'), str) and b['text'].strip():

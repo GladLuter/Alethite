@@ -31,7 +31,16 @@ export const summaryNote = (fronts: Record<string, unknown>[]) => {
     .filter(f => typeof f.host === 'string' && f.date !== undefined)
     .map(f => ({ date: String(f.date).slice(0, 10), host: f.host as string, f }))
     .sort((a, b) => b.date.localeCompare(a.date) || a.host.localeCompare(b.host))
-    .map(({ date, host, f }) => [date, host, num(f.usd_per_owner_msg, usd), num(f.rewrite_share, pct), num(f.idle60_share, pct), num(f.median_main_context, grouped), num(f.owner_msgs, grouped)])
+    .map(({ date, host, f }) => [
+      date,
+      host,
+      num(f.usd_per_owner_msg, usd),
+      num(f.rewrite_share, pct),
+      num(f.idle60_share, pct),
+      num(f.median_main_context, grouped),
+      num(f.owner_msgs, grouped),
+      num(f.recall_share, pct), // stage 3: what recall's results cost; a note from before has none
+    ])
   const line = (cells: string[]) => `| ${cells.join(' | ')} |`
   return [T.summaryTitle, '', T.summaryHint, '', line(T.summaryColumns), line(T.summaryColumns.map(() => '---')), ...rows.map(line)].join('\n') + '\n'
 }

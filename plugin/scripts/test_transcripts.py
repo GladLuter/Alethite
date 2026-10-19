@@ -66,6 +66,15 @@ class TranscriptsTest(unittest.TestCase):
                          [('owner', 'Привет, сделай X'), ('owner', 'вторая часть'), ('owner', 'в очереди')])
         self.assertEqual((recs[0]['ts'], recs[0]['cwd'], recs[0]['pos']), (TS, 'C:\\r', len(jsonl(objs[:7]))))
 
+    def test_a_queued_message_with_a_picture_keeps_its_text(self):  # stage 1 nit: a list prompt was lost
+        q = {'type': 'attachment', 'timestamp': TS, 'cwd': 'C:\\r', 'attachment': {'type': 'queued_command', 'prompt': [
+            {'type': 'text', 'text': 'посмотри скрин'}, {'type': 'image', 'source': {}}, {'type': 'text', 'text': 'и поправь'}]}}
+        self.assertEqual(self.owner_texts(self.write('s.jsonl', [q])), ['посмотри скрин\nи поправь'])
+
+    def test_a_tool_name_that_is_no_string_does_not_stop_the_file(self):  # stage 1 nit: it raised and the file was never indexed
+        path = self.write('s.jsonl', [a([{'type': 'tool_use', 'id': 't', 'name': 7, 'input': {'command': 'ls'}}]), u('дальше')])
+        self.assertEqual([(r['kind'], r['text']) for r in read_records(path)[0]], [('tool', 'unknown: ls'), ('owner', 'дальше')])
+
     def test_old_handoff_is_not_owner_text(self):
         path = self.write('s.jsonl', [u('[cg-handoff]\nстарое\n[/cg-handoff]\n\nновый черновик'), u('[cg-handoff]\nтолько он')])
         self.assertEqual(self.owner_texts(path), ['новый черновик'])
@@ -133,6 +142,16 @@ class TranscriptsTest(unittest.TestCase):
         self.assertEqual(project_key(r'C:\_git\X\.claude\worktrees\wf-1\src'), project_key(r'c:\_git\x'))
         self.assertEqual(project_key(r'C:\_git\X\.claude\worktrees\wf-1'), project_key('C:/_git/X'))
         self.assertNotEqual(project_key(r'C:\_git\X'), project_key(r'C:\_git\Y'))
+
+    def test_project_key_under_two_profiles_is_one(self):  # stage 2 §5.4: the i3 (C:\Users\AIJ) and the laptop (C:\Users\gladl)
+        i3, laptop = r'C:\Users\AIJ', r'C:\Users\gladl'
+        self.assertEqual(project_key(r'C:\Users\AIJ\work\proj', i3), r'~\work\proj')
+        self.assertEqual(project_key(r'c:\users\gladl\Work\Proj\.claude\worktrees\w1', laptop), r'~\work\proj')
+        self.assertEqual(project_key(i3, i3 + '\\'), '~')
+        self.assertEqual(project_key(r'C:\Users\AIJ2\proj', i3), r'c:\users\aij2\proj')  # a prefix of the name is not the folder
+        self.assertEqual(project_key(r'C:\_git\X', i3), project_key(r'C:\_git\X', laptop))  # outside the profile: the path itself
+        self.assertEqual(project_key('/home/a/proj', '/home/a'), os.path.join('~', 'proj'))  # ~\\proj on Windows
+        self.assertEqual(project_key('rel', '/nowhere'), project_key(os.path.abspath('rel'), '/nowhere'))  # a relative folder is made absolute
 
     def test_find_session_and_last_usage(self):
         u1 = {'input_tokens': 9, 'cache_read_input_tokens': 9, 'cache_creation_input_tokens': 9, 'output_tokens': 9}

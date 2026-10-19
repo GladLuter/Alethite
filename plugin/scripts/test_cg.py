@@ -11,6 +11,7 @@ from unittest import mock
 import cg
 import memdb
 import vectors
+from test_texts import use_lang
 from transcripts import project_key
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
@@ -29,6 +30,7 @@ def claude_line(text, cwd='C:\\a'):
 
 class CgTest(unittest.TestCase):
     def setUp(self):
+        use_lang(self, 'ru')
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
         self.tmp = d.name
@@ -64,6 +66,19 @@ class CgTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('error', out)
 
+    def test_help_is_json(self):  # stage 1 nit: it printed usage text the mod could not read
+        for args in (['--help'], ['sync', '-h']):
+            code, out = self.run_cg(*args)
+            self.assertEqual(code, 0)
+            self.assertIn('usage: cg.py', out['help'])
+
+    def test_a_session_id_is_no_path(self):  # stage 1 nit: it went into the handoff file name unchecked
+        for cmd in ('handoff', 'last-turn'):
+            code, out = self.run_cg(cmd, '--session', '..\\..\\x', *(['--today', '2026-10-19'] if cmd == 'handoff' else []))
+            self.assertEqual(code, 1)
+            self.assertIn('..', out['error'])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, 'x.md')))
+
     def test_last_turn_unknown_session(self):
         self.assertEqual(self.run_cg('last-turn', '--session', 'nope'), (0, {'tokens': None, 'at': None, 'model': None}))
 
@@ -75,7 +90,7 @@ class CgTest(unittest.TestCase):
         self.write('P/S1.jsonl', [owner_line('вопрос про ёжика'), claude_line('ответ')])
         code, out = self.run_cg('index')
         self.assertEqual((code, out['files'], out['rows'], out['errors']), (0, 1, 2, []))
-        self.assertEqual(self.run_cg('index', '--rebuild')[1]['rows'], 2)
+        self.assertEqual(self.run_cg('index', '--rebuild')[1]['rows'], 0)  # nothing is missing, nothing is added
         code, out = self.run_cg('status')
         self.assertEqual((code, out['convs'], out['rows'], out['db']), (0, 1, 2, self.db))
         hit = self.run_cg('recall', '--query', 'ёжика', '--all')[1]['hits'][0]
@@ -111,6 +126,39 @@ class CgTest(unittest.TestCase):
         self.assertIn(vectors.MODEL, self.run_cg('recall', '--query', 'ёжик', '--all')[1]['vector'])
         out = self.run_cg('recall', '--query', 'ёжик', '--all', '--model', 'B')[1]
         self.assertTrue(out['hits'] and 'B' in out['vector'])
+
+    def test_compression_of_what_the_model_reads(self):  # stage 3
+        self.write('P/S1.jsonl', [owner_line('Это очень важный ёжик, и он живёт в `C:\\x\\y.py`.'), claude_line('Ответ: это ёжик.')])
+        hit = lambda *c: self.run_cg('recall', '--query', 'важный', '--all', *c)[1]['hits'][0]
+        self.assertIn('Это очень', hit()['snippet'])  # off unless asked: a terminal user sees the text as it is
+        snippet = hit('--compress', 'ultra')['snippet']
+        self.assertNotIn('очень', snippet)
+        self.assertIn('`C:\\x\\y.py`', snippet)
+        self.assertIn('ёжик', snippet)
+        h = hit()
+        rows = self.run_cg('expand', '--conv', h['conv'], '--pos', str(h['pos']), '--compress', 'full')[1]['rows']
+        self.assertEqual(rows[1]['text'], 'Ответ: ёжик.')
+        self.assertEqual(self.run_cg('recall', '--query', 'ёжик', '--compress', 'max')[0], 1)
+
+    def test_a_tool_call_is_a_command_and_never_compressed(self):  # the review of PR 1
+        command = 'git add . && git commit -m "fix the bug in Parser"'
+        m = {'id': 'm2', 'model': 'claude-opus-5-5', 'role': 'assistant', 'usage': USAGE,
+             'content': [{'type': 'tool_use', 'id': 't1', 'name': 'Bash', 'input': {'command': command}}]}
+        self.write('P/S1.jsonl', [owner_line('закоммить'), dict(type='assistant', timestamp=TS, cwd='C:\\a', message=m)])
+        hit = self.run_cg('recall', '--query', 'Parser', '--all', '--compress', 'ultra')[1]['hits'][0]
+        self.assertEqual(hit['kind'], 'tool')
+        self.assertIn('git add . && git commit -m "fix the bug in «Parser»"', hit['snippet'])
+        rows = self.run_cg('expand', '--conv', hit['conv'], '--pos', str(hit['pos']), '--compress', 'ultra')[1]['rows']
+        self.assertIn('Bash: ' + command, [r['text'] for r in rows])
+
+    def test_compress_previews_a_level(self):
+        env = {k: v for k, v in os.environ.items() if k not in ('PYTHONIOENCODING', 'PYTHONUTF8')}
+        p = subprocess.run([sys.executable, CG, 'compress', '--level', 'ultra'], input='Это очень просто, правда.'.encode('utf-8'), capture_output=True, env=env)
+        self.assertEqual(json.loads(p.stdout.decode('utf-8')), {'text': 'правда', 'chars_in': 25, 'chars_out': 6})
+        path = os.path.join(self.tmp, 'note.txt')
+        with open(path, 'w', encoding='utf-8-sig') as f:  # as Notepad saves it, with a BOM
+            f.write('Это очень просто, правда.')
+        self.assertEqual(self.run_cg('compress', '--level', 'full', '--file', path)[1]['text'], 'правда.')
 
     def test_embed_options(self):
         out = self.run_cg('embed', '--model', 'other', '--max-seconds', '5')  # an empty index: nothing to embed, so no Ollama is called

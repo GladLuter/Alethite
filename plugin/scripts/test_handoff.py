@@ -8,6 +8,7 @@ from unittest import mock
 
 import handoff
 from handoff import build_handoff
+from test_texts import use_lang
 from test_transcripts import a, jsonl, text, tool, u
 from transcripts import strip_handoff
 
@@ -17,6 +18,7 @@ LATER = '2026-10-13T11:00:00.000Z'
 
 class HandoffTest(unittest.TestCase):
     def setUp(self):
+        use_lang(self, 'ru')  # the handoff of stage 1
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
         self.tmp = d.name
@@ -107,6 +109,20 @@ class HandoffTest(unittest.TestCase):
         self.assertIn('first commit', t)
         self.assertNotIn('(git:', t)  # "not a repository" is not an error
 
+    def test_parts_of_one_message_keep_their_order(self):  # one line, one pos: the order of the blocks, not of the alphabet
+        self.write('P/S.jsonl', [u([text('я первая часть'), text('а вторая часть')]), a([text('ответ')])])
+        t = self.build()
+        self.assertLess(t.index('я первая часть'), t.index('а вторая часть'))
+        self.assertLess(t.index('а вторая часть'), t.index('ответ'))
+
+    def test_git_timeout_is_one_short_line(self):
+        self.write('P/S.jsonl', [u('сделай'), a([tool('Edit', file_path=os.path.join(self.tmp, 'a.txt')),
+                                                tool('Edit', file_path=os.path.join(self.projects, 'b.txt'))])])
+        with mock.patch.object(handoff.subprocess, 'run', side_effect=subprocess.TimeoutExpired(['git', '-C', 'C:\\x', 'status'], 10)):
+            t = self.build()
+        self.assertEqual(t.count('(git: git не ответил за 10 с)'), 1)  # once for every folder, not a command line per folder
+        self.assertNotIn('-C', t)
+
     def test_git_failure_is_reported_once(self):
         self.write('P/S.jsonl', [u('сделай'), a([tool('Edit', file_path=os.path.join(self.tmp, 'a.txt')),
                                                 tool('Edit', file_path=os.path.join(self.projects, 'b.txt'))])])
@@ -156,6 +172,15 @@ class HandoffTest(unittest.TestCase):
         self.assertIn('Короткая память: %s (фактов: 2)' % two, self.build(two))
         self.assertIn('Короткая память ПУСТА: %s' % empty, self.build(empty))
         self.assertNotIn('Короткая память', self.build())
+
+    def test_compression_takes_the_quotes_only(self):  # stage 3: ids, paths, git and the markers stay as they are
+        self.write('P/S.jsonl', [u('Это очень важное сообщение владельца.'), a([text('Ответ: это просто **готово**.')])])
+        t = build_handoff(self.projects, 'S', '2026-10-13', None, 'ultra')
+        self.assertTrue(t.startswith('[cg-handoff]') and t.rstrip().endswith('[/cg-handoff]'))
+        self.assertIn('**Ты:** важное сообщение владельца', t)
+        self.assertIn('**Claude:** ответ готово', t)  # «просто» is a filler
+        self.assertIn('claude --resume S', t)
+        self.assertLess(len(t), len(self.build()))
 
     def test_unknown_session(self):
         with self.assertRaises(ValueError):

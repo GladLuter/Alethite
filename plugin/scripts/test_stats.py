@@ -8,6 +8,7 @@ from unittest import mock
 import cg
 from memdb import connect
 from stats import metrics, note_markdown
+from test_texts import use_lang
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
 IN_1M = {'input_tokens': 1_000_000, 'output_tokens': 0, 'cache_read_input_tokens': 0, 'cache_creation_input_tokens': 0}  # sonnet-5: $2.00
@@ -25,6 +26,7 @@ def call(mid, ts, usage):
 
 class StatsTest(unittest.TestCase):
     def setUp(self):
+        use_lang(self, 'ru')  # the note of stage 1
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
         self.projects = os.path.join(d.name, 'projects')
@@ -74,6 +76,30 @@ class StatsTest(unittest.TestCase):
         self.assertIn('70% за 4,5 дня', n)
         self.assertIn('40%', n)
         self.assertIn('100 токенов × 2 вызовов', n)
+
+    def test_the_memory_in_the_context_is_measured(self):  # stage 3: measure before compressing more
+        recall = {'type': 'tool_use', 'id': 'r1', 'name': 'mcp__cacheguard__recall', 'input': {'query': 'кэш'}}
+        other = {'type': 'tool_use', 'id': 'b1', 'name': 'Bash', 'input': {'command': 'ls'}}
+        result = lambda i, text: dict(type='user', timestamp='2026-10-06T10:00:02.000Z', message={'role': 'user', 'content': [
+            {'type': 'tool_result', 'tool_use_id': i, 'content': [{'type': 'text', 'text': text}]}]})
+        self.write('P/T.jsonl', [
+            owner_line('[cg-handoff]\n' + 'п' * 673 + '\n[/cg-handoff]\n\nчерновик', '2026-10-06T10:00:00.000Z'),  # 13 + 673 + 14 = 700 characters
+            dict(call('t1', '2026-10-06T10:00:01.000Z', IN_1M), message={'id': 't1', 'model': 'claude-sonnet-5', 'role': 'assistant', 'usage': IN_1M,
+                                                                        'content': [recall, other]}),
+            result('r1', 'x' * 700), result('b1', 'y' * 7000),
+            owner_line('[cg-handoff]\nдо периода[/cg-handoff]', '2026-09-01T10:00:00.000Z'),
+            owner_line('а что делает [cg-handoff] в начале передачи?', '2026-10-06T10:00:03.000Z')])  # a mention is no handoff
+        m = metrics(self.projects, self.conn, '2026-10-01')
+        self.assertEqual((m['recall_calls'], m['recall_tokens'], m['handoffs'], m['handoff_tokens']), (1, 200, 1, 200))
+        self.assertGreaterEqual(m['recall_cost'], 0)
+        n = note_markdown(m, 'PC-1', '2026-11-13', [], 350, 950, 'ultra')
+        self.assertIn('## Память в контексте', n)
+        self.assertIn('| MEMORY.md | в каждом из %d запросов | 950 | — |' % m['main_calls'], n)
+        self.assertIn('| результаты recall и recall_more | 1 вызовов | 200 |', n)
+        self.assertIn('| передачи дел новому работнику | 1 раз | 200 | — |', n)
+        self.assertIn('ultra', n)
+        self.assertIn('memory_index_tokens: 950', n)
+        self.assertIn('recall_share: ', n)  # the summary note reads it
 
     def test_note_without_messages_or_limits(self):
         m = metrics(self.projects, self.conn, '2030-01-01')

@@ -3,14 +3,16 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Snap } from '../types'
 import { bandLines, isStale, statusText } from './guard'
-import { isMemoryFact } from './memory'
+import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import { FOLDER, flush, notePath, SUMMARY_PATH, summaryNote } from './notes'
 import type { Note } from './notes'
 import { healthLines, message, parseCg } from './py'
 import type { LastError } from './py'
 import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
-import { T } from './text'
+import { skipArgs, syncArgs, syncReport } from './sync'
+import type { SyncResult } from './sync'
+import { language, setLanguage, T } from './text'
 import { launch } from './worker'
 import type { LaunchIO } from './worker'
 
@@ -23,8 +25,8 @@ const isBusy = atom({ plugin: 'cacheguard', key: 'isBusy' } as const, false)
 // The helpers below take `$` and so stay in this file: the loader follows `$` only into functions declared here, never across an import.
 
 const runCg = async ($: EngineInterface, python: string, args: string[], timeoutMs = 120_000) => {
-  // run() rejects only when the child cannot start or times out
-  const r = await $.process.run([python, `${$.plugin.root}/scripts/cg.py`, ...args], { timeoutMs }).catch((err: unknown) => {
+  // run() rejects only when the child cannot start or times out; cg.py speaks the language of the mod
+  const r = await $.process.run([python, `${$.plugin.root}/scripts/cg.py`, '--lang', language(), ...args], { timeoutMs }).catch((err: unknown) => {
     throw new Error(`${T.pythonMissing(python)} (${message(err)})`)
   })
   return parseCg(r)
@@ -61,11 +63,10 @@ const served = async ($: EngineInterface, where: string, work: () => Promise<str
   }
 }
 
-// The auto-memory folder is the one the first loaded AutoMem file sits in; none loaded, none known.
-const memoryDir = async ($: EngineInterface) => {
-  const files = (await $.session.usage({ breakdown: 'summary' })).context.breakdown?.memoryFiles
-  return files?.find(f => f.type === 'AutoMem')?.path.replace(/[\\/][^\\/]*$/, '') ?? null
-}
+// The memory files loaded in this chat, as the engine counts them.
+const memoryFiles = async ($: EngineInterface) => (await $.session.usage({ breakdown: 'summary' })).context.breakdown?.memoryFiles ?? []
+
+const memoryDir = async ($: EngineInterface) => autoMemDir(await memoryFiles($))
 
 // The periodic and background paths: the error goes to the status line (a toast every 30 s would be spam) and is kept for /cg-health.
 const guarded = async ($: EngineInterface, where: string, work: () => Promise<unknown>) => {
@@ -79,16 +80,32 @@ const guarded = async ($: EngineInterface, where: string, work: () => Promise<un
   }
 }
 
-// Three seconds into a session: bring the index up to date, then give the records without vectors up to 2 minutes of the embedding model (the rest waits for the next start).
-// Returns the step that failed, if one did.
-const catchUp = async ($: EngineInterface, python: string, model: string) => {
+// One sync with the other computers through the shared folder, for the current project's short memory too (none known, none synced).
+// cg.py stops itself after 60 s and leaves the rest for the next run.
+const runSync = async ($: EngineInterface, python: string, syncDir: string, model: string, skip: string[] = []) => {
+  const [dir, root] = await Promise.all([memoryDir($), $.session.root()])
+  return (await runCg($, python, syncArgs(syncDir, model, dir, root, skip), 120_000)) as unknown as SyncResult
+}
+
+// Three seconds into a session: bring the index up to date, give the records without vectors up to 2 minutes of the embedding model
+// (the rest waits for the next start), then push our new records and take in the other computers'.
+// Returns the steps that failed, if any did.
+const catchUp = async ($: EngineInterface, python: string, model: string, syncDir: string) => {
   const isIndexed = await guarded($, 'index', async () => indexErrors($, 'index', (await runCg($, python, ['index'], 600_000)).errors as IndexError[], false))
   if (!isIndexed) return 'index' // the same database would fail the same way, and the first cause must stay in /cg-health
   const isEmbedded = await guarded($, 'embed', async () => {
     const [first] = (await runCg($, python, ['embed', '--model', model, '--max-seconds', '120'], 180_000)).errors as { error: string }[]
     if (first) throw new Error(first.error)
   })
-  return isEmbedded ? null : 'embed'
+  // records without vectors go out all the same, and their vectors with a later batch
+  const isSynced =
+    syncDir === '' ||
+    (await guarded($, 'sync', async () => {
+      const [first] = (await runSync($, python, syncDir, model)).errors
+      if (first) throw new Error(first.error)
+    }))
+  const failed = [...(isEmbedded ? [] : ['embed']), ...(isSynced ? [] : ['sync'])]
+  return failed.length ? failed.join(', ') : null
 }
 
 // chats whose size was already asked of cg.py in this load, so a failure is not retried on every tick
@@ -150,13 +167,14 @@ const rebuildSummary = async ($: EngineInterface) => {
 }
 
 // One /cg-stats run: measure, queue the note, send the queue, rebuild the summary. Returns what the owner reads.
-const runStats = async ($: EngineInterface, python: string, days: number) => {
-  const [now, host, usage] = await Promise.all([$.clock.now(), $.env.get('COMPUTERNAME'), $.session.usage()])
+const runStats = async ($: EngineInterface, python: string, days: number, compression: string) => {
+  const [now, host, usage, files] = await Promise.all([$.clock.now(), $.env.get('COMPUTERNAME'), $.session.usage(), memoryFiles($)])
   if (!host) throw new Error(T.noHost)
   const today = calendarDay(now)
   const since = new Date(Date.parse(today) - days * 86_400_000).toISOString().slice(0, 10)
   const limits = usage.rateLimits.map(({ kind, percentUsed }) => ({ kind, percentUsed }))
   const args = ['stats', '--since', since, '--host', host, '--today', today, '--limits', JSON.stringify(limits), '--rule-chars', String(T.memoryRule.length)]
+  args.push('--memory-tokens', String(autoMemTokens(files)), '--compression', compression) // what the memory takes of every request (stage 3)
   const { note, errors } = (await runCg($, python, args, 600_000)) as { note: string; errors: IndexError[] }
   await indexErrors($, 'cg-stats', errors, true) // an unreadable transcript lowers the figures; the note is written all the same
   const path = notePath(host, today)
@@ -180,7 +198,7 @@ const runStats = async ($: EngineInterface, python: string, days: number) => {
 }
 
 // "Новый работник": binds launch() to the engine through closures made here. One launch at a time.
-const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill') => {
+const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill', compression: string) => {
   let wasBusy = false
   await update($, isBusy, busy => ((wasBusy = busy), true)) // atomic: a second press before the redraw is refused here
   if (wasBusy) return
@@ -191,7 +209,8 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
       draft: async () => (await $.prompt.read()).text,
       handoff: async () => {
         const [id, now, dir] = await Promise.all([$.session.id(), $.clock.now(), memoryDir($)])
-        return (await runCg($, python, ['handoff', '--session', id, '--today', calendarDay(now), ...(dir ? ['--memory-dir', dir] : [])])) as { text: string; path: string }
+        const args = ['handoff', '--session', id, '--today', calendarDay(now), ...(dir ? ['--memory-dir', dir] : []), '--compress', compression]
+        return (await runCg($, python, args)) as { text: string; path: string }
       },
       clear: () => $.command.run({ command: 'clear' }),
       submit: text => $.prompt.submit({ text, asUser: true }),
@@ -222,11 +241,14 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
 }
 
 export const register: Register = (on, options) => {
+  setLanguage(options.language as string)
+  const syncDir = (options.syncDir as string).trim().replace(/^"(.*)"$/, '$1') // Explorer's "Copy as path" puts quotes around it
   const minTokens = options.bandMinTokens as number
   const idleMinutes = options.bandIdleMinutes as number
   const showLimits = options.showLimits as boolean
   const python = options.python as string
   const embedModel = options.embedModel as string
+  const compression = compressionLevel(options.compression) // what the model reads of the memory: off, lite, full, ultra (stage 3)
   let isVectorToasted = false // the owner hears of a missing vector search once per load of the mod, not on every recall
   let isCatchUpToasted = false // likewise a failed background catch-up: the status line shows it for 30 s only
 
@@ -237,7 +259,7 @@ export const register: Register = (on, options) => {
     $.clock.after(
       3_000,
       () =>
-        void catchUp($, python, embedModel).then(failed => {
+        void catchUp($, python, embedModel, syncDir).then(failed => {
           if (failed && !isCatchUpToasted) toast($, T.catchUpFailed(failed))
           if (failed) isCatchUpToasted = true
         }),
@@ -249,8 +271,9 @@ export const register: Register = (on, options) => {
     const registrations = [
       () => $.command.register({ name: 'cg-band', description: T.cgBandDescription, argumentHint: '[off]' }),
       () => $.command.register({ name: 'cg-health', description: T.cgHealthDescription }),
-      () => $.command.register({ name: 'cg-index', description: T.cgIndexDescription, argumentHint: '[rebuild]' }),
-      () => $.command.register({ name: 'cg-stats', description: T.cgStatsDescription, argumentHint: '[дней]' }),
+      () => $.command.register({ name: 'cg-index', description: T.cgIndexDescription, argumentHint: T.cgIndexHint }),
+      () => $.command.register({ name: 'cg-stats', description: T.cgStatsDescription, argumentHint: T.cgStatsHint }),
+      () => $.command.register({ name: 'cg-sync', description: T.cgSyncDescription, argumentHint: T.cgSyncHint }),
       () =>
         $.tool.register({
           name: 'recall',
@@ -305,7 +328,8 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'cg-health' }, async $ => {
     try {
-      const dir = await memoryDir($)
+      const mem = await memoryFiles($)
+      const dir = autoMemDir(mem)
       // the root, as recall scopes by it: this is what «в этом проекте» means
       const root = await $.session.root()
       const [{ version }, index, files, lastError] = await Promise.all([
@@ -315,9 +339,9 @@ export const register: Register = (on, options) => {
         $.store.get('lastError'),
       ])
       const facts = files.filter(f => f.name.endsWith('.md') && f.name !== 'MEMORY.md').length
-      const memory = dir === null ? null : { dir, facts }
-      const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" embed --model ${embedModel} --max-seconds 100000`
-      return { text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined }).join('\n') }
+      const memory = dir === null ? null : { dir, facts, tokens: autoMemTokens(mem) }
+      const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" --lang ${language()} embed --model ${embedModel} --max-seconds 100000`
+      return { text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression }).join('\n') }
     } catch (err) {
       await fail($, 'cg-health', err)
       return { text: T.cgHealthFailed }
@@ -335,11 +359,29 @@ export const register: Register = (on, options) => {
     }
   })
 
+  on('command.run', { command: 'cg-sync' }, async ($, e) => {
+    if (syncDir === '') return { text: T.cgSyncOff }
+    const skip = skipArgs(e.args)
+    if (skip === null) return { text: T.cgSyncSkipUsage }
+    try {
+      const r = await runSync($, python, syncDir, embedModel, skip)
+      if (r.errors.length) {
+        // the reply lists them all; the toast and /cg-health keep the first one for when the reply has scrolled away
+        toast($, T.syncErrors(r.errors.length))
+        await noteError($, 'cg-sync', r.errors[0]!.error)
+      }
+      return { text: syncReport(r).join('\n') }
+    } catch (err) {
+      await fail($, 'cg-sync', err)
+      return { text: T.cgSyncFailed }
+    }
+  })
+
   on('command.run', { command: 'cg-stats' }, async ($, e) => {
     const days = Number(e.args.trim() || 7)
     if (!Number.isInteger(days) || days < 1) return { text: T.cgStatsDays }
     try {
-      return { text: await runStats($, python, days) }
+      return { text: await runStats($, python, days, compression) }
     } catch (err) {
       await fail($, 'cg-stats', err)
       return { text: T.cgStatsFailed }
@@ -351,21 +393,24 @@ export const register: Register = (on, options) => {
       const input = e as unknown as { query: string; scope?: string; limit?: number }
       if (typeof input.query !== 'string' || !input.query.trim()) throw new Error(T.noQuery) // the schema asks for it, but nothing makes the model obey
       // the root, not cwd(): a shell `cd` into a subfolder moves cwd but not the project the conversations are filed under
-      const r = await runCg($, python, recallArgs(input, await $.session.root(), embedModel))
+      const r = await runCg($, python, recallArgs(input, await $.session.root(), embedModel, compression))
       await indexErrors($, 'recall', r.errors as IndexError[], true)
       const hits = formatHits(r.hits as Hit[], input.query, input.scope ?? 'project')
       if (r.vector === 'ok') return hits
-      // only the words were searched: the model reads why, the owner gets a toast once and /cg-health keeps the cause
+      // only the words were searched: the model reads why every time; the owner gets a toast once per load, and /cg-health keeps
+      // that cause without it pushing out every later error
       const off = T.vectorOff(String(r.vector))
-      if (!isVectorToasted) toast($, off)
-      isVectorToasted = true
-      await noteError($, 'recall', off)
+      if (!isVectorToasted) {
+        isVectorToasted = true // before the await: two searches at once must not both toast
+        toast($, off)
+        await noteError($, 'recall', off)
+      }
       return `${hits}\n${off}`
     }),
   )
 
   on('tool.call', { tool: 'mcp__cacheguard__recall_more' }, ($, e) =>
-    served($, 'recall_more', async () => formatRows((await runCg($, python, ['expand', `--conv=${e.conv}`, `--pos=${e.pos}`])).rows as Row[])),
+    served($, 'recall_more', async () => formatRows((await runCg($, python, ['expand', `--conv=${e.conv}`, `--pos=${e.pos}`, '--compress', compression])).rows as Row[])),
   )
 
   // last and on the session side: every shared section must precede it, and the text never varies, so the prompt cache is not spent
@@ -392,29 +437,35 @@ export const register: Register = (on, options) => {
     if (!isStale(s, minTokens, idleMinutes) && s.id !== forced) return next(e)
 
     const { Box, Button, Text } = $.ui.resolve(e)
+    // the band above the prompt is one area for every mod: ours goes in a frame of its own, so it never reads as part of another mod's,
+    // and what the mods beneath draw stays, under the frame, instead of being covered by it
+    const below = await next(e)
 
     return (
       <Box flexDirection="column">
-        <Text bold>{T.bandTitle}</Text>
-        {bandLines(s, showLimits).map(line => (
-          <Text>{line}</Text>
-        ))}
-        {armed ? (
-          <Box flexDirection="column">
-            <Text>{T.willClear}</Text>
-            <Box gap={1} flexWrap="wrap">
-              <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send')} />
-              <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill')} />
-              <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
+        <Box borderStyle="round" borderDimColor flexDirection="column" paddingX={1}>
+          <Text bold>{T.bandTitle}</Text>
+          {bandLines(s, showLimits).map(line => (
+            <Text>{line}</Text>
+          ))}
+          {armed ? (
+            <Box flexDirection="column">
+              <Text>{T.willClear}</Text>
+              <Box gap={1} flexWrap="wrap">
+                <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send', compression)} />
+                <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill', compression)} />
+                <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
+              </Box>
+              <Text dimColor>{T.atFilesHint}</Text>
             </Box>
-            <Text dimColor>{T.atFilesHint}</Text>
-          </Box>
-        ) : (
-          <Box gap={1} flexWrap="wrap">
-            <Button key="launch" label={busy ? T.busy : T.newWorker} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />
-            <Button key="stay" label={T.stayHere} onPress={() => update($, hiddenId, () => s.id)} />
-          </Box>
-        )}
+          ) : (
+            <Box gap={1} flexWrap="wrap">
+              <Button key="launch" label={busy ? T.busy : T.newWorker} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />
+              <Button key="stay" label={T.stayHere} onPress={() => update($, hiddenId, () => s.id)} />
+            </Box>
+          )}
+        </Box>
+        {below}
       </Box>
     )
   })
