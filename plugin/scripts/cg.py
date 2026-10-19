@@ -67,8 +67,12 @@ def _expand(a):
     return {'rows': _squeeze(memdb.expand(memdb.connect(a.db), a.conv, a.pos), 'text', a.compress)}
 
 
-def _compress(a):  # the owner's preview of a level: cg.py compress --level ultra < text.txt
-    text = sys.stdin.read()
+def _compress(a):  # the owner's preview of a level: cg.py compress --level ultra --file text.txt (or the text on stdin)
+    if a.file:
+        with open(a.file, encoding='utf-8-sig') as f:  # Windows PowerShell 5.1 spoils non-ASCII it pipes into a program: a file is safer
+            text = f.read()
+    else:
+        text = sys.stdin.read()
     out = compress(text, a.level)
     return {'text': out, 'chars_in': len(text), 'chars_out': len(out)}
 
@@ -151,7 +155,9 @@ def _parser():
     s.add_argument('--conv', required=True)
     s.add_argument('--pos', type=int, required=True)
     s.add_argument('--compress', choices=LEVELS, default='off')
-    add('compress', _compress).add_argument('--level', choices=LEVELS, default='ultra')
+    s = add('compress', _compress)
+    s.add_argument('--level', choices=LEVELS, default='ultra')
+    s.add_argument('--file')
     s = add('embed', _embed)
     s.add_argument('--model', default=vectors.MODEL)
     s.add_argument('--max-seconds', type=float, default=120)

@@ -144,6 +144,10 @@ class CgTest(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k not in ('PYTHONIOENCODING', 'PYTHONUTF8')}
         p = subprocess.run([sys.executable, CG, 'compress', '--level', 'ultra'], input='Это очень просто, правда.'.encode('utf-8'), capture_output=True, env=env)
         self.assertEqual(json.loads(p.stdout.decode('utf-8')), {'text': 'правда', 'chars_in': 25, 'chars_out': 6})
+        path = os.path.join(self.tmp, 'note.txt')
+        with open(path, 'w', encoding='utf-8-sig') as f:  # as Notepad saves it, with a BOM
+            f.write('Это очень просто, правда.')
+        self.assertEqual(self.run_cg('compress', '--level', 'full', '--file', path)[1]['text'], 'правда.')
 
     def test_embed_options(self):
         out = self.run_cg('embed', '--model', 'other', '--max-seconds', '5')  # an empty index: nothing to embed, so no Ollama is called
