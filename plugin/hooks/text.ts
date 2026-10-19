@@ -28,6 +28,7 @@ export const T = {
   // band buttons
   newWorker: 'Новый работник',
   stayHere: 'Остаться здесь',
+  willClear: 'Этот чат будет очищен, передача дел сохранится в файл.',
   sendNow: 'Отправить сразу',
   pickInMenu: 'Выберу модель сам',
   cancel: 'Отмена',

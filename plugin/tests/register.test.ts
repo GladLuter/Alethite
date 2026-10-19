@@ -151,6 +151,7 @@ test('new worker: the first press arms the band: two ways to go, cancel and the 
   expect(await ui.findAll({ type: 'Button', text: T.sendNow })).toHaveLength(1)
   expect(await ui.findAll({ type: 'Button', text: T.pickInMenu })).toHaveLength(1)
   expect(await ui.findAll({ type: 'Text', text: T.atFilesHint })).toHaveLength(1)
+  expect(await ui.findAll({ type: 'Text', text: T.willClear })).toHaveLength(1)
 
   await ui.press({ key: 'cancel' })
   expect(await buttons(ui)).toEqual(['launch', 'stay'])

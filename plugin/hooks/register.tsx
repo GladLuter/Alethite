@@ -401,6 +401,7 @@ export const register: Register = (on, options) => {
         ))}
         {armed ? (
           <Box flexDirection="column">
+            <Text>{T.willClear}</Text>
             <Box gap={1} flexWrap="wrap">
               <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send')} />
               <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill')} />
