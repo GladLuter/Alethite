@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { autoMemDir, autoMemTokens, isMemoryFact } from '../hooks/memory'
+import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from '../hooks/memory'
 import { setLanguage, T } from '../hooks/text'
 
 test('memory fact paths', () => {
@@ -36,4 +36,13 @@ test('toast names the fact', () => {
   } finally {
     setLanguage('en')
   }
+})
+
+test('compression level: case and spaces forgiven, anything unknown is the default', () => {
+  expect(compressionLevel('lite')).toBe('lite')
+  expect(compressionLevel(' Full ')).toBe('full')
+  expect(compressionLevel('ULTRA')).toBe('ultra')
+  expect(compressionLevel('max')).toBe('ultra')
+  expect(compressionLevel('')).toBe('ultra')
+  expect(compressionLevel(undefined)).toBe('ultra')
 })

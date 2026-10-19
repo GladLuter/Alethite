@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Snap } from '../types'
 import { bandLines, isStale, statusText } from './guard'
-import { autoMemDir, autoMemTokens, isMemoryFact } from './memory'
+import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import { FOLDER, flush, notePath, SUMMARY_PATH, summaryNote } from './notes'
 import type { Note } from './notes'
 import { healthLines, message, parseCg } from './py'
@@ -248,7 +248,7 @@ export const register: Register = (on, options) => {
   const showLimits = options.showLimits as boolean
   const python = options.python as string
   const embedModel = options.embedModel as string
-  const compression = options.compression as string // what the model reads of the memory: off, lite, full, ultra (stage 3)
+  const compression = compressionLevel(options.compression) // what the model reads of the memory: off, lite, full, ultra (stage 3)
   let isVectorToasted = false // the owner hears of a missing vector search once per load of the mod, not on every recall
   let isCatchUpToasted = false // likewise a failed background catch-up: the status line shows it for 30 s only
 
