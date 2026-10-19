@@ -140,6 +140,17 @@ class CgTest(unittest.TestCase):
         self.assertEqual(rows[1]['text'], 'Ответ: ёжик.')
         self.assertEqual(self.run_cg('recall', '--query', 'ёжик', '--compress', 'max')[0], 1)
 
+    def test_a_tool_call_is_a_command_and_never_compressed(self):  # the review of PR 1
+        command = 'git add . && git commit -m "fix the bug in Parser"'
+        m = {'id': 'm2', 'model': 'claude-opus-5-5', 'role': 'assistant', 'usage': USAGE,
+             'content': [{'type': 'tool_use', 'id': 't1', 'name': 'Bash', 'input': {'command': command}}]}
+        self.write('P/S1.jsonl', [owner_line('закоммить'), dict(type='assistant', timestamp=TS, cwd='C:\\a', message=m)])
+        hit = self.run_cg('recall', '--query', 'Parser', '--all', '--compress', 'ultra')[1]['hits'][0]
+        self.assertEqual(hit['kind'], 'tool')
+        self.assertIn('git add . && git commit -m "fix the bug in «Parser»"', hit['snippet'])
+        rows = self.run_cg('expand', '--conv', hit['conv'], '--pos', str(hit['pos']), '--compress', 'ultra')[1]['rows']
+        self.assertIn('Bash: ' + command, [r['text'] for r in rows])
+
     def test_compress_previews_a_level(self):
         env = {k: v for k, v in os.environ.items() if k not in ('PYTHONIOENCODING', 'PYTHONUTF8')}
         p = subprocess.run([sys.executable, CG, 'compress', '--level', 'ultra'], input='Это очень просто, правда.'.encode('utf-8'), capture_output=True, env=env)

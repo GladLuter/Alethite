@@ -59,8 +59,8 @@ def _recall(a):
 
 
 def _squeeze(items, field, level):
-    """`items` with `field` compressed at `level` (stage 3): what the model reads of the memory."""
-    return [dict(i, **{field: compress(i[field], level)}) for i in items]
+    """`items` with `field` compressed at `level` (stage 3): what the model reads of the memory. A tool call is a command: as it is."""
+    return [i if i.get('kind') == 'tool' else dict(i, **{field: compress(i[field], level)}) for i in items]
 
 
 def _expand(a):

@@ -42,8 +42,13 @@ test('report: what moved, how far each computer is, the short memory', () => {
 })
 
 test('report: no other computer yet, no memory folder, forgets, skipped vectors, every warning and error', () => {
-  const r = result({ peers: {}, memory: null, forgotten: 1, skipped_vectors: 4, warnings: ['w'], errors: [{ where: 'pull', machine: 'MTLAPTOP', batch: 3, error: 'e1' }, { where: 'sync', error: 'e2' }] })
-  expect(syncReport(r)).toEqual([T.cgSyncDone(r), T.cgSyncNoPeers, T.syncMemoryOff, T.cgSyncForgotten(1), T.cgSyncSkippedVectors(4), T.cgSyncWarning('w'), T.cgSyncError('e1'), T.cgSyncError('e2')])
+  const r = result({ peers: {}, memory: null, forgotten: 1, skipped_vectors: 4, warnings: ['w'], errors: [{ where: 'pull', machine: 'MTLAPTOP', batch: 3, error: 'e1' }] })
+  expect(syncReport(r)).toEqual([T.cgSyncDone(r), T.cgSyncNoPeers, T.syncMemoryOff, T.cgSyncForgotten(1), T.cgSyncSkippedVectors(4), T.cgSyncWarning('w'), T.cgSyncError('e1')])
+})
+
+test('report: a run that failed as a whole says why, not that the auto-memory folder is missing', () => {
+  const r = result({ peers: {}, memory: null, errors: [{ where: 'sync', error: 'the sync folder is unavailable' }] })
+  expect(syncReport(r)).toEqual([T.cgSyncDone(r), T.cgSyncNoPeers, T.cgSyncError('the sync folder is unavailable')])
 })
 
 const status: SyncStatus = {
@@ -70,6 +75,13 @@ test('health: the folder, the records by computer, the last batches, the skips, 
     T.healthSyncError('boom'),
     T.syncMemory({ pushed: 1, pulled: 0, conflicts: 0 }),
   ])
+})
+
+test('health: a last run that failed as a whole tells its error, not a missing auto-memory folder', () => {
+  const failed: SyncStatus = { ...status, last: { ...status.last!, memory: null, errors: 1, error: 'the sync folder is unavailable', stopped: true } }
+  const lines = syncHealth('\\\\NAS\\cg', failed)
+  expect(lines).toContain(T.healthSyncError('the sync folder is unavailable'))
+  expect(lines).not.toContain(T.syncMemoryOff)
 })
 
 test('health: never synced; nothing known of the index', () => {

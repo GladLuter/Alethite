@@ -25,6 +25,14 @@ def tool_line(name, ts=TS, **inp):
     return dict(type='assistant', timestamp=ts, cwd='C:\\a', message=m)
 
 
+class LockTest(unittest.TestCase):
+    def test_a_writer_waits_for_a_sync_up_to_30_seconds(self):  # a sync holds the write lock while it writes to the share
+        with tempfile.TemporaryDirectory() as d:
+            conn = connect(os.path.join(d, 'index.db'))
+            self.assertEqual(conn.execute('PRAGMA busy_timeout').fetchone()[0], 30000)
+            conn.close()
+
+
 class MemdbTest(unittest.TestCase):
     def setUp(self):
         d = tempfile.TemporaryDirectory()

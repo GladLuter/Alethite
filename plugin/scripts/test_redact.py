@@ -64,15 +64,20 @@ class RedactTest(unittest.TestCase):
                           ('--secret "and more"', '--secret "' + H + '"'),
                           ('mysql -u root -e "select 1 from mysql.user" -phunter22', 'mysql -u root -e "select 1 from mysql.user" -p' + H)]:
             self.assertEqual(redact(raw), want, raw)
-        for ok in ['tests pass: all green', 'all checks pass: ok', 'the --token flag', 'use the --token flag to pass it',
+        # a password that starts like a word of prose is still a password; a wrapper of mysql is still mysql (the review of PR 1)
+        for raw, want in [('--password Or@nge99', '--password ' + H), ('--password a!b', '--password ' + H), ('--token a@b3', '--token ' + H),
+                          ('--password the#1', '--password ' + H), ('--token with=x', '--token ' + H),
+                          ('run_mysql.sh -u root -pS3cret', 'run_mysql.sh -u root -p' + H), ('my_mysql -pS3cret', 'my_mysql -p' + H)]:
+            self.assertEqual(redact(raw), want, raw)
+        for ok in ['tests pass: all green', 'all checks pass: ok', 'the --token flag', 'the --token flag.', 'use the --token flag to pass it',
                    '--token or --password', 'Use --password flag', 'the --api-key option is required', 'передай --token флагом']:
             self.assertEqual(redact(ok), ok)
 
     def test_thousands_of_mysql_on_a_line_stay_linear(self):
-        line = 'mysql ' * 20000  # no -p: every mysql used to search the rest of the line
-        start = time.monotonic()
-        self.assertEqual(redact(line), line)
-        self.assertLess(time.monotonic() - start, 2)  # quadratic, this took about 20 s
+        for line in ('mysql ' * 20000, 'mysql_' * 20000):  # no -p: every mysql used to search the rest of the line
+            start = time.monotonic()
+            self.assertEqual(redact(line), line)
+            self.assertLess(time.monotonic() - start, 2)  # quadratic, this took about 20 s
 
     def test_url_password_with_at(self):
         self.assertEqual(redact('https://user:p@ss@host/x'), 'https://' + H + '@host/x')

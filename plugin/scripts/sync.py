@@ -134,8 +134,10 @@ def _push(conn, folder, machine, digest, deadline, now, report):
             header = {'type': 'header', 'format': FORMAT, 'machine': machine, 'batch': n, 'model': model, 'dims': DIMS,
                       'digest': digest(model) if vecs and model else None, 'created': _now()}
             _write(folder, n, [_dumps(header)] + lines)
-            conn.execute('INSERT INTO peers(machine, last_batch) VALUES(?, ?) ON CONFLICT(machine) DO UPDATE SET last_batch = excluded.last_batch',
-                         (machine, n))
+            # our mark moves on only from the batch before: when our own folder stopped at a broken batch, the batches after it
+            # must still be read once it is skipped
+            conn.execute('INSERT INTO peers(machine, last_batch) VALUES(?, ?) ON CONFLICT(machine) DO UPDATE SET last_batch = excluded.last_batch '
+                         'WHERE last_batch = excluded.last_batch - 1', (machine, n))
             conn.commit()  # if this fails the batch is out and its records go out again next time: a repeat changes nothing anywhere
         except BaseException:
             conn.rollback()
@@ -276,12 +278,18 @@ def _pull(conn, folder, peer, own, model, digest, deadline, now, report):
 
 
 def skip_batch(conn, machine, n):
-    """Go on past batch `n` of `machine` without it: the owner's way out of a broken batch. Kept, and shown in /cg-health."""
+    """Go on past batch `n` of `machine` without it: the owner's way out of a broken batch. Kept, and shown in /cg-health. Only a computer
+    known here (its name in any case) and only the batch it is stuck at: a typo must not skip a sound batch or invent a computer."""
     if not isinstance(n, int) or n < 1:
         raise ValueError(t('skip_batch_bad'))
-    row = conn.execute('SELECT skipped FROM peers WHERE machine = ?', (machine,)).fetchone()
-    skipped = sorted(set(json.loads(row[0]) if row else []) | {n})
-    conn.execute('INSERT INTO peers(machine, skipped) VALUES(?, ?) ON CONFLICT(machine) DO UPDATE SET skipped = excluded.skipped', (machine, json.dumps(skipped)))
+    rows = conn.execute('SELECT machine, last_batch, skipped FROM peers').fetchall()
+    row = next((r for r in rows if r[0].lower() == machine.lower()), None)
+    if not row:
+        raise ValueError(t('skip_batch_unknown', machine=machine, known=', '.join(sorted(r[0] for r in rows)) or '—'))
+    machine, last, skipped = row[0], row[1] or 0, set(json.loads(row[2]) if row[2] else [])
+    if n != last + 1:
+        raise ValueError(t('skip_batch_not_next', machine=machine, n=n, want=last + 1))
+    conn.execute('UPDATE peers SET skipped = ? WHERE machine = ?', (json.dumps(sorted(skipped | {n})), machine))
 
 
 # ---- short memory: the fact files of the auto-memory folder of one project
@@ -427,8 +435,10 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
     report['peers'] = {m: last for m, last in conn.execute('SELECT machine, last_batch FROM peers WHERE machine != ? ORDER BY machine', (machine,))}
     report['own_batch'] = (conn.execute('SELECT last_batch FROM peers WHERE machine = ?', (machine,)).fetchone() or (None,))[0]
     report['seconds'] = round(now() - start, 2)
+    # stopped: the run failed as a whole (an unavailable folder) and never reached the memory step; /cg-health tells only its error then
     last = {'at': _now(), 'dir': sync_dir, 'pushed': report['pushed'], 'pulled': report['pulled'], 'memory': report['memory'],
-            'errors': len(report['errors']), 'error': report['errors'][0]['error'] if report['errors'] else None}
+            'errors': len(report['errors']), 'error': report['errors'][0]['error'] if report['errors'] else None,
+            'stopped': any(e['where'] == 'sync' for e in report['errors'])}
     conn.execute("INSERT OR REPLACE INTO meta VALUES('sync_last', ?)", (json.dumps(last, ensure_ascii=False),))
     return report
 

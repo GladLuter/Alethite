@@ -240,6 +240,23 @@ class SyncTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             cgsync.skip_batch(self.a.conn, 'MTLAPTOP', 0)
 
+    def test_skip_batch_takes_only_a_known_computer_and_the_batch_it_waits_at(self):  # the review of PR 1
+        self.ready(self.b)
+        self.b.sync()
+        self.b.say('SB2', 'вторая пачка ноутбука')
+        self.ready(self.b)
+        self.b.sync()
+        self.break_line(self.b, 1, 3)
+        self.assertEqual(self.a.sync()['errors'][0]['batch'], 1)
+        with self.assertRaisesRegex(ValueError, 'MTLAPTOP'):
+            cgsync.skip_batch(self.a.conn, 'NOSUCH', 1)  # no phantom computer
+        with self.assertRaisesRegex(ValueError, ' 1'):
+            cgsync.skip_batch(self.a.conn, 'MTLAPTOP', 2)  # a sound batch is not skipped ahead
+        self.assertEqual(self.a.q("SELECT count(*) FROM peers WHERE machine = 'NOSUCH'"), 0)
+        cgsync.skip_batch(self.a.conn, 'mtlaptop', 1)  # the name in any case: the one in the folder is meant
+        r = self.a.sync()
+        self.assertEqual((r['errors'], r['peers']['MTLAPTOP']), ([], 2))
+
     def test_a_missing_batch_with_later_ones_is_an_error(self):
         self.ready(self.b)
         self.b.sync()
@@ -262,7 +279,8 @@ class SyncTest(unittest.TestCase):
             self.assertIn(gone, r['errors'][0]['error'])
         self.assertEqual(search(self.a.conn, 'ёжик')[0]['conv'], 'SA')
         self.assertEqual(hybrid_search(self.a.conn, 'ёжик', embed_fn=fake)[1], 'ok')
-        self.assertEqual(json.loads(memdb.meta(self.a.conn, 'sync_last'))['errors'], 1)  # kept for /cg-health
+        last = json.loads(memdb.meta(self.a.conn, 'sync_last'))  # kept for /cg-health
+        self.assertEqual((last['errors'], last['stopped']), (1, True))
         self.assertFalse(os.path.exists(os.path.join(self.root, 'nas-off')))  # an absent share is not made on the local disk
 
     def test_a_folder_without_batches_is_no_computer(self):
@@ -394,6 +412,34 @@ class SyncTest(unittest.TestCase):
         self.assertEqual((self.a.sync()['pushed'], self.a.batches()), (0, [1]))  # nor pushed again
         self.assertEqual(cgsync.status(self.a.conn, 'AIJ-HP')['origins'], {'AIJ-HP': 2})
 
+    def test_a_fresh_index_past_a_broken_batch_of_its_own_loses_none_of_the_later_ones(self):
+        self.a.say('SBIG', *['сообщение номер %d ' % i + 'я' * 300 for i in range(40)])
+        self.ready(self.a)
+        with mock.patch.object(cgsync, 'BATCH_BYTES', 3000):
+            self.a.sync()
+        batches = self.a.batches()
+        self.assertGreater(len(batches), 3)
+        lost = len(self.batch_texts(self.a, 2))
+        self.a.close()
+        os.remove(self.a.db)  # Windows reinstalled, and the old transcripts are gone too: the batches are all that is left
+        for name in ('SA', 'SBIG'):
+            os.remove(os.path.join(self.a.projects, 'C--work-proj', name + '.jsonl'))
+        self.a.open()
+        self.a.say('SNEW', 'новый разговор после переустановки')
+        self.ready(self.a)
+        self.break_line(self.a, 2, 3)
+        r = self.a.sync()  # stops at its own batch 2, and still pushes the new conversation
+        self.assertEqual((r['errors'][0]['batch'], r['pushed']), (2, 1))
+        self.assertEqual(self.a.sync()['errors'][0]['batch'], 2)  # the error stays until it is skipped
+        cgsync.skip_batch(self.a.conn, 'AIJ-HP', 2)
+        r = self.a.sync()
+        self.assertEqual(r['errors'], [])
+        self.assertEqual(self.a.rows(), 2 + 40 - lost + 1)  # every record but those of the broken batch
+        self.assertEqual(self.a.q("SELECT last_batch FROM peers WHERE machine = 'AIJ-HP'"), batches[-1] + 1)  # the new conversation's batch
+
+    def batch_texts(self, c, n):
+        return [l['text'] for l in c.batch_lines(n) if l.get('type') == 'chunk']
+
     def test_a_fresh_index_indexed_first_still_pushes_nothing_twice(self):
         self.ready(self.a)
         self.a.sync()
@@ -512,9 +558,11 @@ class SyncTest(unittest.TestCase):
         out = run(self.b, 'sync', '--sync-dir', os.path.join(self.root, 'off'), '--machine', 'MTLAPTOP')
         self.assertIn('папка синхронизации недоступна', out['errors'][0]['error'])
         out = run(self.b, 'sync', '--sync-dir', self.share, '--machine', 'MTLAPTOP', '--skip-batch', 'AIJ-HP', '7')
+        self.assertIn('AIJ-HP ждёт на пачке 2, а не 7', out['error'])  # a typo skips nothing
+        out = run(self.b, 'sync', '--sync-dir', self.share, '--machine', 'MTLAPTOP', '--skip-batch', 'AIJ-HP', '2')
         self.assertEqual(out['errors'], [])
         st = run(self.b, 'status', '--machine', 'MTLAPTOP')['sync']
-        self.assertEqual(([p['skipped'] for p in st['peers'] if p['machine'] == 'AIJ-HP'], st['last']['errors']), ([[7]], 0))
+        self.assertEqual(([p['skipped'] for p in st['peers'] if p['machine'] == 'AIJ-HP'], st['last']['errors']), ([[2]], 0))
         self.assertEqual(run(self.b, 'sync', '--sync-dir', self.share, '--skip-batch', 'AIJ-HP', 'x')['error'].split(':')[0], 'ValueError')
         pos = self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'")
         self.assertEqual(run(self.a, 'forget', '--conv', 'SA', '--pos', str(pos)), {'forgotten': 1})

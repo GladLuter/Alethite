@@ -150,7 +150,7 @@ class TranscriptsTest(unittest.TestCase):
         self.assertEqual(project_key(i3, i3 + '\\'), '~')
         self.assertEqual(project_key(r'C:\Users\AIJ2\proj', i3), r'c:\users\aij2\proj')  # a prefix of the name is not the folder
         self.assertEqual(project_key(r'C:\_git\X', i3), project_key(r'C:\_git\X', laptop))  # outside the profile: the path itself
-        self.assertEqual(project_key('/home/a/proj', '/home/a'), '~/proj')
+        self.assertEqual(project_key('/home/a/proj', '/home/a'), os.path.join('~', 'proj'))  # ~\\proj on Windows
         self.assertEqual(project_key('rel', '/nowhere'), project_key(os.path.abspath('rel'), '/nowhere'))  # a relative folder is made absolute
 
     def test_find_session_and_last_usage(self):

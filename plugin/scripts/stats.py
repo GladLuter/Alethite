@@ -71,7 +71,8 @@ def memory_load(projects, since, until=None):
                     elif o.get('type') == 'user' and inside and b.get('type') == 'tool_result' and b.get('tool_use_id') in ours:
                         out['recall_calls'] += 1
                         out['recall_chars'] += cc_token_audit.result_chars(b.get('content'))
-                    elif o.get('type') == 'user' and inside and b.get('type') == 'text' and HANDOFF_START in str(b.get('text')):
+                    elif (o.get('type') == 'user' and inside and b.get('type') == 'text' and isinstance(b.get('text'), str)
+                          and b['text'].lstrip().startswith(HANDOFF_START)):  # a message that only mentions the marker is no handoff
                         text = b['text']
                         start = text.index(HANDOFF_START)
                         end = text.find(HANDOFF_END, start)

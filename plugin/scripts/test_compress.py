@@ -1,3 +1,4 @@
+import time
 import unittest
 from compress import LEVELS, compress
 
@@ -41,7 +42,7 @@ class CompressTest(unittest.TestCase):
 
     def test_ultra_drops_punctuation_and_capitals_of_plain_words_only(self):
         out = compress('Кэш, API и GitHub: работает? «Модель» — да. M a.txt', 'ultra')
-        self.assertEqual(out, 'кэш API GitHub работает? «модель» да M a.txt')
+        self.assertEqual(out, 'кэш API GitHub работает? «Модель» да M a.txt')  # the word the search matched keeps its case too
 
     def test_code_paths_links_numbers_names_and_flags_go_through_as_they_are(self):
         keep = ['`cg.py index --rebuild`', 'C:\\Users\\AIJ\\x.py', '~/.claude/projects', 'https://example.com/a_b?c=1', '42', 'snake_case',
@@ -55,8 +56,32 @@ class CompressTest(unittest.TestCase):
         for level in LEVELS:
             self.assertIn('```python\nx  =  1\n\n\n\nprint( x )  # это код\n```', compress(block, level))
 
-    def test_a_fence_cut_off_by_a_snippet_is_code_to_the_end(self):
-        self.assertEqual(compress('Это пример:\n```\nэто код и он не сжимается', 'ultra'), 'пример\n```\nэто код и он не сжимается')
+    def test_a_fence_cut_in_two_by_a_snippet_leaves_the_whole_text_as_it_is(self):  # which side is code cannot be told
+        for text in ('Это пример:\n```\nэто код и он не сжимается', '…if row.name in «seen»:\n    pass\n```\nafter the code'):
+            for level in LEVELS:
+                self.assertEqual(compress(text, level), text, (level, text))
+
+    def test_commands_keep_their_lone_dashes_and_dots_a_list_loses_its_dash(self):  # the review of PR 1
+        for text in ('cd ..', 'git checkout -', 'npm run build -- --prod', 'git add . && git push'):
+            self.assertEqual(compress(text, 'ultra'), text)
+        self.assertEqual(compress('- пункт списка\n- второй', 'ultra'), 'пункт списка\nвторой')
+
+    def test_abbreviations_of_and_who_keep_the_sense(self):  # the review of PR 1
+        for text, want in [('at 9 AM', '9 AM'), ('Mode: ON', 'mode ON'), ('12 of 12 tests passed; 3 of 40 failed', '12 of 12 tests passed 3 of 40 failed'),
+                           ('who deleted the file?', 'who deleted file?')]:
+            self.assertEqual(compress(text, 'ultra'), want, text)
+        self.assertEqual(compress('И это всё', 'ultra'), 'всё')  # a one-letter word in capitals is no abbreviation
+
+    def test_emphasis_goes_around_words_only(self):
+        for text in ('x**2 + y**2', 'src/**/*.ts and src/**/*.js'):
+            self.assertEqual(compress(text, 'lite'), text)
+        self.assertEqual(compress('**жирный** текст', 'lite'), 'жирный текст')
+
+    def test_long_runs_stay_linear(self):  # each of these took 7-17 s
+        for text, level in [('x' + ' ' * 40000 + 'x', 'lite'), ('**a ' * 20000, 'lite'), ('**a ' * 20000, 'ultra')]:
+            start = time.monotonic()
+            compress(text, level)
+            self.assertLess(time.monotonic() - start, 2, level)
 
     def test_the_word_the_search_matched_stays(self):
         self.assertEqual(compress('…кэш «истёк» и «это» тоже…', 'full'), '…кэш «истёк» «это» …')  # the cut stays too

@@ -333,6 +333,12 @@ test('recall: no vector search: the model reads why, the owner gets one toast pe
   expect(m.store.get('lastError')).toMatchObject({ where: 'recall', msg: T.vectorOff(why) })
 })
 
+test('recall: two searches at once without vectors still give one toast', async ($, on) => {
+  const m = await started($, on, () => found({ vector: 'Ollama is not answering: x' }))
+  await Promise.all([recall($), recall($)])
+  expect(m.toasts).toEqual([T.toast(T.vectorOff('Ollama is not answering: x'))])
+})
+
 test('recall: a later error is not pushed out of /cg-health by every search without vectors', async ($, on) => {
   const m = await started($, on, () => found({ vector: 'Ollama is not answering: x' }))
   await recall($)
@@ -764,6 +770,12 @@ test('/cg-sync: the folder, the model, the auto-memory folder and the project ro
     T.syncMemory({ pushed: 0, pulled: 1, conflicts: 0 }),
   ])
   expect(m.toasts).toEqual([])
+})
+
+test('/cg-sync: a folder pasted with Explorer\'s quotes is the folder', { options: { syncDir: ` "${SHARE}" ` } }, async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')))
+  await ($ as any).command.run({ command: 'cg-sync', args: '' })
+  expect(ofCg(m, 'sync')[0]!.argv[1]).toBe(`--sync-dir=${SHARE}`)
 })
 
 test('/cg-sync: no auto-memory folder in this chat: no memory step, and the reply says so', { options: { syncDir: SHARE } }, async ($, on) => {

@@ -65,6 +65,8 @@ EN = {
     'bad_vector': 'a vector of {n} bytes, {want} expected',
     'digest_differs': '{machine}: model {model} is another build there (digest {theirs} here {ours}); its vectors are taken all the same',
     'skip_batch_bad': 'skip-batch: the batch number is a whole number above zero',
+    'skip_batch_unknown': 'skip-batch: no computer {machine} in the sync folder (known: {known})',
+    'skip_batch_not_next': 'skip-batch: {machine} waits at batch {want}, not {n}; only that one can be skipped',
     'memory_dir_missing': 'the auto-memory folder is not there: {dir}',
 }
 
@@ -127,6 +129,8 @@ RU = {
     'bad_vector': 'вектор из {n} байт, ожидалось {want}',
     'digest_differs': '{machine}: модель {model} там другой сборки (digest {theirs}, здесь {ours}); векторы всё равно влиты',
     'skip_batch_bad': 'skip-batch: номер пачки — целое больше нуля',
+    'skip_batch_unknown': 'skip-batch: компьютера {machine} в папке синхронизации нет (известны: {known})',
+    'skip_batch_not_next': 'skip-batch: {machine} ждёт на пачке {want}, а не {n}; пропустить можно только её',
     'memory_dir_missing': 'папки автопамяти нет: {dir}',
 }
 
@@ -189,6 +193,8 @@ UK = {
     'bad_vector': 'вектор із {n} байтів, очікувалося {want}',
     'digest_differs': '{machine}: модель {model} там іншої збірки (digest {theirs}, тут {ours}); вектори все одно влито',
     'skip_batch_bad': 'skip-batch: номер пачки — ціле число більше нуля',
+    'skip_batch_unknown': 'skip-batch: комп\'ютера {machine} у теці синхронізації немає (відомі: {known})',
+    'skip_batch_not_next': 'skip-batch: {machine} чекає на пачці {want}, а не {n}; пропустити можна лише її',
     'memory_dir_missing': "папки автопам'яті немає: {dir}",
 }
 

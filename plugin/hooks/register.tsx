@@ -242,7 +242,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
 
 export const register: Register = (on, options) => {
   setLanguage(options.language as string)
-  const syncDir = (options.syncDir as string).trim()
+  const syncDir = (options.syncDir as string).trim().replace(/^"(.*)"$/, '$1') // Explorer's "Copy as path" puts quotes around it
   const minTokens = options.bandMinTokens as number
   const idleMinutes = options.bandIdleMinutes as number
   const showLimits = options.showLimits as boolean
@@ -401,10 +401,10 @@ export const register: Register = (on, options) => {
       // that cause without it pushing out every later error
       const off = T.vectorOff(String(r.vector))
       if (!isVectorToasted) {
+        isVectorToasted = true // before the await: two searches at once must not both toast
         toast($, off)
         await noteError($, 'recall', off)
       }
-      isVectorToasted = true
       return `${hits}\n${off}`
     }),
   )

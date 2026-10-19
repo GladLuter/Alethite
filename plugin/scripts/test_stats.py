@@ -87,7 +87,8 @@ class StatsTest(unittest.TestCase):
             dict(call('t1', '2026-10-06T10:00:01.000Z', IN_1M), message={'id': 't1', 'model': 'claude-sonnet-5', 'role': 'assistant', 'usage': IN_1M,
                                                                         'content': [recall, other]}),
             result('r1', 'x' * 700), result('b1', 'y' * 7000),
-            owner_line('[cg-handoff]\nдо периода[/cg-handoff]', '2026-09-01T10:00:00.000Z')])
+            owner_line('[cg-handoff]\nдо периода[/cg-handoff]', '2026-09-01T10:00:00.000Z'),
+            owner_line('а что делает [cg-handoff] в начале передачи?', '2026-10-06T10:00:03.000Z')])  # a mention is no handoff
         m = metrics(self.projects, self.conn, '2026-10-01')
         self.assertEqual((m['recall_calls'], m['recall_tokens'], m['handoffs'], m['handoff_tokens']), (1, 200, 1, 200))
         self.assertGreaterEqual(m['recall_cost'], 0)

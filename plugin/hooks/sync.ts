@@ -18,7 +18,8 @@ export type SyncResult = {
 }
 export type SyncStatus = {
   machine: string
-  last: { at: string; dir: string; pushed: number; pulled: number; memory: SyncMemory | null; errors: number; error: string | null } | null
+  // stopped: the run failed as a whole and never reached the memory step (absent in the runs of before)
+  last: { at: string; dir: string; pushed: number; pulled: number; memory: SyncMemory | null; errors: number; error: string | null; stopped?: boolean } | null
   peers: { machine: string; last_batch: number; skipped: number[]; model: string | null; error: string | null }[]
   origins: Record<string, number>
 }
@@ -45,11 +46,12 @@ export const skipArgs = (args: string): string[] | null => {
 
 const list = (pairs: [string, number][]) => pairs.map(([name, n]) => `${name} ${n}`).join(', ')
 
-// The reply of /cg-sync: what moved, how far each computer is, the short memory, and every warning and error.
+// The reply of /cg-sync: what moved, how far each computer is, the short memory, and every warning and error. A run that failed as a
+// whole (an unavailable folder) never reached the memory: its error says why, not a missing auto-memory folder.
 export const syncReport = (r: SyncResult) => [
   T.cgSyncDone(r),
   Object.keys(r.peers).length ? T.cgSyncPeers(list(Object.entries(r.peers))) : T.cgSyncNoPeers,
-  r.memory ? T.syncMemory(r.memory) : T.syncMemoryOff,
+  ...(r.memory ? [T.syncMemory(r.memory)] : r.errors.some(e => e.where === 'sync') ? [] : [T.syncMemoryOff]),
   ...(r.forgotten ? [T.cgSyncForgotten(r.forgotten)] : []),
   ...(r.skipped_vectors ? [T.cgSyncSkippedVectors(r.skipped_vectors)] : []),
   ...r.warnings.map(T.cgSyncWarning),
@@ -76,7 +78,8 @@ export const syncHealth = (syncDir: string, s: SyncStatus | undefined) => {
       ? [
           T.healthSyncLast(new Date(s.last.at).toLocaleString(T.locale), s.last.pushed, s.last.pulled, s.last.errors),
           ...(s.last.error ? [T.healthSyncError(s.last.error)] : []),
-          s.last.memory ? T.syncMemory(s.last.memory) : T.syncMemoryOff,
+          // a run that failed as a whole never reached the memory: only its error is told then
+          ...(s.last.memory ? [T.syncMemory(s.last.memory)] : s.last.stopped ? [] : [T.syncMemoryOff]),
         ]
       : [T.healthSyncNever]),
   ]

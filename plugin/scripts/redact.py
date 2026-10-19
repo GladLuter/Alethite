@@ -9,9 +9,10 @@ _NAME = (r'(?:password|passwd|pwd|(?<![a-z])(?:(?<![^\W\d_][ \t])pass'
          r'|(?:api|access|secret|private|encryption|signing|session)[_-]?key)')
 # a value after an opening quote runs to the closing quote, else to a separator
 _ANY = r'(?:(?<=["\'])[^"\'\n]+|[^\s"\',;]+)'
-# what follows a flag's name in prose ("the --token flag", "--token or --password"): no value, nothing to hide
+# what follows a flag's name in prose ("the --token flag", "--token or --password"): no value, nothing to hide. Only a whole word
+# with at most closing punctuation after it: "Or@nge99" or "a!b" starts like prose and is a password
 _PROSE = (r'(?:flags?|options?|arguments?|args?|parameters?|params?|switch|value|and|or|to|with|for|of|in|is|the|a|an'
-          r'|флаг\w*|опци\w*|параметр\w*|ключ\w*|прапор\w*|опці\w*|и|или|і|або)(?![\w-])')
+          r'|флаг\w*|опци\w*|параметр\w*|ключ\w*|прапор\w*|опці\w*|и|или|і|або)(?=[.,;:)]*(?:\s|\Z))')
 
 # (pattern, replacement): group 1, when present, is the part that stays.
 _RULES = [(re.compile(p), r) for p, r in [
@@ -31,8 +32,9 @@ _RULES = [(re.compile(p), r) for p, r in [
     # The lookbehind keeps a long run of dashes linear.
     (r'(?i)((?<![\w-])--[\w-]*' + _NAME + r'[ \t]+(?!-|' + _PROSE + r')["\']?)' + _ANY, r'\1' + H),
     # `mysql -p<password>`: a space after -p is the prompt form, nothing to hide. The search for -p stops at the next mysql,
-    # which starts a search of its own, and a mysql inside a word starts none: a line with thousands of mysql stays linear.
-    (r'((?<!\w)(?i:mysql)\w*\b(?:(?!(?<!\w)(?i:mysql))[^\n|;&])*?[ \t]-p(?=\S)["\']?)' + _ANY, r'\1' + H),
+    # which starts a search of its own, and a mysql right after a letter or a digit starts none (run_mysql.sh does): a line with
+    # thousands of mysql stays linear.
+    (r'((?<![^\W_])(?i:mysql)(?:(?!(?<![^\W_])(?i:mysql))[^\n|;&])*?[ \t]-p(?=\S)["\']?)' + _ANY, r'\1' + H),
 ]]
 
 
