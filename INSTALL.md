@@ -18,11 +18,10 @@
 
 ## Установка
 
-1. **Скачать код**, ветка `stage1`:
+1. **Скачать код** (ветка `master`):
    ```powershell
    git clone https://github.com/GladLuter/Claude-CacheGuard.git C:\_git\Claude-CacheGuard
    cd C:\_git\Claude-CacheGuard
-   git checkout stage1
    ```
 2. **Найти движок десктопа.** `claude` из PATH — отдельный CLI, часто старее, поэтому нужен именно `claude.exe` десктопа:
    ```powershell
@@ -57,7 +56,7 @@
 
 ## Полезно знать
 
-- **Мод читается прямо из папки репозитория.** Держите её на ветке `stage1`. После `git pull` наберите в Claude Code `/reload-plugins`, переустанавливать не нужно.
+- **Мод читается прямо из папки репозитория.** Держите её на ветке `master`. Если раньше была `stage1`, один раз выполните `git checkout master; git pull`. После `git pull` наберите в Claude Code `/reload-plugins`, переустанавливать не нужно.
 - **Индекс и векторы** лежат в `%USERPROFILE%\.claude\cacheguard\index.db`, в репозиторий не попадают. Каждый компьютер строит свои; общее хранилище — этап 2.
 - **Настройки:** `/config`, строки `cacheguard`. Там пороги полосы, строка лимитов, команда Python (если это `py`, а не `python`) и модель эмбеддингов.
 - **`/cg-stats`** пишет замеры в Obsidian через MCP-сервер `obsidian`. Он должен быть подключён на этом компьютере. Если Obsidian недоступен, замер ждёт в очереди и уходит при следующем запуске.
