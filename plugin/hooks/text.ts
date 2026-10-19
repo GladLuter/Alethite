@@ -6,9 +6,8 @@ export const T = {
   cacheExpired: 'истёк',
   cacheUnknown: '?',
 
-  // marks: whose a band, a status line and a toast are, so none is taken for another mod's. Every other text here is written without the name.
+  // marks: whose a band and a toast are, so neither is taken for another mod's (the engine labels the status line with the plugin name itself). Every other text here is written without the name.
   bandTitle: '🛡 CacheGuard',
-  status: (text: string) => `CacheGuard · ${text}`,
   toast: (text: string) => `CacheGuard: ${text}`,
 
   // band
@@ -29,8 +28,8 @@ export const T = {
   // band buttons
   newWorker: 'Новый работник',
   stayHere: 'Остаться здесь',
-  pickModel: 'Чат будет очищен. Модель нового работника:',
-  sameModel: (current: string) => `та же (${current})`,
+  sendNow: 'Отправить сразу',
+  pickInMenu: 'Выберу модель сам',
   cancel: 'Отмена',
   atFilesHint: '@файлы и картинки из черновика не передаются',
   busy: 'Запускаю…',
@@ -39,8 +38,8 @@ export const T = {
   draftEmpty: 'Новый работник: черновик пуст, чат не тронут. Набери сообщение и нажми снова.',
   handoffFailed: (why: string) => `Новый работник: передача не собрана (${why}). Чат не тронут.`,
   clearFailed: (why: string, path: string) => `Новый работник: чат не очистился (${why}). Передача сохранена: ${path}`,
-  modelFailed: (model: string, why: string, path: string) => `Новый работник: модель «${model}» не сменилась (${why}). Передача и черновик в поле ввода: смени модель через /model и нажми Enter. Передача сохранена: ${path}`,
-  modelStill: (now: string) => `после /model модель осталась «${now}»`,
+  pickThenEnter: 'Чат очищен, передача дел и черновик в поле ввода. Выберите модель и усилие в меню приложения справа внизу и нажмите Enter.',
+  notSent: 'передача не отправлена',
   submitFailed: (why: string, path: string) => `Новый работник: отправка не удалась (${why}). Передача и черновик в поле ввода: нажми Enter. Передача сохранена: ${path}`,
   fillFailed: (why: string, fillWhy: string, path: string) => `Новый работник: ${why}. Чат уже очищен, а поле ввода не приняло передачу (${fillWhy}). Передача сохранена: ${path}; черновик, скорее всего, ещё в поле ввода.`,
   fillRefused: { dialog: 'открыт диалог, поле занято', no_composer: 'в этом окне нет поля ввода', other: 'поле ввода не приняло текст' },

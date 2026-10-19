@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { bandLines, isStale, modelChoices, price, statusText } from '../hooks/guard'
+import { bandLines, isStale, price, statusText } from '../hooks/guard'
 
 const now = 10_000_000_000
 const snap = (over = {}) => ({ id: 'id', model: 'claude-opus-5-5', now, tokens: 512_000, at: now - 6.2 * 3_600_000,
@@ -32,9 +32,4 @@ test('stale: thresholds are strict, "больше"', () => {
 test('status line', () => {
   expect(statusText(290_000, now - 18 * 60_000, now)).toBe('ctx 290k · кэш ~42 мин')
   expect(statusText(290_000, now - 61 * 60_000, now)).toBe('ctx 290k · кэш истёк')
-})
-test('model choices: same model first, its alias not repeated', () => {
-  expect(modelChoices('claude-opus-5-5').map(c => c.model)).toEqual([null, 'sonnet', 'haiku'])
-  expect(modelChoices('claude-sonnet-5-5').map(c => c.model)).toEqual([null, 'opus', 'haiku'])
-  expect(modelChoices('claude-opus-5-5')[0].label).toContain('claude-opus-5-5')
 })

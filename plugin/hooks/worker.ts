@@ -6,7 +6,6 @@ export type LaunchIO = {
   draft: () => Promise<string>
   handoff: () => Promise<{ text: string; path: string }>
   clear: () => Promise<unknown>
-  setModel: (model: string) => Promise<unknown>
   submit: (text: string) => Promise<{ drop?: string }>
   fill: (text: string) => Promise<void>
   emptyBox: (draft: string) => Promise<void>
@@ -14,7 +13,8 @@ export type LaunchIO = {
 }
 
 // Until /clear the chat is untouched; after it, a failed step puts handoff + draft back in the box so nothing is lost.
-export const launch = async (io: LaunchIO, model: string | null): Promise<'empty' | 'failed' | 'dropped' | 'sent'> => {
+// 'send' submits them as the first message; 'fill' leaves them in the box ('ready') for the owner to pick model and effort in the app and send.
+export const launch = async (io: LaunchIO, mode: 'send' | 'fill'): Promise<'empty' | 'failed' | 'dropped' | 'sent' | 'ready'> => {
   const draft = await io.draft()
   if (draft.trim() === '') {
     io.toast(T.draftEmpty)
@@ -37,30 +37,23 @@ export const launch = async (io: LaunchIO, model: string | null): Promise<'empty
 
   const text = `${handoff.text}\n\n${draft}`
   // every failure from here on names the saved file; if even the box refuses the text, the draft is most likely still there
-  const back = async (why: string, shown: string) => {
+  const back = async (why: string) => {
     try {
       await io.fill(text)
-      io.toast(shown)
+      return true
     } catch (err) {
       io.toast(T.fillFailed(why, message(err), handoff.path))
-    }
-    return 'failed' as const
-  }
-  // the context is empty after /clear, so the switch overwrites nothing
-  if (model !== null) {
-    try {
-      await io.setModel(model)
-    } catch (err) {
-      const why = message(err)
-      return back(why, T.modelFailed(model, why, handoff.path))
+      return false
     }
   }
+  if (mode === 'fill') return (await back(T.notSent)) ? 'ready' : 'failed' // register.tsx tells the owner what to do next
   let sent
   try {
     sent = await io.submit(text)
   } catch (err) {
     const why = message(err)
-    return back(why, T.submitFailed(why, handoff.path))
+    if (await back(why)) io.toast(T.submitFailed(why, handoff.path))
+    return 'failed'
   }
   if (sent.drop !== undefined) {
     io.toast(T.dropped(sent.drop, handoff.path))

@@ -10,12 +10,12 @@ const ran = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isS
 const noTurn = () => ran('{"tokens":null,"at":null,"model":null}')
 
 // stands for the engine beneath the plugin; `statuses` collects what the status line was set to, `answerRun` answers cg.py
-const wire = (on: any, statuses: (string | undefined)[], answerUsage: () => unknown, answerRun: (_: unknown, e: { argv: string[] }) => unknown = noTurn, store = new Map<string, unknown>(), chat = { model: 'claude-opus-5-5' }) => {
+const wire = (on: any, statuses: (string | undefined)[], answerUsage: () => unknown, answerRun: (_: unknown, e: { argv: string[] }) => unknown = noTurn, store = new Map<string, unknown>()) => {
   const clock = mock.clock(on, { now: 10_000_000_000 })
   on('store.get', (_: unknown, e: { key: string }) => ({ value: store.get(e.key) }))
   on('store.set', (_: unknown, e: { key: string; value: unknown }) => (store.set(e.key, e.value), { value: undefined }))
   on('session.id', () => ({ value: 'id' }))
-  on('session.model', () => ({ value: chat.model }))
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('session.usage', answerUsage)
   on('session.version', () => ({ value: { version: '2.1.295' } }))
   on('process.run', answerRun)
@@ -31,7 +31,7 @@ test('a failed refresh shows its error in the status line', async ($, on) => {
   const store = new Map<string, unknown>()
   wire(on, statuses, () => ({ deny: 'boom' }), undefined, store)
   await ($ as any).command.run({ command: 'cg-band', args: '' })
-  expect(statuses.some(t => t?.startsWith('CacheGuard · ошибка — '))).toBe(true)
+  expect(statuses.some(t => t?.startsWith('ошибка — '))).toBe(true)
   expect(store.get('lastError')).toMatchObject({ at: 10_000_000_000, where: 'cg-band' }) // kept for /cg-health too
 })
 
@@ -41,7 +41,7 @@ test('"Остаться здесь" and an armed picker last one turn', async ($
   const ui = await $.ui.mount({ plugin: 'cacheguard', surface: 'terminal', component: 'AbovePrompt', props } as never)
 
   await ui.press({ key: 'launch' })
-  expect(await buttons(ui)).toContain('cancel')
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'cancel'])
   await ($ as any).turn.complete(turn)
   expect(await buttons(ui)).toEqual(['launch', 'stay'])
 
@@ -68,7 +68,7 @@ test('after a restart the size comes from cg.py last-turn, asked once per chat',
   wire(on, statuses, noSize, (_, e) => (argvs.push(e.argv), ran(JSON.stringify({ tokens: 300_000, at, model: 'm' }))), store)
   await ($ as any).command.run({ command: 'cg-band', args: '' })
   await ($ as any).command.run({ command: 'cg-band', args: '' })
-  expect(statuses).toContain(T.status('ctx 300k · кэш истёк'))
+  expect(statuses).toContain('ctx 300k · кэш истёк')
   expect(argvs.filter(a => a.includes('last-turn')).length).toBe(1)
   expect(store.get('turn:id')).toEqual({ at: Date.parse(at), tokens: 300_000 })
 })
@@ -119,20 +119,13 @@ test('/cg-health: a project that matches no conversation is said so', async ($, 
   expect(text).toContain(T.projectEmpty)
 })
 
-// What session.model() answers; /model changes it unless `isSticky` (the command printed an error and left the model alone).
-const newChat = () => ({ model: 'claude-opus-5-5', isSticky: false })
-
-// The engine beneath a launch: the prompt box (`refuse` makes a fill fail), /clear and /model, and the first message. `gate` holds the submit until released.
-const box = (on: any, draft: string, log: string[], chat: ReturnType<typeof newChat>, gate: Promise<unknown> = Promise.resolve()) => {
+// The engine beneath a launch: the prompt box (`refuse` makes a fill fail), /clear, and the first message. `gate` holds the submit until released.
+const box = (on: any, draft: string, log: string[], gate: Promise<unknown> = Promise.resolve()) => {
   const state = { text: draft, refuse: undefined as string | undefined }
   on('prompt.read', () => ({ value: { text: state.text, cursor: 0 } }))
   on('prompt.fill', (_: unknown, e: { text: string }) => (state.refuse ? { isFilled: false, refusal: state.refuse } : ((state.text = e.text), { isFilled: true })))
   on('prompt.submit', async (_: unknown, e: { text: string }) => (log.push(`submit ${e.text}`), await gate, { text: e.text }))
-  on('command.run', (_: unknown, e: { command: string; args: string }) => {
-    log.push(`/${e.command} ${e.args}`.trim())
-    if (e.command === 'model' && !chat.isSticky) chat.model = `claude-${e.args}-5-5`
-    return { text: '' }
-  })
+  on('command.run', (_: unknown, e: { command: string; args: string }) => (log.push(`/${e.command} ${e.args}`.trim()), { text: '' }))
   return state
 }
 const withMemory = { value: { ...usage, context: { ...usage.context, breakdown: { memoryFiles: [{ path: 'C:/mem/memory/MEMORY.md', type: 'AutoMem', tokens: 1 }] } } } }
@@ -149,18 +142,31 @@ test('the band opens with the CacheGuard title, bold, above its lines and button
   expect(band.children.length).toBeGreaterThan(2)
 })
 
-test('new worker: /clear, /model, then handoff + draft as the first message, draft taken out of the box, band idle', async ($, on) => {
-  const log: string[] = []
-  const argvs: string[][] = []
-  const chat = newChat()
-  wire(on, [], () => withMemory, (_, e) => (e.argv.includes('handoff') && argvs.push(e.argv), handoffOk(_, e)), undefined, chat)
-  const state = box(on, 'продолжаем', log, chat)
+test('new worker: the first press arms the band: two ways to go, cancel and the @files hint; cancel disarms', async ($, on) => {
+  wire(on, [], () => ({ value: usage }))
   const ui = await mountBand($)
 
   await ui.press({ key: 'launch' })
-  await ui.press({ key: 'model:sonnet' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'cancel'])
+  expect(await ui.findAll({ type: 'Button', text: T.sendNow })).toHaveLength(1)
+  expect(await ui.findAll({ type: 'Button', text: T.pickInMenu })).toHaveLength(1)
+  expect(await ui.findAll({ type: 'Text', text: T.atFilesHint })).toHaveLength(1)
 
-  expect(log).toEqual(['/clear', '/model sonnet', 'submit [cg-handoff]x[/cg-handoff]\n\nпродолжаем'])
+  await ui.press({ key: 'cancel' })
+  expect(await buttons(ui)).toEqual(['launch', 'stay'])
+})
+
+test('new worker, send at once: /clear, then handoff + draft as the first message on the same model, draft taken out of the box, band idle', async ($, on) => {
+  const log: string[] = []
+  const argvs: string[][] = []
+  wire(on, [], () => withMemory, (_, e) => (e.argv.includes('handoff') && argvs.push(e.argv), handoffOk(_, e)))
+  const state = box(on, 'продолжаем', log)
+  const ui = await mountBand($)
+
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'send' })
+
+  expect(log).toEqual(['/clear', 'submit [cg-handoff]x[/cg-handoff]\n\nпродолжаем']) // no /model
   expect(state.text).toBe('')
   const a = argvs[0]!
   expect(a.slice(a.indexOf('handoff'))).toEqual(['handoff', '--session', 'id', '--today', expect.stringMatching(/^\d{4}-\d\d-\d\d$/), '--memory-dir', 'C:/mem/memory'])
@@ -168,17 +174,34 @@ test('new worker: /clear, /model, then handoff + draft as the first message, dra
   expect(await ui.findAll({ type: 'Button', text: T.busy })).toEqual([])
 })
 
-test('new worker: busy for the whole launch, the arm button is ignored meanwhile', async ($, on) => {
+test('new worker, pick the model myself: /clear, handoff + draft left in the box, no submit, never a /model, one toast says what to do', async ($, on) => {
+  const toasts: string[] = []
   const log: string[] = []
-  let release = () => {}
-  const chat = newChat()
-  wire(on, [], () => ({ value: usage }), handoffOk, undefined, chat)
-  box(on, 'x', log, chat, new Promise<void>(r => (release = r)))
+  on('ui.toast', (_: unknown, e: { text: string }) => (toasts.push(e.text), { value: undefined }))
+  wire(on, [], () => ({ value: usage }), handoffOk)
+  const state = box(on, 'продолжаем', log)
   const ui = await mountBand($)
 
   await ui.press({ key: 'launch' })
-  const pressed = ui.press({ key: 'model:haiku' })
-  const again = ui.press({ key: 'model:haiku' }).catch(() => undefined) // a double click: either the button is gone or the launch refuses it
+  await ui.press({ key: 'pick' })
+
+  expect(log).toEqual(['/clear']) // no submit, no /model
+  expect(state.text).toBe('[cg-handoff]x[/cg-handoff]\n\nпродолжаем')
+  expect(toasts).toEqual([T.toast(T.pickThenEnter)])
+  expect(await buttons(ui)).toEqual(['launch', 'stay']) // not armed, not busy
+  expect(await ui.findAll({ type: 'Button', text: T.busy })).toEqual([])
+})
+
+test('new worker: busy for the whole launch, the arm button is ignored meanwhile', async ($, on) => {
+  const log: string[] = []
+  let release = () => {}
+  wire(on, [], () => ({ value: usage }), handoffOk)
+  box(on, 'x', log, new Promise<void>(r => (release = r)))
+  const ui = await mountBand($)
+
+  await ui.press({ key: 'launch' })
+  const pressed = ui.press({ key: 'send' })
+  const again = ui.press({ key: 'send' }).catch(() => undefined) // a double click: either the button is gone or the launch refuses it
   for (let i = 0; i < 100 && !log.some(l => l.startsWith('submit')); i++) await new Promise(r => setTimeout(r, 10))
   expect(await ui.findAll({ type: 'Button', text: T.busy })).toHaveLength(1)
   await ui.press({ key: 'launch' })
@@ -196,11 +219,11 @@ test('new worker: a failed handoff leaves the chat alone, tells why and is kept 
   const store = new Map<string, unknown>()
   on('ui.toast', (_: unknown, e: { text: string }) => (toasts.push(e.text), { value: undefined }))
   wire(on, [], () => ({ value: usage }), (_, e) => (e.argv.includes('handoff') ? { value: { exitCode: 1, stdout: '{"error":"no transcript"}', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } : noTurn()), store)
-  box(on, 'x', log, newChat())
+  box(on, 'x', log)
   const ui = await mountBand($)
 
   await ui.press({ key: 'launch' })
-  await ui.press({ key: 'model:sonnet' })
+  await ui.press({ key: 'pick' })
 
   expect(log).toEqual([])
   expect(toasts).toEqual([T.toast(T.handoffFailed('no transcript'))])
@@ -209,36 +232,18 @@ test('new worker: a failed handoff leaves the chat alone, tells why and is kept 
   expect(await ui.findAll({ type: 'Button', text: T.newWorker })).toHaveLength(1) // busy ended
 })
 
-test('new worker: /model that leaves the model unchanged stops the launch, handoff and draft are back in the box', async ($, on) => {
+test('new worker, pick the model myself: the box refuses the text: readable reason and the saved path, not a raw code', async ($, on) => {
   const toasts: string[] = []
-  const log: string[] = []
-  const chat = { ...newChat(), isSticky: true }
   on('ui.toast', (_: unknown, e: { text: string }) => (toasts.push(e.text), { value: undefined }))
-  wire(on, [], () => ({ value: usage }), handoffOk, undefined, chat)
-  const state = box(on, 'x', log, chat)
+  wire(on, [], () => ({ value: usage }), handoffOk)
+  box(on, 'x', []).refuse = 'dialog' // the engine strips a code a hook writes itself, so the closure sees the code-less refusal here
   const ui = await mountBand($)
 
   await ui.press({ key: 'launch' })
-  await ui.press({ key: 'model:sonnet' })
+  await ui.press({ key: 'pick' })
 
-  expect(log).toEqual(['/clear', '/model sonnet']) // no submit
-  expect(state.text).toBe('[cg-handoff]x[/cg-handoff]\n\nx')
-  expect(toasts).toEqual([T.toast(T.modelFailed('sonnet', T.modelStill('claude-opus-5-5'), 'C:/h/id.md'))])
+  expect(toasts).toEqual([T.toast(T.fillFailed(T.notSent, T.fillRefused.other, 'C:/h/id.md'))])
   expect(await buttons(ui)).toEqual(['launch', 'stay'])
-})
-
-test('new worker: the box refuses the text: readable reason and the saved path, not a raw code', async ($, on) => {
-  const toasts: string[] = []
-  const chat = { ...newChat(), isSticky: true }
-  on('ui.toast', (_: unknown, e: { text: string }) => (toasts.push(e.text), { value: undefined }))
-  wire(on, [], () => ({ value: usage }), handoffOk, undefined, chat)
-  box(on, 'x', [], chat).refuse = 'dialog' // the engine strips a code a hook writes itself, so the closure sees the code-less refusal here
-  const ui = await mountBand($)
-
-  await ui.press({ key: 'launch' })
-  await ui.press({ key: 'model:sonnet' })
-
-  expect(toasts).toEqual([T.toast(T.fillFailed(T.modelStill('claude-opus-5-5'), T.fillRefused.other, 'C:/h/id.md'))])
 })
 
 // ---- long memory ----
@@ -334,7 +339,7 @@ test('index: 3 s after session.start, in the background, with errors on the stat
   expect(ofCg(m, 'index')).toEqual([]) // session.start did not wait for it, nor run it
   await m.clock.advance(3_000)
   expect(ofCg(m, 'index')).toEqual([{ argv: ['index'], timeoutMs: 600_000 }])
-  expect(statuses).toContain(T.status(T.indexErrors(1)))
+  expect(statuses).toContain(T.indexErrors(1))
   expect(m.toasts).toEqual([])
   expect(m.store.get('lastError')).toMatchObject({ where: 'index' })
 })
@@ -343,7 +348,7 @@ test('index: a failed background run goes to the status line, /cg-health and one
   const statuses: (string | undefined)[] = []
   const m = await started($, on, () => failed('database is locked'), statuses)
   await m.clock.advance(3_000)
-  expect(statuses).toContain(T.status(T.statusError('database is locked')))
+  expect(statuses).toContain(T.statusError('database is locked'))
   expect(m.toasts).toEqual([T.toast(T.catchUpFailed('index'))])
   expect(m.store.get('lastError')).toMatchObject({ where: 'index', msg: 'database is locked' })
   expect(ofCg(m, 'embed')).toEqual([]) // the same database would fail the same way, and the first cause must stay in /cg-health
@@ -366,7 +371,7 @@ const embedGoesWrong = async ($: any, on: any, answer: unknown, msg: string) => 
   const statuses: (string | undefined)[] = []
   const m = await started($, on, a => (a[0] === 'embed' ? answer : indexed()), statuses)
   await m.clock.advance(3_000)
-  expect(statuses).toContain(T.status(T.statusError(msg)))
+  expect(statuses).toContain(T.statusError(msg))
   expect(m.store.get('lastError')).toMatchObject({ where: 'embed', msg })
   expect(m.toasts).toEqual([T.toast(T.catchUpFailed('embed'))])
 }
@@ -386,7 +391,7 @@ test('catch-up: the toast comes once per load of the mod, every failure is kept 
   expect(m.store.get('lastError')).toMatchObject({ where: 'embed', msg: 'Ollama не отвечает: x' })
 })
 
-test('every status line and toast starts with the mod name, once', async ($, on) => {
+test('toasts start with the mod name, once; status lines do not (the engine adds the name)', async ($, on) => {
   const statuses: (string | undefined)[] = []
   const m = await started($, on, a => (a[0] === 'embed' ? failed('Ollama не отвечает: x') : a[0] === 'recall' ? found({ errors: [bad], vector: 'нет' }) : a[0] === 'expand' ? failed('boom') : indexed([bad])), statuses)
   await m.clock.advance(3_000) // refresh, unreadable transcripts and a failed embed on the status line; the failed catch-up in a toast
@@ -394,7 +399,7 @@ test('every status line and toast starts with the mod name, once', async ($, on)
   await $.tool.call({ tool: 'mcp__cacheguard__recall_more', conv: 'S', pos: 1 }) // a failure: a toast
   expect(statuses).toHaveLength(3)
   expect(m.toasts).toHaveLength(4)
-  for (const t of statuses) expect(t).toMatch(/^CacheGuard · (?!.*CacheGuard)/s)
+  for (const t of statuses) expect(t).not.toContain('CacheGuard')
   for (const t of m.toasts) expect(t).toMatch(/^CacheGuard: (?!.*CacheGuard)/s)
 })
 
@@ -408,12 +413,12 @@ test('session.start: a refused registration leaves the status line, the timers a
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   const clock = wire(on, statuses, () => ({ value: usage }), (_, e) => (e.argv.includes('index') ? indexed() : e.argv.includes('embed') ? embedded() : noTurn()), store)
   await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false })
-  expect(statuses[0]).toMatch(/^CacheGuard · ctx /) // the first refresh ran
-  expect(statuses.at(-1)).toMatch(/^CacheGuard · ошибка — .*schema refused/) // ...and the refusal is the last word
+  expect(statuses[0]).toMatch(/^ctx /) // the first refresh ran
+  expect(statuses.at(-1)).toMatch(/^ошибка — .*schema refused/) // ...and the refusal is the last word
   expect(store.get('lastError')).toMatchObject({ where: 'register', msg: expect.stringContaining('schema refused') })
   expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats'], tools: ['recall', 'recall_more'] }) // both tools were tried, the commands went through
   await clock.advance(30_000) // the timers run
-  expect(statuses.at(-1)).toMatch(/^CacheGuard · ctx /)
+  expect(statuses.at(-1)).toMatch(/^ctx /)
 })
 
 test('/cg-index: updates, "rebuild" re-reads everything, the answer has the figures', async ($, on) => {
@@ -483,7 +488,7 @@ test('remembered: a throw while judging the write does not break it; the cause g
   wire(on, statuses, () => ({ value: usage }), undefined, store)
   // a path that is no string still looks like a fact to the regex (it is coerced) and then has no .split
   expect(await r.write([fact] as unknown as string)).toEqual(done)
-  expect(statuses.some(t => t?.startsWith('CacheGuard · ошибка — '))).toBe(true)
+  expect(statuses.some(t => t?.startsWith('ошибка — '))).toBe(true)
   expect(store.get('lastError')).toMatchObject({ where: 'remembered' })
   expect(r.toasts).toEqual([])
 })

@@ -55,9 +55,3 @@ export const bandLines = (s: Snap, showLimits: boolean) => {
     ...(showLimits && s.limits.length ? [T.limits(s.limits.map(l => T.limit(T.limitNames[l.kind] ?? l.kind, l.percentUsed)).join(' · '))] : []),
   ]
 }
-
-// first the same model, then the /model aliases that are not the current one
-export const modelChoices = (current: string): { label: string; model: string | null }[] => [
-  { label: T.sameModel(current), model: null },
-  ...['opus', 'sonnet', 'haiku'].filter(alias => !current.toLowerCase().includes(alias)).map(alias => ({ label: alias, model: alias })),
-]

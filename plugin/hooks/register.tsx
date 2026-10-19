@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Snap } from '../types'
-import { bandLines, isStale, modelChoices, statusText } from './guard'
+import { bandLines, isStale, statusText } from './guard'
 import { isMemoryFact } from './memory'
 import { FOLDER, flush, notePath, SUMMARY_PATH, summaryNote } from './notes'
 import type { Note } from './notes'
@@ -30,8 +30,7 @@ const runCg = async ($: EngineInterface, python: string, args: string[], timeout
   return parseCg(r)
 }
 
-// The one door for each: everything this mod puts on the status line or in a toast starts with its name (the texts in text.ts do not).
-const status = ($: EngineInterface, text: string) => $.ui.status(T.status(text))
+// The one door for toasts: everything this mod puts in one starts with its name (the texts in text.ts do not). The status line needs no mark: the engine labels it with the plugin name.
 const toast = ($: EngineInterface, text: string) => $.ui.toast(T.toast(text))
 
 // What /cg-health shows as the last error; every path that reports a failure leaves it here.
@@ -48,7 +47,7 @@ const indexErrors = async ($: EngineInterface, where: string, errors: IndexError
   if (errors.length === 0) return
   const text = T.indexErrors(errors.length)
   if (isAsked) toast($, text)
-  else status($, text)
+  else $.ui.status(text)
   await noteError($, where, T.indexErrorFirst(errors.length, errors[0]!.path, errors[0]!.error))
 }
 
@@ -74,7 +73,7 @@ const guarded = async ($: EngineInterface, where: string, work: () => Promise<un
     await work()
     return true
   } catch (err) {
-    status($, T.statusError(message(err)))
+    $.ui.status(T.statusError(message(err)))
     await noteError($, where, err)
     return false
   }
@@ -118,7 +117,7 @@ const refresh = async ($: EngineInterface, python: string) => {
     at: rec?.at ?? null,
     limits: usage.rateLimits.map(({ kind, percentUsed }) => ({ kind, percentUsed })),
   }
-  status($, statusText(fresh.tokens, fresh.at, now))
+  $.ui.status(statusText(fresh.tokens, fresh.at, now))
   await update($, snap, () => fresh)
 }
 
@@ -181,7 +180,7 @@ const runStats = async ($: EngineInterface, python: string, days: number) => {
 }
 
 // "Новый работник": binds launch() to the engine through closures made here. One launch at a time.
-const startWorker = async ($: EngineInterface, python: string, model: string | null) => {
+const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill') => {
   let wasBusy = false
   await update($, isBusy, busy => ((wasBusy = busy), true)) // atomic: a second press before the redraw is refused here
   if (wasBusy) return
@@ -195,12 +194,6 @@ const startWorker = async ($: EngineInterface, python: string, model: string | n
         return (await runCg($, python, ['handoff', '--session', id, '--today', calendarDay(now), ...(dir ? ['--memory-dir', dir] : [])])) as { text: string; path: string }
       },
       clear: () => $.command.run({ command: 'clear' }),
-      setModel: async name => {
-        await $.command.run({ command: 'model', args: name })
-        // the command may answer with an error line instead of rejecting, so look at the model itself; a wrong alarm only costs an Enter
-        const now = await $.session.model()
-        if (!now.toLowerCase().includes(name)) throw new Error(T.modelStill(now))
-      },
       submit: text => $.prompt.submit({ text, asUser: true }),
       fill: async text => {
         const r = await $.prompt.fill({ text })
@@ -215,7 +208,8 @@ const startWorker = async ($: EngineInterface, python: string, model: string | n
         told = text
       },
     }
-    const outcome = await launch(io, model)
+    const outcome = await launch(io, mode)
+    if (outcome === 'ready') toast($, T.pickThenEnter)
     if (outcome === 'failed' || outcome === 'dropped') await noteError($, 'launch', told)
   } catch (err) {
     await fail($, 'launch', err)
@@ -407,11 +401,9 @@ export const register: Register = (on, options) => {
         ))}
         {armed ? (
           <Box flexDirection="column">
-            <Text>{T.pickModel}</Text>
             <Box gap={1} flexWrap="wrap">
-              {modelChoices(s.model).map(choice => (
-                <Button key={`model:${choice.model ?? 'same'}`} label={choice.label} onPress={() => startWorker($, python, choice.model)} />
-              ))}
+              <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send')} />
+              <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill')} />
               <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
             </Box>
             <Text dimColor>{T.atFilesHint}</Text>
