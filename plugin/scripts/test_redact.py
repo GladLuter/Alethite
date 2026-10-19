@@ -1,3 +1,4 @@
+import time
 import unittest
 from redact import redact
 
@@ -55,6 +56,23 @@ class RedactTest(unittest.TestCase):
                           ('mysql -u root -phunter22 db', 'mysql -u root -p' + H + ' db'),
                           ('mysqldump -p"my secret" db', 'mysqldump -p"' + H + '" db')]:
             self.assertEqual(redact(raw), want, raw)
+
+    def test_stage1_review_leftovers(self):
+        # a bare `pass` after a word counts before a secret-shaped value; a flag named in prose has no value
+        for raw, want in [('admin pass: hunter22', 'admin pass: ' + H), ('user=a pass=hunter22', 'user=a pass=' + H),
+                          ('  pass: hunter22', '  pass: ' + H), ('--token in-house', '--token ' + H), ('--password a1b2', '--password ' + H),
+                          ('--secret "and more"', '--secret "' + H + '"'),
+                          ('mysql -u root -e "select 1 from mysql.user" -phunter22', 'mysql -u root -e "select 1 from mysql.user" -p' + H)]:
+            self.assertEqual(redact(raw), want, raw)
+        for ok in ['tests pass: all green', 'all checks pass: ok', 'the --token flag', 'use the --token flag to pass it',
+                   '--token or --password', 'Use --password flag', 'the --api-key option is required', 'передай --token флагом']:
+            self.assertEqual(redact(ok), ok)
+
+    def test_thousands_of_mysql_on_a_line_stay_linear(self):
+        line = 'mysql ' * 20000  # no -p: every mysql used to search the rest of the line
+        start = time.monotonic()
+        self.assertEqual(redact(line), line)
+        self.assertLess(time.monotonic() - start, 2)  # quadratic, this took about 20 s
 
     def test_url_password_with_at(self):
         self.assertEqual(redact('https://user:p@ss@host/x'), 'https://' + H + '@host/x')

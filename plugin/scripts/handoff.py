@@ -10,6 +10,7 @@ from transcripts import HANDOFF_END, HANDOFF_START, find_session, read_records
 _CAP = 10500  # the whole text
 _STOPPED_CAP = 7000  # the "where we stopped" section
 _ENV = dict(os.environ, LC_ALL='C', GIT_OPTIONAL_LOCKS='0')  # English errors for the "not a repository" check; status must not write to the owner's repo
+_GIT_SECONDS = 10
 
 
 def _clip(s, n):
@@ -19,7 +20,9 @@ def _clip(s, n):
 def _git(root, *args):
     """(ok, stdout lines) or (False, [first line of the error])."""
     try:
-        p = subprocess.run(['git', '-C', root, '-c', 'core.quotepath=off', *args], capture_output=True, timeout=10, env=_ENV)
+        p = subprocess.run(['git', '-C', root, '-c', 'core.quotepath=off', *args], capture_output=True, timeout=_GIT_SECONDS, env=_ENV)
+    except subprocess.TimeoutExpired:  # its text is the whole command line, a different one for every folder
+        return False, [t('handoff_git_timeout', s=_GIT_SECONDS)]
     except (OSError, subprocess.SubprocessError) as e:
         return False, [str(e)]
     lines = (p.stdout if p.returncode == 0 else p.stderr).decode('utf-8', errors='replace').splitlines()
@@ -69,7 +72,8 @@ def build_handoff(projects, session_id, today, memory_dir=None, level='off'):
             fresh = False
 
     def stopped(items):
-        return t('handoff_stopped') + '\n' + '\n\n'.join(s for _, s in sorted(items))  # by pos: the order of the conversation
+        # by pos: the order of the conversation; the parts of one message share its pos and keep their own order (a stable sort)
+        return t('handoff_stopped') + '\n' + '\n\n'.join(s for _, s in sorted(items, key=lambda i: i[0]))
 
     fixed = [(r['pos'], t('handoff_owner') + _clip(compress(r['text'], level), 1500)) for r in owner[-4:]]
     if turns and (not owner or turns[-1][0] > owner[-1]['pos']):

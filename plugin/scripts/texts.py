@@ -26,6 +26,7 @@ EN = {
     'handoff_claude': '**Claude:** ',
     'handoff_state': '## State of the work',
     'handoff_commits': 'Latest commits:',
+    'handoff_git_timeout': 'git did not answer in {s} s',
     'handoff_files': '### Files changed (chat and subagents)',
     'bad_session': 'not a session id: {id}',
 
@@ -89,6 +90,7 @@ RU = {
     'handoff_claude': '**Claude:** ',
     'handoff_state': '## Состояние работы',
     'handoff_commits': 'Последние коммиты:',
+    'handoff_git_timeout': 'git не ответил за {s} с',
     'handoff_files': '### Файлы, которые меняли (чат и субагенты)',
     'bad_session': 'это не id сессии: {id}',
 
@@ -150,6 +152,7 @@ UK = {
     'handoff_claude': '**Claude:** ',
     'handoff_state': '## Стан роботи',
     'handoff_commits': 'Останні коміти:',
+    'handoff_git_timeout': 'git не відповів за {s} с',
     'handoff_files': '### Файли, які змінювали (чат і субагенти)',
     'bad_session': 'це не id сесії: {id}',
 

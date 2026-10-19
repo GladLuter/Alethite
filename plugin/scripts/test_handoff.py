@@ -109,6 +109,20 @@ class HandoffTest(unittest.TestCase):
         self.assertIn('first commit', t)
         self.assertNotIn('(git:', t)  # "not a repository" is not an error
 
+    def test_parts_of_one_message_keep_their_order(self):  # one line, one pos: the order of the blocks, not of the alphabet
+        self.write('P/S.jsonl', [u([text('я первая часть'), text('а вторая часть')]), a([text('ответ')])])
+        t = self.build()
+        self.assertLess(t.index('я первая часть'), t.index('а вторая часть'))
+        self.assertLess(t.index('а вторая часть'), t.index('ответ'))
+
+    def test_git_timeout_is_one_short_line(self):
+        self.write('P/S.jsonl', [u('сделай'), a([tool('Edit', file_path=os.path.join(self.tmp, 'a.txt')),
+                                                tool('Edit', file_path=os.path.join(self.projects, 'b.txt'))])])
+        with mock.patch.object(handoff.subprocess, 'run', side_effect=subprocess.TimeoutExpired(['git', '-C', 'C:\\x', 'status'], 10)):
+            t = self.build()
+        self.assertEqual(t.count('(git: git не ответил за 10 с)'), 1)  # once for every folder, not a command line per folder
+        self.assertNotIn('-C', t)
+
     def test_git_failure_is_reported_once(self):
         self.write('P/S.jsonl', [u('сделай'), a([tool('Edit', file_path=os.path.join(self.tmp, 'a.txt')),
                                                 tool('Edit', file_path=os.path.join(self.projects, 'b.txt'))])])
