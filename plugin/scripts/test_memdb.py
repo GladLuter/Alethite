@@ -63,8 +63,8 @@ class MemdbTest(unittest.TestCase):
         st = status(self.conn)
         self.assertEqual((st['convs'], st['rows']), (1, 3))
         self.assertTrue(st['last_update'] and os.path.isfile(st['db']) and st['size_mb'] > 0)
-        s3 = self.update(rebuild=True)  # re-reads the file from the start; its old rows are replaced, not doubled
-        self.assertEqual((s3['files'], s3['rows'], s3['errors']), (1, 3, []))
+        s3 = self.update(rebuild=True)  # re-reads the file from the start; only what the index lacks is added, and it lacks nothing
+        self.assertEqual((s3['files'], s3['rows'], s3['errors']), (1, 0, []))
         self.assertEqual(status(self.conn)['rows'], 3)
 
     def test_rebuild_keeps_deleted_transcripts(self):
@@ -73,7 +73,7 @@ class MemdbTest(unittest.TestCase):
         self.update()
         os.remove(b)  # Claude Code cleaned it up; the index must remember it
         s = self.update(rebuild=True)
-        self.assertEqual((s['files'], s['rows'], s['convs']), (1, 2, 2))
+        self.assertEqual((s['files'], s['rows'], s['convs']), (1, 0, 2))
         self.assertEqual((self.rows_of('A'), self.rows_of('B')), (2, 1))
         self.assertEqual(search(self.conn, 'бета')[0]['conv'], 'B')
         with self.assertRaises(OSError):  # a wrong folder must not wipe anything
@@ -118,10 +118,10 @@ class MemdbTest(unittest.TestCase):
         self.write('P/good.jsonl', [owner_line('три')])
         real = memdb.project_key
 
-        def key(cwd):  # runs after the file's chunks are inserted
+        def key(cwd, *a):  # runs after the file's chunks are inserted
             if cwd == 'C:\bad':
                 raise ValueError('сбой')
-            return real(cwd)
+            return real(cwd, *a)
 
         with mock.patch.object(memdb, 'project_key', key):
             s = self.update()
@@ -150,12 +150,108 @@ class MemdbTest(unittest.TestCase):
         self.assertEqual(self.rows_of('S'), 2)
         self.assertEqual(update(other, self.projects)['files'], 0)
 
-    def test_rewritten_file_not_duplicated(self):
+    def test_shorter_file_keeps_what_was_indexed(self):  # stage 2 §6: text that got into the index never leaves it
         self.write('P/S.jsonl', [owner_line('одна'), owner_line('две'), owner_line('три')])
         self.update()
-        self.write('P/S.jsonl', [owner_line('одна')])  # файл стал короче
+        self.write('P/S.jsonl', [owner_line('одна'), owner_line('четыре')])  # the file got shorter: read again from the start
+        s = self.update()
+        self.assertEqual((s['files'], s['rows']), (1, 1))  # only what is new
+        self.assertEqual(sorted(r[0] for r in self.conn.execute("SELECT text FROM chunks WHERE conv = 'S'")), ['две', 'одна', 'три', 'четыре'])
+        self.assertEqual(search(self.conn, 'три')[0]['conv'], 'S')
+        self.write('P/S.jsonl', [owner_line('пять')], 'ab')  # and it goes on growing as before
+        self.assertEqual(self.update()['rows'], 1)
+        self.assertEqual(self.rows_of('S'), 5)
+
+    def keys_of(self, conv):
+        return [tuple(r) for r in self.conn.execute(
+            'SELECT c.text, k.cls, k.hash, k.n, k.origin, k.pushed FROM keys k JOIN chunks c ON c.rowid = k.id WHERE k.conv = ? ORDER BY c.pos, k.id', (conv,))]
+
+    def test_keys_count_the_occurrences_of_a_text(self):
+        self.write('P/S.jsonl', [owner_line('да'), claude_line('да'), owner_line('да')])
         self.update()
-        self.assertEqual(self.rows_of('S'), 1)
+        self.write('P/S.jsonl', [owner_line('да')], 'ab')
+        self.update()
+        h = memdb.text_hash('да')
+        self.assertEqual(self.keys_of('S'), [('да', 'owner', h, 0, None, 0), ('да', 'claude', h, 0, None, 0), ('да', 'owner', h, 1, None, 0),
+                                             ('да', 'owner', h, 2, None, 0)])
+        self.update(rebuild=True)  # the same keys from a read that starts at the beginning
+        self.assertEqual(self.rows_of('S'), 4)
+
+    def test_a_report_keeps_its_key_when_a_newer_one_demotes_it(self):
+        self.write('P/S/subagents/agent-a1.jsonl', [owner_line('сделай'), claude_line('итог1')])
+        self.update()
+        before = self.keys_of('agent-a1')
+        self.write('P/S/subagents/agent-a1.jsonl', [claude_line('итог2')], 'ab')
+        self.update()
+        self.assertEqual(self.kinds_of('agent-a1'), ['task', 'sub', 'report'])
+        self.assertEqual(self.keys_of('agent-a1')[:2], before)  # report and sub are one class: the key does not move
+        self.update(rebuild=True)
+        self.assertEqual(self.kinds_of('agent-a1'), ['task', 'sub', 'report'])
+
+    def test_rebuild_keeps_the_vectors(self):  # stage 2 §6: a rebuild used to drop them, 5.5 hours of embedding on the i3
+        self.write('P/S.jsonl', [owner_line('ёжик'), claude_line('ответ')])
+        self.update()
+        self.conn.executemany("INSERT INTO vecs SELECT rowid, 0, conv, X'01020304' FROM chunks WHERE rowid = ?", [(r,) for (r,) in self.conn.execute('SELECT rowid FROM chunks')])
+        vecs = self.conn.execute('SELECT * FROM vecs ORDER BY chunk').fetchall()
+        s = self.update(rebuild=True)
+        self.assertEqual((s['files'], s['rows'], self.rows_of('S')), (1, 0, 2))
+        self.assertEqual(self.conn.execute('SELECT * FROM vecs ORDER BY chunk').fetchall(), vecs)
+
+    def test_rebuild_replaces_a_text_the_filter_now_hides(self):  # stage 2 §5.7.2: a fix of redact.py reaches the index and the batches
+        self.write('P/S.jsonl', [owner_line('ключ zq-0123456789 и всё'), claude_line('ответ')])
+        self.update()
+        (rid, old), = self.conn.execute("SELECT rowid, text FROM chunks WHERE kind = 'owner'").fetchall()
+        self.conn.execute("INSERT INTO vecs VALUES(?, 0, 'S', X'01')", (rid,))
+        self.conn.execute('UPDATE keys SET pushed = 1, vec_pushed = 1')
+        with mock.patch.object(memdb, 'redact', lambda t: t.replace('zq-0123456789', '[скрыто]')):
+            s = self.update(rebuild=True)
+        self.assertEqual((s['rows'], self.rows_of('S')), (1, 2))  # replaced in place, not added
+        self.assertEqual(self.conn.execute('SELECT text FROM chunks WHERE rowid = ?', (rid,)).fetchone(), ('ключ [скрыто] и всё',))
+        self.assertEqual(search(self.conn, 'zq'), [])
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM vecs WHERE chunk = ?', (rid,)).fetchone(), (0,))  # to be embedded again
+        self.assertEqual(self.conn.execute('SELECT hash, pushed, vec_pushed FROM keys WHERE id = ?', (rid,)).fetchone(), (memdb.text_hash('ключ [скрыто] и всё'), 0, 0))
+        gone = ['S', 'owner', memdb.text_hash(old), 0]
+        self.assertEqual(self.conn.execute('SELECT * FROM forgotten').fetchall(), [tuple(gone)])
+        self.assertEqual([json.loads(l) for (l,) in self.conn.execute('SELECT line FROM outbox')], [{'type': 'forget', 'key': gone}])
+        self.assertEqual(self.update(rebuild=True)['rows'], 0)  # once done, done
+        self.assertEqual(self.rows_of('S'), 2)
+
+    def test_forget_deletes_here_for_good_and_tells_the_others(self):
+        self.write('P/S.jsonl', [owner_line('секрет 42'), claude_line('ответ')])
+        self.update()
+        pos = self.conn.execute("SELECT pos FROM chunks WHERE kind = 'owner'").fetchone()[0]
+        self.conn.execute("INSERT INTO vecs SELECT rowid, 0, conv, X'01' FROM chunks")
+        self.assertEqual(memdb.forget(self.conn, 'S', pos), 1)
+        self.assertEqual((self.kinds_of('S'), search(self.conn, 'секрет')), (['claude'], []))
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM vecs').fetchone(), (1,))
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM outbox').fetchone(), (1,))
+        self.update(rebuild=True)  # the transcript still holds it: it does not come back
+        self.write('P/S.jsonl', [owner_line('секрет 42')])  # nor when the file is rewritten
+        self.update()
+        self.assertEqual(self.kinds_of('S'), ['claude'])
+        self.assertEqual(memdb.forget(self.conn, 'S', pos), 0)
+        self.assertFalse(self.conn.in_transaction)
+
+    def test_stage_1_index_gets_keys_and_home_projects_once(self):
+        path = os.path.join(os.path.dirname(self.db), 'old.db')
+        old = sqlite3.connect(path)
+        old.executescript(memdb._SCHEMA.split('-- what a record is')[0])  # the tables of stage 1
+        old.executemany('INSERT INTO chunks(text, conv, pos, ts, kind) VALUES(?, ?, ?, ?, ?)',
+                        [('да', 'S', 1, TS, 'owner'), ('да', 'S', 2, TS, 'owner'), ('итог', 'A', 1, TS, 'report')])
+        old.execute("INSERT INTO vecs VALUES(1, 0, 'S', X'01')")
+        old.executemany('INSERT INTO conv_projects VALUES(?, ?)', [('S', 'c:\\users\\aij\\proj'), ('A', 'c:\\_git\\x')])
+        old.commit()
+        old.close()
+        conn = connect(path, home='C:\\Users\\AIJ')
+        self.addCleanup(conn.close)
+        self.assertEqual(conn.execute('SELECT id, conv, cls, n, origin, pushed FROM keys ORDER BY id').fetchall(),
+                         [(1, 'S', 'owner', 0, None, 0), (2, 'S', 'owner', 1, None, 0), (3, 'A', 'sub', 0, None, 0)])
+        self.assertEqual(sorted(conn.execute('SELECT * FROM conv_projects')), [('A', 'c:\\_git\\x'), ('S', '~\\proj')])
+        self.assertEqual(conn.execute('SELECT count(*) FROM vecs').fetchone(), (1,))
+        conn.close()
+        again = connect(path, home='C:\\Users\\other')  # once: a second home does not touch the keys again
+        self.addCleanup(again.close)
+        self.assertEqual(sorted(again.execute('SELECT * FROM conv_projects')), [('A', 'c:\\_git\\x'), ('S', '~\\proj')])
 
     def test_secret_not_searchable(self):
         self.write('P/S.jsonl', [owner_line('вот password=hunter22 для теста')])

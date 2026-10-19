@@ -3,20 +3,8 @@ import glob
 import os
 import subprocess
 
+from texts import t
 from transcripts import HANDOFF_END, HANDOFF_START, find_session, read_records
-
-# The handoff is Russian; other languages are stage 2.
-HEAD = 'Передача дел от предыдущего чата (сессия {id}, {today}). Это новый чат того же работника.'
-MEMORY = 'Короткая память: {dir} (фактов: {n})'
-NO_MEMORY = 'Короткая память ПУСТА: {dir}'
-RECALL = 'Долгая память: инструмент recall; старый разговор — id {id}.'
-RESUME = 'Открыть старый разговор (в боковой панели его нет): в терминале `cd "{cwd}"`, затем `claude --resume {id}`.'
-STOPPED = '## Где остановились'
-OWNER = '**Ты:** '
-CLAUDE = '**Claude:** '
-STATE = '## Состояние работы'
-COMMITS = 'Последние коммиты:'
-FILES = '### Файлы, которые меняли (чат и субагенты)'
 
 _CAP = 10500  # the whole text
 _STOPPED_CAP = 7000  # the "where we stopped" section
@@ -56,7 +44,7 @@ def _repos(dirs):
             root = os.path.normpath(out[0])
             if os.path.normcase(root) not in roots:
                 roots.add(os.path.normcase(root))
-                blocks.append('\n'.join(['### ' + root, *_show(root, 'status', '--short')[:30], COMMITS, *_show(root, 'log', '--oneline', '-5')]))
+                blocks.append('\n'.join(['### ' + root, *_show(root, 'status', '--short')[:30], t('handoff_commits'), *_show(root, 'log', '--oneline', '-5')]))
         elif 'not a git repository' not in out[0] and '(git: %s)' % out[0] not in blocks:
             blocks.append('(git: %s)' % out[0])
     return blocks
@@ -79,16 +67,16 @@ def build_handoff(projects, session_id, today, memory_dir=None):
             fresh = False
 
     def stopped(items):
-        return STOPPED + '\n' + '\n\n'.join(t for _, t in sorted(items))  # by pos: the order of the conversation
+        return t('handoff_stopped') + '\n' + '\n\n'.join(s for _, s in sorted(items))  # by pos: the order of the conversation
 
-    fixed = [(r['pos'], OWNER + _clip(r['text'], 1500)) for r in owner[-4:]]
+    fixed = [(r['pos'], t('handoff_owner') + _clip(r['text'], 1500)) for r in owner[-4:]]
     if turns and (not owner or turns[-1][0] > owner[-1]['pos']):
         pos, parts = turns.pop()
         s = '\n\n'.join(parts)  # the tail is kept: the probe lost the decisive last paragraph by clipping the head only
-        fixed.append((pos, CLAUDE + (s if len(s) <= 2400 else s[:1200] + '\n…\n' + s[-1000:])))
+        fixed.append((pos, t('handoff_claude') + (s if len(s) <= 2400 else s[:1200] + '\n…\n' + s[-1000:])))
     early = []  # newest first
     for pos, parts in reversed(turns):
-        item = (pos, CLAUDE + _clip('\n\n'.join(parts), 800))
+        item = (pos, t('handoff_claude') + _clip('\n\n'.join(parts), 800))
         if len(stopped(fixed + early + [item])) > _STOPPED_CAP:
             break
         early.append(item)
@@ -98,23 +86,23 @@ def build_handoff(projects, session_id, today, memory_dir=None):
     cwd = next((r['cwd'] for r in reversed(recs) if r['cwd']), '')
     git = _repos([cwd] + [os.path.dirname(f) for f in files])  # the work may have happened outside the chat's folder
 
-    head = [HEAD.format(id=session_id, today=today)]
+    head = [t('handoff_head', id=session_id, today=today)]
     if memory_dir:
         n = sum(os.path.basename(f) != 'MEMORY.md' for f in glob.glob(os.path.join(glob.escape(memory_dir), '*.md')))
-        head.append((MEMORY if n else NO_MEMORY).format(dir=memory_dir, n=n))
-    head += [RECALL.format(id=session_id),
-             RESUME.format(cwd=next((r['cwd'] for r in recs if r['cwd']), ''), id=session_id)]
+        head.append(t('handoff_memory' if n else 'handoff_no_memory', dir=memory_dir, n=n))
+    head += [t('handoff_recall', id=session_id),
+             t('handoff_resume', cwd=next((r['cwd'] for r in recs if r['cwd']), ''), id=session_id)]
 
     def render():
-        state = git + (['\n'.join([FILES] + ['- ' + f for f in files])] if files else [])
-        parts = ['\n'.join(head), stopped(fixed + early)] + ([STATE + '\n' + '\n\n'.join(state)] if state else [])
+        state = git + (['\n'.join([t('handoff_files')] + ['- ' + f for f in files])] if files else [])
+        parts = ['\n'.join(head), stopped(fixed + early)] + ([t('handoff_state') + '\n' + '\n\n'.join(state)] if state else [])
         # a marker quoted inside the text would end the block early for strip_handoff
         body = '\n\n'.join(parts).replace(HANDOFF_START, '[cg-handoff ]').replace(HANDOFF_END, '[/cg-handoff ]')
         return HANDOFF_START + '\n' + body + '\n' + HANDOFF_END
 
-    t = render()
-    while len(t) > _CAP and (early or files):
+    out = render()
+    while len(out) > _CAP and (early or files):
         (early or files).pop()  # the oldest early reply first, then the oldest files
-        t = render()
+        out = render()
     # shortcut: if the owner's messages, the last reply and git alone exceed the cap, the end of the text is cut; the state is last, so it goes first
-    return t if len(t) <= _CAP else t[:_CAP - len(HANDOFF_END) - 2] + '…\n' + HANDOFF_END
+    return out if len(out) <= _CAP else out[:_CAP - len(HANDOFF_END) - 2] + '…\n' + HANDOFF_END

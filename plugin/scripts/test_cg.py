@@ -11,6 +11,7 @@ from unittest import mock
 import cg
 import memdb
 import vectors
+from test_texts import use_lang
 from transcripts import project_key
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
@@ -29,6 +30,7 @@ def claude_line(text, cwd='C:\\a'):
 
 class CgTest(unittest.TestCase):
     def setUp(self):
+        use_lang(self, 'ru')
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
         self.tmp = d.name
@@ -64,6 +66,19 @@ class CgTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('error', out)
 
+    def test_help_is_json(self):  # stage 1 nit: it printed usage text the mod could not read
+        for args in (['--help'], ['sync', '-h']):
+            code, out = self.run_cg(*args)
+            self.assertEqual(code, 0)
+            self.assertIn('usage: cg.py', out['help'])
+
+    def test_a_session_id_is_no_path(self):  # stage 1 nit: it went into the handoff file name unchecked
+        for cmd in ('handoff', 'last-turn'):
+            code, out = self.run_cg(cmd, '--session', '..\\..\\x', *(['--today', '2026-10-19'] if cmd == 'handoff' else []))
+            self.assertEqual(code, 1)
+            self.assertIn('..', out['error'])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, 'x.md')))
+
     def test_last_turn_unknown_session(self):
         self.assertEqual(self.run_cg('last-turn', '--session', 'nope'), (0, {'tokens': None, 'at': None, 'model': None}))
 
@@ -75,7 +90,7 @@ class CgTest(unittest.TestCase):
         self.write('P/S1.jsonl', [owner_line('вопрос про ёжика'), claude_line('ответ')])
         code, out = self.run_cg('index')
         self.assertEqual((code, out['files'], out['rows'], out['errors']), (0, 1, 2, []))
-        self.assertEqual(self.run_cg('index', '--rebuild')[1]['rows'], 2)
+        self.assertEqual(self.run_cg('index', '--rebuild')[1]['rows'], 0)  # nothing is missing, nothing is added
         code, out = self.run_cg('status')
         self.assertEqual((code, out['convs'], out['rows'], out['db']), (0, 1, 2, self.db))
         hit = self.run_cg('recall', '--query', 'ёжика', '--all')[1]['hits'][0]

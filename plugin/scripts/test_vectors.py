@@ -16,8 +16,9 @@ import numpy
 import memdb
 from memdb import connect, search, status, update
 from test_memdb import TS, claude_line, owner_line
+from test_texts import use_lang
 from transcripts import project_key
-from vectors import (CHUNK, DIMS, DOC_PREFIX, MODEL, OVERLAP, chunks_of, embed_pending, hybrid_search, ollama_embed, pack,
+from vectors import (CHUNK, DIMS, DOC_PREFIX, MODEL, OVERLAP, OllamaDown, chunks_of, embed_pending, hybrid_search, ollama_embed, pack,
                      rrf, search_vectors, vector_status)
 
 TOOL = dict(type='assistant', timestamp=TS, cwd='C:\\a', message={
@@ -52,6 +53,9 @@ class RrfTest(unittest.TestCase):
 
 
 class ChunkingTest(unittest.TestCase):
+    def setUp(self):
+        use_lang(self, 'ru')  # the messages these tests read are the Russian ones of stage 1
+
     def test_chunks_of(self):
         parts = chunks_of('я' * 3700)
         self.assertEqual(len(parts), 3)
@@ -79,6 +83,7 @@ class ChunkingTest(unittest.TestCase):
 
 class VectorsTest(unittest.TestCase):
     def setUp(self):
+        use_lang(self, 'ru')
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
         self.projects = os.path.join(d.name, 'projects')
@@ -201,6 +206,18 @@ class VectorsTest(unittest.TestCase):
         self.assertEqual(vector_status(self.conn)['failed'], 0)
         self.assertLessEqual(len(calls), 3)  # the batch, its first record, one probe: it does not go through all the records
 
+    def test_an_unreachable_ollama_stops_the_run_at_once(self):  # stage 1 nit: a hung one cost three timeouts of 120 s
+        calls = []
+
+        def hung(texts, model):
+            calls.append(1)
+            raise OllamaDown('Ollama не отвечает: timed out')
+
+        r = embed_pending(self.conn, embed_fn=hung)
+        self.assertEqual((len(calls), r['done'], r['pending'], len(r['errors'])), (1, 0, self.records, 1))
+        self.assertIn('timed out', r['errors'][0]['error'])
+        self.assertEqual(self.q('SELECT count(*) FROM vecs'), 0)
+
     def test_ollama_dying_during_the_record_by_record_pass_keeps_what_was_done(self):
         calls = []
 
@@ -244,16 +261,16 @@ class VectorsTest(unittest.TestCase):
         self.assertEqual(self.q('SELECT count(*) FROM vecs'), 0)
 
     def test_rewrite_while_embedding_stores_nothing_for_the_old_text(self):
-        def rewrites_s2(texts, model):  # S2 holds the last rowid, so its new record takes the very rowid that was read
-            self.write('P2/S2.jsonl', [owner_line('ёжик', cwd='C:\\b')])
-            update(self.conn, self.projects)
+        def rebuilds_s2(texts, model):  # a rebuild with a fixed secret filter replaces S2's text in place: the very rowid that was read
+            with mock.patch.object(memdb, 'redact', lambda t: t.replace('другом', 'ином')):
+                update(self.conn, self.projects, rebuild=True)
             return fake(texts)
 
         ticks = itertools.count()  # one batch only
-        r = embed_pending(self.conn, embed_fn=rewrites_s2, max_seconds=0, now=lambda: next(ticks))
+        r = embed_pending(self.conn, embed_fn=rebuilds_s2, max_seconds=0, now=lambda: next(ticks))
         self.assertEqual((r['pending'], self.q("SELECT count(*) FROM vecs WHERE conv = 'S2'")), (1, 0))
         self.assertEqual(embed_pending(self.conn, embed_fn=fake)['done'], 1)
-        self.assertEqual(self.q("SELECT vec FROM vecs WHERE conv = 'S2'"), pack(fake([DOC_PREFIX + 'ёжик'])[0]))
+        self.assertEqual(self.q("SELECT vec FROM vecs WHERE conv = 'S2'"), pack(fake([DOC_PREFIX + 'ёжик в ином проекте'])[0]))
 
     def test_search_vectors_scope_and_order(self):
         embed_pending(self.conn, embed_fn=fake)
@@ -422,14 +439,29 @@ class VectorsTest(unittest.TestCase):
         order =[(h['conv'], h['kind']) for h in hits]
         self.assertLess(order.index(('S3', 'owner')), order.index(('agent-a2', 'sub')))
 
-    def test_rewritten_file_drops_its_vectors(self):
+    def test_rewritten_file_keeps_its_vectors(self):  # stage 2 §6
         embed_pending(self.conn, embed_fn=fake)
-        self.assertGreater(self.q("SELECT count(*) FROM vecs WHERE conv = 'S1'"), 0)
-        self.write('P1/S1.jsonl', [owner_line('ёжик')])  # shorter: the index re-reads it from the start
+        before = self.conn.execute("SELECT * FROM vecs WHERE conv = 'S1' ORDER BY chunk, part").fetchall()
+        self.write('P1/S1.jsonl', [owner_line('ёжик')])  # shorter: the index re-reads it from the start and adds what is new
         update(self.conn, self.projects)
-        self.assertEqual(self.q("SELECT count(*) FROM vecs WHERE conv = 'S1'"), 0)
-        self.assertGreater(self.q("SELECT count(*) FROM vecs WHERE conv = 'S2'"), 0)
-        self.assertEqual(embed_pending(self.conn, embed_fn=fake)['done'], 1)
+        self.assertEqual(self.conn.execute("SELECT * FROM vecs WHERE conv = 'S1' ORDER BY chunk, part").fetchall(), before)
+        self.assertEqual(embed_pending(self.conn, embed_fn=fake)['done'], 1)  # only the new record
+        hits, state = hybrid_search(self.conn, 'совсем другое', embed_fn=fake)  # the old text is still found, by words and by vectors
+        self.assertEqual((state, hits[0]['conv']), ('ok', 'S1'))
+
+    def test_rebuild_keeps_the_vectors_and_the_count(self):  # stage 2 §6
+        embed_pending(self.conn, embed_fn=fake)
+        vecs, rows = self.conn.execute('SELECT * FROM vecs ORDER BY chunk, part').fetchall(), self.q('SELECT count(*) FROM chunks')
+        self.assertEqual(update(self.conn, self.projects, rebuild=True)['rows'], 0)
+        self.assertEqual((self.conn.execute('SELECT * FROM vecs ORDER BY chunk, part').fetchall(), self.q('SELECT count(*) FROM chunks')), (vecs, rows))
+        self.assertEqual(embed_pending(self.conn, embed_fn=never)['done'], 0)
+
+    def test_new_vectors_of_a_record_go_out_again(self):
+        embed_pending(self.conn, embed_fn=fake)
+        self.conn.execute('UPDATE keys SET vec_pushed = 1')
+        self.assertEqual(self.q('SELECT count(*) FROM keys WHERE vec_pushed = 0'), 0)
+        embed_pending(self.conn, model='other', embed_fn=fake)  # another model: every vector is new
+        self.assertEqual(self.q('SELECT count(*) FROM keys WHERE vec_pushed = 1'), 0)
 
 
 def serve(test):
@@ -464,6 +496,9 @@ def serve(test):
 
 
 class OllamaEmbedTest(unittest.TestCase):
+    def setUp(self):
+        use_lang(self, 'ru')  # the messages these tests read are the Russian ones of stage 1
+
     def test_ollama_embed_against_a_local_fake_server(self):
         srv, url, seen = serve(self)
         self.assertEqual([len(v) for v in ollama_embed(['a', 'b'], url=url)], [768, 768])
@@ -487,7 +522,7 @@ class OllamaEmbedTest(unittest.TestCase):
     def test_ollama_embed_gives_up_after_its_timeout(self):
         _, url, _ = serve(self)
         start = time.monotonic()
-        with self.assertRaisesRegex(RuntimeError, 'Ollama не отвечает'):
+        with self.assertRaisesRegex(OllamaDown, 'Ollama не отвечает'):
             ollama_embed(['a'], 'slow', url, timeout=0.2)
         self.assertLess(time.monotonic() - start, 2.0)  # the server sleeps 3 s
 

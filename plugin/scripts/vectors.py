@@ -5,6 +5,7 @@ import time
 import urllib.error
 import urllib.request
 import memdb
+from texts import t
 
 DIMS, CHUNK, OVERLAP = 256, 1500, 200
 KINDS = ('owner', 'claude', 'task', 'report', 'sub')  # tool summaries are not embedded
@@ -20,17 +21,17 @@ def _np():
     try:
         import numpy
     except ImportError:
-        raise RuntimeError('numpy не установлен: pip install numpy') from None
+        raise RuntimeError(t('numpy_missing')) from None
     return numpy
-
-
-def _meta(conn, key):
-    return (conn.execute('SELECT value FROM meta WHERE key = ?', (key,)).fetchone() or (None,))[0]
 
 
 def chunks_of(text):
     """Windows of at most CHUNK characters, each overlapping the previous by OVERLAP; a short text is one piece."""
     return [text[i:i + CHUNK] for i in range(0, max(len(text) - OVERLAP, 1), CHUNK - OVERLAP)]
+
+
+class OllamaDown(RuntimeError):
+    """Ollama cannot be reached or does not answer in time: no record is to blame, so nothing is retried record by record."""
 
 
 def ollama_embed(texts, model=MODEL, url=OLLAMA, timeout=120):
@@ -41,21 +42,23 @@ def ollama_embed(texts, model=MODEL, url=OLLAMA, timeout=120):
         with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=timeout) as r:
             out = json.load(r)['embeddings']
         if len(out) < len(texts):  # an empty answer would otherwise surface as an IndexError far from here
-            raise ValueError('вернул %d векторов вместо %d' % (len(out), len(texts)))
+            raise ValueError(t('too_few_vectors', got=len(out), want=len(texts)))
         return out
     except urllib.error.HTTPError as e:  # before OSError: HTTPError is one
         if e.code == 404:
-            raise RuntimeError('модель %s не найдена: выполните ollama pull %s' % (model, model)) from None
-        raise RuntimeError('Ollama не отвечает: %s' % e) from None
-    except (OSError, ValueError, KeyError) as e:
-        raise RuntimeError('Ollama не отвечает: %s' % e) from None
+            raise RuntimeError(t('model_missing', model=model)) from None
+        raise RuntimeError(t('ollama_down', e=e)) from None
+    except OSError as e:  # refused, timed out
+        raise OllamaDown(t('ollama_down', e=e)) from None
+    except (ValueError, KeyError) as e:
+        raise RuntimeError(t('ollama_down', e=e)) from None
 
 
 def pack(vec):
     """The first DIMS numbers (the model is trained so that a prefix keeps the meaning), unit length, float32 bytes."""
     np = _np()
     if len(vec) < DIMS:
-        raise ValueError('вектор из %d чисел, нужно не меньше %d' % (len(vec), DIMS))
+        raise ValueError(t('short_vector', n=len(vec), dims=DIMS))
     v = np.array(vec[:DIMS], dtype='float32')
     return (v / (np.linalg.norm(v) or 1)).tobytes()
 
@@ -67,7 +70,7 @@ def _embed(rows, model, embed_fn, batch):
     # slices of `batch` texts: one huge record must not turn into one request that times out again and again
     out = [v for i in range(0, len(texts), batch) for v in embed_fn(texts[i:i + batch], model)]
     if len(out) != len(texts):
-        raise RuntimeError('Ollama вернул %d векторов вместо %d' % (len(out), len(texts)))
+        raise RuntimeError(t('wrong_count', got=len(out), want=len(texts)))
     return [(i, pack(v), rid, text) for (rid, text, i, _), v in zip(parts, out)]
 
 
@@ -79,7 +82,7 @@ def embed_pending(conn, model=MODEL, embed_fn=ollama_embed, max_seconds=120, bat
     _np()
     start, done, errors = now(), 0, []
     # vectors of different models cannot be compared, but the old ones go only once the new model has answered (a typo in its name costs nothing)
-    changed = _meta(conn, 'embed_model') != model
+    changed = memdb.meta(conn, 'embed_model') != model
     todo = lambda: _RECORDS if changed else _PENDING  # until then every record is to be done again
     fmt = lambda e: '%s: %s' % (type(e).__name__, e)
     is_out = False
@@ -90,6 +93,9 @@ def embed_pending(conn, model=MODEL, embed_fn=ollama_embed, max_seconds=120, bat
         stored, bad, ok = [], [], len(rows)
         try:
             stored = _embed(rows, model, embed_fn, batch)
+        except OllamaDown as e:  # a hung Ollama would otherwise cost two more timeouts before the run stops
+            errors.append({'error': fmt(e)})
+            break
         except Exception:
             stored, ok = [], 0
             for row in rows:
@@ -111,8 +117,10 @@ def embed_pending(conn, model=MODEL, embed_fn=ollama_embed, max_seconds=120, bat
                 with conn:
                     if changed:
                         conn.execute('DELETE FROM vecs')
+                        conn.execute('UPDATE keys SET vec_pushed = 0')
                         conn.execute("INSERT OR REPLACE INTO meta VALUES('embed_model', ?)", (model,))
                     conn.executemany(_STORE, stored + [(0, b'', rid, text) for rid, text, *_ in bad])
+                    conn.executemany('UPDATE keys SET vec_pushed = 0 WHERE id = ?', {(s[2],) for s in stored})  # new vectors of ours go out again
             except Exception as e:  # e.g. the index is being updated and the database stays locked
                 errors.append({'error': fmt(e)})
                 break
@@ -143,9 +151,9 @@ def search_vectors(conn, qvec, project, limit=50):
 
 def vector_status(conn):
     total = conn.execute('SELECT count(*) ' + _RECORDS).fetchone()[0]
-    return {'model': _meta(conn, 'embed_model'), 'with_vectors': total - conn.execute('SELECT count(*) ' + _PENDING).fetchone()[0],
+    return {'model': memdb.meta(conn, 'embed_model'), 'with_vectors': total - conn.execute('SELECT count(*) ' + _PENDING).fetchone()[0],
             'total': total, 'failed': conn.execute('SELECT count(*) FROM vecs WHERE length(vec) = 0').fetchone()[0],  # sentinels, see embed_pending
-            'updated': _meta(conn, 'vec_updated')}
+            'updated': memdb.meta(conn, 'vec_updated')}
 
 
 def rrf(lists, weights, k=60):
@@ -174,9 +182,9 @@ def hybrid_search(conn, query, project=None, limit=8, budget=7000, model=MODEL, 
     state, merged = 'ok', words
     try:  # everything that needs the vectors, so that whatever goes wrong (even a transcript rewritten meanwhile) leaves the word hits
         _np()
-        have = _meta(conn, 'embed_model')
+        have = memdb.meta(conn, 'embed_model')
         if have != model:
-            raise LookupError('векторов модели %s нет (в базе: %s)' % (model, have or 'ничего'))
+            raise LookupError(t('no_model_vectors', model=model, have=have or t('nothing')))
         qvec = pack(embed_fn([QUERY_PREFIX + query], model, timeout=45)[0])  # a hung Ollama must leave room for the words inside the mod's 120 s
         vec = search_vectors(conn, qvec, project, 50)
         info = {r[0]: r[1:] for r in conn.execute(

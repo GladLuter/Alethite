@@ -8,6 +8,7 @@ from unittest import mock
 import cg
 from memdb import connect
 from stats import metrics, note_markdown
+from test_texts import use_lang
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
 IN_1M = {'input_tokens': 1_000_000, 'output_tokens': 0, 'cache_read_input_tokens': 0, 'cache_creation_input_tokens': 0}  # sonnet-5: $2.00
@@ -25,6 +26,7 @@ def call(mid, ts, usage):
 
 class StatsTest(unittest.TestCase):
     def setUp(self):
+        use_lang(self, 'ru')  # the note of stage 1
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
         self.projects = os.path.join(d.name, 'projects')

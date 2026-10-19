@@ -8,6 +8,7 @@ from unittest import mock
 
 import handoff
 from handoff import build_handoff
+from test_texts import use_lang
 from test_transcripts import a, jsonl, text, tool, u
 from transcripts import strip_handoff
 
@@ -17,6 +18,7 @@ LATER = '2026-10-13T11:00:00.000Z'
 
 class HandoffTest(unittest.TestCase):
     def setUp(self):
+        use_lang(self, 'ru')  # the handoff of stage 1
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
         self.tmp = d.name
