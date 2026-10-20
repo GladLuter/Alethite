@@ -178,6 +178,10 @@ def _file(conn, path, conv, parent, rebuild, home):
     """Index the new lines of one transcript in one transaction. Rows added, or None if there is nothing to read.
     Text that once got into the index never leaves it this way: a shorter (rewritten) file and a rebuild are read again from the start
     and only the records the index lacks are added."""
+    # an unchanged file is told without the write lock: a search must not wait on every transcript while a sync or an embed writes
+    old = conn.execute('SELECT size FROM files WHERE path = ?', (path,)).fetchone()
+    if old and not rebuild and os.path.getsize(path) == old[0]:
+        return None
     conn.execute('BEGIN IMMEDIATE')  # the write lock comes before the offset is read, so overlapping updates cannot both insert the same lines
     try:
         size = os.path.getsize(path)

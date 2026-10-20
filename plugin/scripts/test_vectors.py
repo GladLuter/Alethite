@@ -272,6 +272,22 @@ class VectorsTest(unittest.TestCase):
         self.assertEqual(embed_pending(self.conn, embed_fn=fake)['done'], 1)
         self.assertEqual(self.q("SELECT vec FROM vecs WHERE conv = 'S2'"), pack(fake([DOC_PREFIX + 'ёжик в ином проекте'])[0]))
 
+    def test_vectors_a_sync_restores_meanwhile_are_not_wiped_by_the_model_switch(self):  # a fresh index embeds, a restore takes its model on
+        other = connect(self.conn.execute('PRAGMA database_list').fetchone()[2])
+        self.addCleanup(other.close)
+        last = self.q("SELECT max(rowid) FROM chunks WHERE kind != 'tool'")  # not in the first batch
+        restored, asked = pack(fake(['из восстановления'])[0]), []
+
+        def restores_meanwhile(texts, model):
+            if not asked:  # the write lock is free while the model works
+                other.execute('INSERT INTO vecs SELECT rowid, 0, conv, ? FROM chunks WHERE rowid = ?', (restored, last))
+                other.execute("INSERT OR REPLACE INTO meta VALUES('embed_model', ?)", (model,))
+            asked.append(1)
+            return fake(texts)
+
+        r = embed_pending(self.conn, embed_fn=restores_meanwhile, batch=2)
+        self.assertEqual((self.q('SELECT vec = ? FROM vecs WHERE chunk = ?', restored, last), r['done']), (1, self.records - 1))  # not embedded again
+
     def test_search_vectors_scope_and_order(self):
         embed_pending(self.conn, embed_fn=fake)
         conv_of = lambda rowid: self.q('SELECT conv FROM chunks WHERE rowid = ?', rowid)

@@ -385,7 +385,7 @@ def analyze(projects, since=None, progress=False, until=None):
         kind = 'subagent' if 'subagents' in parts[:-1] else 'main'
         try:
             ev, ch = read_chain(p, ctx)
-        except OSError as e:
+        except Exception as e:  # a line of an unexpected shape too: one file must not stop the whole measure
             ctx['files_unreadable'] += 1
             print('  unreadable file (%s)' % type(e).__name__, file=sys.stderr)
             continue

@@ -3,9 +3,12 @@ import gc
 import io
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 import cg
@@ -127,6 +130,21 @@ class CgTest(unittest.TestCase):
         out = self.run_cg('recall', '--query', 'ёжик', '--all', '--model', 'B')[1]
         self.assertTrue(out['hits'] and 'B' in out['vector'])
 
+    def test_recall_answers_from_the_index_while_another_run_holds_the_write_lock(self):  # a sync or an embed is writing
+        self.write('P/S1.jsonl', [owner_line('ёжик в тумане')])
+        self.run_cg('index')
+        short = memdb.connect(self.db)
+        self.addCleanup(short.close)
+        short.execute('PRAGMA busy_timeout = 200')  # connect waits 30 s
+        other = memdb.connect(self.db)
+        self.addCleanup(other.close)
+        other.execute('BEGIN IMMEDIATE')
+        a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'recall', '--query', 'ёжик', '--all'])
+        with mock.patch.object(memdb, 'connect', lambda path: short):
+            out = a.fn(a)
+        self.assertIn('ёжик', out['hits'][0]['snippet'])
+        self.assertEqual([e['error'] for e in out['errors']], ['OperationalError: database is locked'])
+
     def test_compression_of_what_the_model_reads(self):  # stage 3
         self.write('P/S1.jsonl', [owner_line('Это очень важный ёжик, и он живёт в `C:\\x\\y.py`.'), claude_line('Ответ: это ёжик.')])
         hit = lambda *c: self.run_cg('recall', '--query', 'важный', '--all', *c)[1]['hits'][0]
@@ -154,11 +172,11 @@ class CgTest(unittest.TestCase):
     def test_compress_previews_a_level(self):
         env = {k: v for k, v in os.environ.items() if k not in ('PYTHONIOENCODING', 'PYTHONUTF8')}
         p = subprocess.run([sys.executable, CG, 'compress', '--level', 'ultra'], input='Это очень просто, правда.'.encode('utf-8'), capture_output=True, env=env)
-        self.assertEqual(json.loads(p.stdout.decode('utf-8')), {'text': 'правда', 'chars_in': 25, 'chars_out': 6})
+        self.assertEqual(json.loads(p.stdout.decode('utf-8')), {'text': 'просто правда', 'chars_in': 25, 'chars_out': 13})
         path = os.path.join(self.tmp, 'note.txt')
         with open(path, 'w', encoding='utf-8-sig') as f:  # as Notepad saves it, with a BOM
             f.write('Это очень просто, правда.')
-        self.assertEqual(self.run_cg('compress', '--level', 'full', '--file', path)[1]['text'], 'правда.')
+        self.assertEqual(self.run_cg('compress', '--level', 'full', '--file', path)[1]['text'], 'просто, правда.')  # «просто» is a word here (simple), not a filler
 
     def test_embed_options(self):
         out = self.run_cg('embed', '--model', 'other', '--max-seconds', '5')  # an empty index: nothing to embed, so no Ollama is called
@@ -175,6 +193,40 @@ class CgTest(unittest.TestCase):
         self.assertEqual((out['done'], out['pending'], out['errors']), (2, 0, []))
         self.assertIn('посчитано кусков: 2', err.getvalue())
         self.assertEqual(self.run_cg('status')[1]['vectors']['with_vectors'], 2)
+
+    def test_a_second_embed_is_busy_at_once_and_never_asks_ollama(self):  # two chats would embed the same records through the one Ollama
+        self.write('P/S1.jsonl', [owner_line('вопрос'), claude_line('ответ')])
+        self.run_cg('index')
+        self.addCleanup(gc.collect)  # as above: the temp folder cleanup needs the files released
+        other = sqlite3.connect(self.db + '.embed.lock', isolation_level=None)  # what the first embed holds while it runs
+        self.addCleanup(other.close)
+        other.execute('BEGIN EXCLUSIVE')
+        a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'embed'])
+        with mock.patch.object(vectors, 'ollama_embed') as ollama:
+            out = a.fn(a)
+        self.assertEqual((out['done'], out.get('busy'), out['errors']), (0, True, []))
+        ollama.assert_not_called()
+        other.close()  # the first embed is over: the next one runs
+        with mock.patch.object(vectors, 'ollama_embed', lambda texts, model: [[1.0] * 768 for _ in texts]), contextlib.redirect_stderr(io.StringIO()):
+            out = a.fn(a)
+        self.assertEqual((out['done'], 'busy' in out), (2, False))
+
+    def test_a_second_sync_waits_for_the_first_and_then_runs(self):
+        share = os.path.join(self.tmp, 'share')
+        os.makedirs(share)
+        os.makedirs(os.path.dirname(self.db))
+        self.addCleanup(gc.collect)  # as above: the temp folder cleanup needs the files released
+        first = sqlite3.connect(self.db + '.sync.lock', isolation_level=None, check_same_thread=False)  # what the first sync holds while it runs
+        first.execute('BEGIN EXCLUSIVE')
+        ends = threading.Timer(0.6, first.close)
+        self.addCleanup(ends.cancel)
+        self.addCleanup(first.close)
+        a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'sync', '--sync-dir', share, '--machine', 'M', '--max-seconds', '10'])
+        t0 = time.monotonic()  # in this process: a child's start-up could take longer than the lock is held
+        ends.start()
+        out = a.fn(a)
+        self.assertGreaterEqual(time.monotonic() - t0, 0.5)
+        self.assertEqual(out['errors'], [])
 
 
 if __name__ == '__main__':

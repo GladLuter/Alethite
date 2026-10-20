@@ -93,5 +93,27 @@ class RedactTest(unittest.TestCase):
                    'https://platform.claude.com/docs/en/about-claude/pricing']:
             self.assertEqual(redact(ok), ok)
 
+    def test_review_of_the_audit(self):
+        for raw, secret in [
+            ('Bash: ssh-add - <<< "-----BEGIN OPENSSH PRIVATE KEY----- b3BlbnNzaC1rZXktdjEAAAAA', 'b3BlbnNzaC1rZXktdjEAAAAA'),  # cut at 300
+            ('curl -d "{\\"password\\":\\"hunter22\\"}" https://x', 'hunter22'),
+            ('password: \\"hunter22\\"', 'hunter22'),
+            ('SECRET_KEY_BASE=abc123xyz789', 'abc123xyz789'),
+            ('New-User -Password hunter22', 'hunter22'),
+            ('curl -u admin:hunter22 https://x', 'hunter22'),
+            ('docker login -u me -p hunter22', 'hunter22'),
+            ('sshpass -p hunter22 ssh -p 22 host', 'hunter22'),
+            ('net use Z: \\\\NAS\\share hunter22 /user:bob', 'hunter22'),
+            ('Authorization: Basic cm9vdDp0b29y', 'cm9vdDp0b29y'),
+            ('https://hooks.slack.com/services/T000/B000/XXXXXXXX', 'T000/B000'),
+            ('https://discord.com/api/webhooks/123/abcDEF', 'abcDEF'),
+        ]:
+            self.assertNotIn(secret, redact(raw), raw)
+        self.assertEqual(redact('curl -d "{\\"password\\":\\"hunter22\\"}"'), 'curl -d "{\\"password\\":\\"' + H + '\\"}"')
+        self.assertEqual(redact('password=ab\\cd'), 'password=' + H)  # a backslash inside a value is still the value
+        for ok in ['ssh -p 22 host', 'docker run -p 8080:80 img', 'git push -u origin main', 'curl -u admin: https://x',
+                   'net use Z: \\\\NAS\\share /user:bob', 'a single-pass compiler', 'the -token flag']:
+            self.assertEqual(redact(ok), ok)
+
 if __name__ == '__main__':
     unittest.main()

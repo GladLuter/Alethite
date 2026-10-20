@@ -9,6 +9,7 @@ import json
 import os
 import re
 import socket
+import sqlite3
 import time
 import urllib.request
 
@@ -264,7 +265,9 @@ def _pull(conn, folder, peer, own, model, digest, deadline, now, report):
             try:
                 _import(conn, os.path.join(folder, names[n]), peer, n, own, model, digest, report)
             except Exception as e:
-                error = t('batch_broken', n=n, machine=peer, e='%s: %s' % (type(e).__name__, e))
+                # a share that hiccups or an index held by another run is no broken batch: no skip is offered, the next sync tries again
+                passing = isinstance(e, sqlite3.OperationalError) or (isinstance(e, OSError) and not isinstance(e, gzip.BadGzipFile))
+                error = t('batch_unreadable' if passing else 'batch_broken', n=n, machine=peer, e='%s: %s' % (type(e).__name__, e))
                 break
         elif any(k > n for k in names):
             error = t('batch_missing', n=n, machine=peer)
@@ -369,6 +372,9 @@ def sync_memory(conn, sync_dir, machine, peers, memory_dir, key):
                     added.append((local, data))
                     got = 'written'
                 elif _hash(_read(path)) == h:
+                    if not rec:  # the same text got here otherwise (by hand, a run that died before its record): still ours to push
+                        added.append((local, data))
+                        return 'same'
                     got = 'same'
                 elif rec and rec[:2] == (peer, name) and _hash(_read(path)) == rec[2]:
                     _put(path, data)  # our copy is as it came, and its source has a newer version

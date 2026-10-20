@@ -174,11 +174,11 @@ class HandoffTest(unittest.TestCase):
         self.assertNotIn('Короткая память', self.build())
 
     def test_compression_takes_the_quotes_only(self):  # stage 3: ids, paths, git and the markers stay as they are
-        self.write('P/S.jsonl', [u('Это очень важное сообщение владельца.'), a([text('Ответ: это просто **готово**.')])])
+        self.write('P/S.jsonl', [u('Это очень важное сообщение владельца.'), a([text('Ответ: это тоже **готово**.')])])
         t = build_handoff(self.projects, 'S', '2026-10-13', None, 'ultra')
         self.assertTrue(t.startswith('[cg-handoff]') and t.rstrip().endswith('[/cg-handoff]'))
         self.assertIn('**Ты:** важное сообщение владельца', t)
-        self.assertIn('**Claude:** ответ готово', t)  # «просто» is a filler
+        self.assertIn('**Claude:** ответ готово', t)  # «тоже» is a filler
         self.assertIn('claude --resume S', t)
         self.assertLess(len(t), len(self.build()))
 

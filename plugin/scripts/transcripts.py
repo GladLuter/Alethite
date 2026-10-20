@@ -6,7 +6,8 @@ import re
 
 HANDOFF_START = '[cg-handoff]'
 HANDOFF_END = '[/cg-handoff]'
-_HANDOFF = re.compile(re.escape(HANDOFF_START) + r'.*?(?:' + re.escape(HANDOFF_END) + r'|\Z)', re.S)
+# a whole block anywhere, an unclosed one only at the start: a mention of the marker in the owner's text must not cut the rest of it
+_HANDOFF = re.compile(r'\A\s*%s.*?(?:%s|\Z)|%s.*?%s' % ((re.escape(HANDOFF_START), re.escape(HANDOFF_END)) * 2), re.S)
 # user text Claude Code injects without isMeta: cc_token_audit.INJECTED plus the echo of a typed slash command
 INJECTED = re.compile(r'\s*<(task-notification|local-command-|system-reminder|command-(?:name|message)>)')
 _REMINDER = re.compile(r'<system-reminder>.*?</system-reminder>', re.S)
@@ -118,6 +119,8 @@ def read_records(path, start=0):
         at, pos = pos, pos + len(raw) + 1
         o = _load(raw)
         for kind, text, edit in _items(o, sub) if o else ():
+            # a lone surrogate (\ud83d of a cut emoji) cannot be stored or written as UTF-8 and would fail the whole file every time
+            text = text.encode('utf-8', 'replace').decode('utf-8')
             r = {'pos': at, 'ts': o.get('timestamp') or '', 'cwd': o.get('cwd') or '', 'kind': kind, 'text': text}
             if edit:
                 r['edit'] = edit

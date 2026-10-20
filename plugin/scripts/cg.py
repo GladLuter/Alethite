@@ -4,6 +4,7 @@ import datetime
 import json
 import os
 import re
+import sqlite3
 import sys
 import time
 
@@ -53,7 +54,10 @@ def _status(a):
 
 def _recall(a):
     conn = memdb.connect(a.db)
-    upd = memdb.update(conn, a.projects)  # seconds when nothing is new
+    try:
+        upd = memdb.update(conn, a.projects)  # seconds when nothing is new
+    except Exception as e:  # e.g. the index stays locked by another run: what it already holds is still searched
+        upd = {'errors': [memdb._error(a.projects, e)]}
     hits, vector = vectors.hybrid_search(conn, a.query, None if a.all else project_key(a.cwd), a.limit, model=a.model)
     return {'hits': _squeeze(hits, 'snippet', a.compress), 'errors': upd['errors'], 'vector': vector}
 
@@ -77,7 +81,22 @@ def _compress(a):  # the owner's preview of a level: cg.py compress --level ultr
     return {'text': out, 'chars_in': len(text), 'chars_out': len(out)}
 
 
+def _alone(a, name, wait):
+    """One `name` run per index at a time, whichever chat or terminal started it: an exclusive transaction on a lock file beside the
+    index, which the OS drops with the process. Hold the result while the run lasts; sqlite3.OperationalError after `wait` seconds."""
+    lock = sqlite3.connect('%s.%s.lock' % (a.db, name), timeout=wait, isolation_level=None)
+    lock.execute('BEGIN EXCLUSIVE')
+    return lock
+
+
 def _embed(a):
+    conn = memdb.connect(a.db)  # first: it also makes the folder the lock file lies in
+    try:
+        lock = _alone(a, 'embed', 0)  # noqa: F841 (held until the return)
+    except sqlite3.OperationalError as e:  # another chat embeds the same records with the same one Ollama: nothing to add to it
+        if 'locked' not in str(e):
+            raise
+        return {'done': 0, 'pending': None, 'model': a.model, 'seconds': 0, 'errors': [], 'busy': True}
     pieces, t0 = [0], time.monotonic()
 
     def embed(batch, model):  # one progress line per call, for a run from a terminal
@@ -86,7 +105,7 @@ def _embed(a):
         print(texts.t('embed_progress', n=pieces[0], s=int(time.monotonic() - t0)), file=sys.stderr, flush=True)
         return out
 
-    return vectors.embed_pending(memdb.connect(a.db), a.model, embed, a.max_seconds)
+    return vectors.embed_pending(conn, a.model, embed, a.max_seconds)
 
 
 def _last_turn(a):
@@ -105,11 +124,14 @@ def _handoff(a):
 
 
 def _sync(a):
-    conn = memdb.connect(a.db)
+    # a second sync waits its turn within its own time and then takes in only what is still new
+    t0 = time.monotonic()
+    conn = memdb.connect(a.db)  # first: it also makes the folder the lock file lies in
+    lock = _alone(a, 'sync', a.max_seconds)  # noqa: F841 (held until the return)
     if a.skip_batch:
         machine, n = a.skip_batch
         sync.skip_batch(conn, machine, int(n) if n.isdigit() else -1)
-    return sync.sync(conn, a.sync_dir, a.machine, a.model, a.max_seconds, a.memory_dir, a.project_cwd)
+    return sync.sync(conn, a.sync_dir, a.machine, a.model, max(1, a.max_seconds - (time.monotonic() - t0)), a.memory_dir, a.project_cwd)
 
 
 def _forget(a):

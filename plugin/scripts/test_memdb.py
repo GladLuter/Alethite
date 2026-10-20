@@ -158,6 +158,16 @@ class MemdbTest(unittest.TestCase):
         self.assertEqual(self.rows_of('S'), 2)
         self.assertEqual(update(other, self.projects)['files'], 0)
 
+    def test_an_unchanged_file_is_told_without_the_write_lock(self):  # a search must not wait on every transcript while a sync writes
+        self.write('P/S.jsonl', [owner_line('раз')])
+        self.update()
+        path = self.conn.execute('SELECT path FROM files').fetchone()[0]  # the key as update stored it
+        other = connect(self.db)
+        self.addCleanup(other.close)
+        other.execute('BEGIN IMMEDIATE')  # the sync's write lock
+        self.conn.execute('PRAGMA busy_timeout = 200')  # connect waits 30 s
+        self.assertIsNone(memdb._file(self.conn, path, 'S', '', False, None))  # update itself still ends with a write of last_update
+
     def test_shorter_file_keeps_what_was_indexed(self):  # stage 2 §6: text that got into the index never leaves it
         self.write('P/S.jsonl', [owner_line('одна'), owner_line('две'), owner_line('три')])
         self.update()

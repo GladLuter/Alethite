@@ -3,6 +3,7 @@ memory takes of the context (stage 3: measure before compressing more)."""
 import json
 import math
 import os
+import time
 import cc_token_audit
 import memdb
 from texts import t
@@ -48,8 +49,12 @@ def memory_load(projects, since, until=None):
             if not name.endswith('.jsonl'):
                 continue
             ours = set()  # tool_use ids of the mod's tools in this transcript
+            path = os.path.join(dp, name)
             try:
-                with open(os.path.join(dp, name), encoding='utf-8', errors='replace') as f:
+                # its lines are never newer than the file: one last written before the period holds nothing of it (the audit skips it too)
+                if time.strftime('%Y-%m-%d', time.gmtime(os.path.getmtime(path))) < since:
+                    continue
+                with open(path, encoding='utf-8', errors='replace') as f:
                     lines = f.readlines()
             except OSError:  # the audit reports it among files_unreadable
                 continue

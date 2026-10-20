@@ -86,6 +86,12 @@ class CompressTest(unittest.TestCase):
     def test_the_word_the_search_matched_stays(self):
         self.assertEqual(compress('…кэш «истёк» и «это» тоже…', 'full'), '…кэш «истёк» «это» …')  # the cut stays too
 
+    def test_the_sense_stays(self):  # each of these turned into its opposite or into something else
+        for text, kept in [('The compression is on and the cache is off', ' on '), ("It's not just a cache bug", 'just'),
+                           ('Plan A or plan B? Option A is faster', 'option A'), ('Если бы кэш не истёк, мы бы не потеряли данные', 'бы'),
+                           ('истёк ли кэш', 'ли'), ('Це не просто баг', 'просто')]:
+            self.assertIn(kept, compress(text, 'ultra'), text)
+
     def test_lite_squeezes_spaces_blank_lines_and_emphasis_and_keeps_words_and_indents(self):
         text = '**Важно:**  кэш   истёк.\n\n\n\n- пункт\n    - вложенный   пункт  \n'
         self.assertEqual(compress(text, 'lite'), 'Важно: кэш истёк.\n\n- пункт\n    - вложенный пункт')

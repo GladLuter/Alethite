@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+import cc_token_audit
 import cg
 from memdb import connect
 from stats import metrics, note_markdown
@@ -54,6 +55,9 @@ class StatsTest(unittest.TestCase):
         self.assertEqual((m['main_calls'], m['median_main_context'], m['since'], m['until']), (2, 1_000_000, '2026-10-01', None))
         self.assertAlmostEqual(m['rewrite_share'], 2.5 / 6.5)  # of all cost, the subagent's $2.00 included
         self.assertAlmostEqual(m['idle60_share'], 2.5 / 6.5)
+
+    def test_audit_selftest(self):  # the cost and cache-rewrite checks of the measure /cg-stats stands on
+        cc_token_audit.selftest()
 
     def test_no_messages_no_division(self):
         m = metrics(self.projects, self.conn, '2030-01-01')

@@ -3,6 +3,7 @@ Every transcript here is synthetic."""
 import gzip
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -268,6 +269,26 @@ class SyncTest(unittest.TestCase):
         self.assertEqual((r['errors'][0]['batch'], r['pulled']), (1, 0))
         self.assertIn('/cg-sync skip MTLAPTOP 1', r['errors'][0]['error'])
 
+    def test_a_hiccup_of_the_share_or_a_locked_index_is_no_broken_batch_and_offers_no_skip(self):  # the next sync simply tries again
+        self.ready(self.b)
+        self.b.sync()
+        for e in (OSError(64, 'network name no longer available'), sqlite3.OperationalError('database is locked')):
+            with self.subTest(type(e).__name__), mock.patch.object(cgsync, '_import', side_effect=e):
+                r = self.a.sync()
+                err = r['errors'][0]
+                self.assertEqual((len(r['errors']), err['machine'], err['batch']), (1, 'MTLAPTOP', 1))
+                self.assertNotIn('skip', err['error'])
+                self.assertIn('could not be read now', err['error'])
+
+    def test_a_batch_that_is_no_gzip_or_no_json_is_still_broken_and_offers_its_skip(self):  # BadGzipFile is an OSError too
+        self.ready(self.b)
+        self.b.sync()
+        for name, data in (('no gzip', b'not a gzip'), ('no json', gzip.compress(b'not json\n'))):
+            with self.subTest(name):
+                with open(os.path.join(self.share, 'MTLAPTOP', 'batch-00000001.jsonl.gz'), 'wb') as f:
+                    f.write(data)
+                self.assertIn('/cg-sync skip MTLAPTOP 1', self.a.sync()['errors'][0]['error'])
+
     # 4. an unavailable folder
     def test_an_unavailable_folder_is_an_error_and_the_local_memory_works(self):
         self.ready(self.a)
@@ -387,6 +408,16 @@ class SyncTest(unittest.TestCase):
         self.a.sync()
         self.b.sync()
         self.assertFalse(os.path.exists(os.path.join(self.b.memory, 'f.md')))
+
+    def test_a_fact_that_is_already_here_without_a_record_is_still_ours_to_push(self):  # copied by hand, not taken from the laptop
+        self.b.fact('f.md', 'v1')
+        self.a.fact('f.md', 'v1')
+        self.b.sync()
+        self.a.sync()
+        self.a.fact('f.md', 'v2')
+        self.a.sync()
+        with open(os.path.join(self.share, 'AIJ-HP', 'memory', cgsync.project_folder('~\\work\\proj'), 'f.md'), encoding='utf-8') as f:
+            self.assertIn('v2', f.read())
 
     def test_no_memory_folder_known_no_memory_step(self):
         self.a.fact('f.md', 'v1')

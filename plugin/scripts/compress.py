@@ -13,14 +13,17 @@ LEVELS = ('off', 'lite', 'full', 'ultra')
 # если, або, але, якщо), quantifiers (all, only, все, только, лише), prepositions of direction or source (to, from, with, к, из, з, від),
 # possession (have, у), the verbs do and have, which also carry meaning of their own. One set for the three languages: a function word of
 # one of them is no content word of another.
-# of and who stay: "12 of 40 failed", "who deleted it?" lose their sense without them.
+# of and who stay: "12 of 40 failed", "who deleted it?" lose their sense without them. So do on ("compression is on"), just and просто
+# ("not just a bug" is no "not a bug"), бы, б, би (what would have happened did not) and ли (a question).
 STOP = frozenset('''
-a an the and is are was were be been being am in on at for that this these those it its very just really quite also there which
-и а же ли бы вот ведь уж это этот эта эти этого этой этом этим этих то та тот есть был была было были в во на о об обо по для при очень
-просто тоже также
-і й та ж б би ось адже це цей ця ці цього цієї цьому цим цих той є був була було були на о об по для при дуже просто теж також
+a an the and is are was were be been being am in at for that this these those it its very really quite also there which
+и а же вот ведь уж это этот эта эти этого этой этом этим этих то та тот есть был была было были в во на о об обо по для при очень
+тоже также
+і й та ж ось адже це цей ця ці цього цієї цьому цим цих той є був була було були на о об по для при дуже теж також
 '''.split())
 
+# shortcut: only code in backticks is safe; a path with spaces (C:\Documents and Settings) or a commit message in quotes written as
+# prose loses its function words like prose does. Teach _prose to spare quoted runs if a worker misreads one.
 _CODE = re.compile(r'```.*?(?:```|\Z)|`[^`\n]*`', re.S)  # a fence a snippet cut off runs to the end
 # around whole words only, not inside a formula or a path (x**2, src/**/*.ts); the inside never runs past another ** (a long line stays linear)
 _EMPHASIS = re.compile(r'(?<![\w*/])\*\*(?=\S)((?:(?!\*\*).)+?)(?<=\S)\*\*(?![\w*/])')
@@ -50,8 +53,8 @@ def _word(tok, level, first=False):
     if not _WORD.fullmatch(core):
         return tok  # code, a path, a link, a number, a name with digits or _: as it is
     marked = '«' in lead or '»' in tail  # the word the search matched stays whatever it is
-    # an abbreviation is no function word: at 9 AM, Mode: ON
-    if not marked and core.lower() in STOP and not (len(core) > 1 and core.isupper()):
+    # an abbreviation is no function word: at 9 AM, Mode: ON; nor is a capital letter inside a line (plan A or plan B)
+    if not marked and core.lower() in STOP and not (core.isupper() and (len(core) > 1 or not first)):
         return ''.join(c for c in lead + tail if c in _KEEP)
     if level != 'ultra':
         return tok

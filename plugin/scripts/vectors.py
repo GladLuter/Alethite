@@ -115,7 +115,8 @@ def embed_pending(conn, model=MODEL, embed_fn=ollama_embed, max_seconds=120, bat
             try:
                 conn.execute('BEGIN IMMEDIATE')
                 with conn:
-                    if changed:
+                    # asked again under the lock: a sync's restore or another embed may have taken this model on since the start
+                    if changed and memdb.meta(conn, 'embed_model') != model:
                         conn.execute('DELETE FROM vecs')
                         conn.execute('UPDATE keys SET vec_pushed = 0')
                         conn.execute("INSERT OR REPLACE INTO meta VALUES('embed_model', ?)", (model,))

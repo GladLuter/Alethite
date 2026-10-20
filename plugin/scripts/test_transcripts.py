@@ -78,8 +78,15 @@ class TranscriptsTest(unittest.TestCase):
     def test_old_handoff_is_not_owner_text(self):
         path = self.write('s.jsonl', [u('[cg-handoff]\nстарое\n[/cg-handoff]\n\nновый черновик'), u('[cg-handoff]\nтолько он')])
         self.assertEqual(self.owner_texts(path), ['новый черновик'])
-        self.assertEqual(strip_handoff('a[cg-handoff]x'), 'a')
+        self.assertEqual(strip_handoff('  [cg-handoff]x'), '')
         self.assertEqual(strip_handoff('a[cg-handoff]x[/cg-handoff]b'), 'ab')
+        # the owner writing about the marker keeps every word
+        self.assertEqual(strip_handoff('Что делает [cg-handoff] в начале? Поправь README.'), 'Что делает [cg-handoff] в начале? Поправь README.')
+
+    def test_a_lone_surrogate_does_not_stop_the_file(self):
+        path = self.write('s.jsonl', [json.dumps(u('ok \ud83d cut')), u('дальше')])  # the line holds the escape, as Claude Code writes it
+        self.assertEqual(self.owner_texts(path), ['ok ? cut', 'дальше'])
+        '\n'.join(self.owner_texts(path)).encode('utf-8')  # what the index and the handoff write
 
     def test_leading_reminder_keeps_owner_text(self):
         rem = '<system-reminder>r</system-reminder>\n'
