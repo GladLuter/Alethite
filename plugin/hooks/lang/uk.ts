@@ -91,17 +91,20 @@ export const uk: Partial<Texts> = {
   projectEmpty: 'Пошук «у цьому проєкті» нічого не знайде: попросіть scope=all',
   healthMemory: (dir: string, facts: number) => `Пам'ять: ${facts} файлів у ${dir}`,
   memoryIndexTokens: (n: number) => `MEMORY.md у кожному запиті: ~${n} токенів`,
-  compressionLine: (level: string) => `Стиснення пам'яті: ${level} (налаштування «Memory compression»: off, lite, full, ultra)`,
+  compressionLine: (level: string) => `Стиснення пам'яті: ${level} (налаштування «compression»: off, lite, full, ultra)`,
   memoryNotLoaded: "Пам'ять: папку auto-memory в цей чат не завантажено",
   healthLastError: (when: string, where: string, msg: string) => `Остання помилка: ${when}, ${where} — ${msg}`,
   healthNoError: 'Остання помилка: немає',
+  healthSettings: (path: string) => `Налаштування: ${path} (важливіші за /config; після зміни — /reload-plugins)`,
+  settingsBad: (path: string, keys: string[]) => `${path}: такого налаштування немає або значення не того типу, пропущено: ${keys.join(', ')}`,
+  settingsNotObject: 'у файлі налаштувань має бути один об’єкт JSON: { "language": "uk", ... }',
   vectorsLine: (model: string | null, withVectors: number, total: number, updated: string | null) =>
     `Вектори: ${withVectors} з ${total} записів (${model ?? 'модель не обрано'}), оновлено ${updated ?? 'жодного разу'}`,
   vectorsFailed: (n: number) => `Записів, які модель не змогла порахувати: ${n} (знаходяться лише за словами)`,
   vectorsHint: (cmd: string) => `Дорахувати в терміналі (можна зупинити й продовжити): ${cmd}`,
 
   // sync of two computers: /cg-health, /cg-sync and the background run
-  healthSyncOff: 'Синхронізація: вимкнена (налаштування «Sync folder» у /config)',
+  healthSyncOff: 'Синхронізація: вимкнена (налаштування «syncDir»)',
   healthSync: (dir: string, machine: string) => `Синхронізація: ${dir}, цей комп'ютер ${machine}`,
   healthOrigins: (parts: string) => `Записи за комп'ютерами: ${parts}`,
   healthOwnBatches: (machine: string, n: number) => `${machine} (цей): викладено пачок до ${n}`,
@@ -115,7 +118,7 @@ export const uk: Partial<Texts> = {
   syncMemoryOff: "Коротка пам'ять: не синхронізується, папку автопам'яті в цей чат не завантажено",
   cgSyncDescription: "Синхронізувати пам'ять з іншими комп'ютерами зараз (skip <комп'ютер> <N>: іти далі без зіпсованої пачки)",
   cgSyncHint: "[skip <комп'ютер> <N>]",
-  cgSyncOff: 'cg-sync: синхронізацію вимкнено. Вкажіть спільну папку в /config, поле «Sync folder».',
+  cgSyncOff: 'cg-sync: синхронізацію вимкнено. Вкажіть спільну папку в «syncDir» файлу налаштувань (його шлях — у /cg-health), потім /reload-plugins.',
   cgSyncSkipUsage: "cg-sync skip: потрібні комп'ютер і номер пачки, наприклад /cg-sync skip MTLAPTOP 12",
   cgSyncDone: (r: { pushed: number; pulled: number; vectors: { pushed: number; pulled: number } }) =>
     `Синхронізація: викладено записів ${r.pushed} (векторів ${r.vectors.pushed}), влито ${r.pulled} (векторів ${r.vectors.pulled})`,

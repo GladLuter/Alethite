@@ -90,17 +90,20 @@ export const en = {
   projectEmpty: 'A search "in this project" will find nothing: ask for scope=all',
   healthMemory: (dir: string, facts: number) => `Memory: ${facts} files in ${dir}`,
   memoryIndexTokens: (n: number) => `MEMORY.md is in every request: ~${n} tokens`,
-  compressionLine: (level: string) => `Memory compression: ${level} (setting "Memory compression": off, lite, full, ultra)`,
+  compressionLine: (level: string) => `Memory compression: ${level} (setting "compression": off, lite, full, ultra)`,
   memoryNotLoaded: 'Memory: no auto-memory folder is loaded in this chat',
   healthLastError: (when: string, where: string, msg: string) => `Last error: ${when}, ${where} — ${msg}`,
   healthNoError: 'Last error: none',
+  healthSettings: (path: string) => `Settings: ${path} (they win over /config; after a change: /reload-plugins)`,
+  settingsBad: (path: string, keys: string[]) => `${path}: not a setting or not of its type, ignored: ${keys.join(', ')}`,
+  settingsNotObject: 'the settings file must hold one JSON object: { "language": "ru", ... }',
   vectorsLine: (model: string | null, withVectors: number, total: number, updated: string | null) =>
     `Vectors: ${withVectors} of ${total} records (${model ?? 'no model chosen'}), updated ${updated ?? 'never'}`,
   vectorsFailed: (n: number) => `Records the model could not embed: ${n} (found by their words only)`,
   vectorsHint: (cmd: string) => `To finish them in a terminal (can be stopped and resumed): ${cmd}`,
 
   // sync of two computers: /cg-health, /cg-sync and the background run
-  healthSyncOff: 'Sync: off (the "Sync folder" setting in /config)',
+  healthSyncOff: 'Sync: off (the "syncDir" setting)',
   healthSync: (dir: string, machine: string) => `Sync: ${dir}, this computer ${machine}`,
   healthOrigins: (parts: string) => `Records by computer: ${parts}`,
   healthOwnBatches: (machine: string, n: number) => `${machine} (this one): batches pushed up to ${n}`,
@@ -114,7 +117,7 @@ export const en = {
   syncMemoryOff: 'Short memory: not synced, no auto-memory folder is loaded in this chat',
   cgSyncDescription: 'Sync the memory with the other computers now (skip <computer> <N>: go on past a broken batch)',
   cgSyncHint: '[skip <computer> <N>]',
-  cgSyncOff: 'cg-sync: sync is off. Set the shared folder in /config, field "Sync folder".',
+  cgSyncOff: 'cg-sync: sync is off. Put the shared folder in "syncDir" of the settings file (/cg-health names it), then /reload-plugins.',
   cgSyncSkipUsage: 'cg-sync skip: name the computer and the batch, for example /cg-sync skip MTLAPTOP 12',
   cgSyncDone: (r: { pushed: number; pulled: number; vectors: { pushed: number; pulled: number } }) =>
     `Sync: records pushed ${r.pushed} (vectors ${r.vectors.pushed}), taken in ${r.pulled} (vectors ${r.vectors.pulled})`,

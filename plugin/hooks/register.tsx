@@ -4,6 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Snap } from '../types'
 import { bandLines, isStale, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
+import type { Compression } from './memory'
 import { FOLDER, flush, notePath, SUMMARY_PATH, summaryNote } from './notes'
 import type { Note } from './notes'
 import { healthLines, message, parseCg } from './py'
@@ -12,6 +13,7 @@ import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
 import { skipArgs, syncArgs, syncReport } from './sync'
 import type { SyncResult } from './sync'
+import { settingsPath, withFile } from './settings'
 import { language, setLanguage, T } from './text'
 import { launch } from './worker'
 import type { LaunchIO } from './worker'
@@ -241,18 +243,42 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
 }
 
 export const register: Register = (on, options) => {
-  setLanguage(options.language as string)
-  const syncDir = (options.syncDir as string).trim().replace(/^"(.*)"$/, '$1') // Explorer's "Copy as path" puts quotes around it
-  const minTokens = options.bandMinTokens as number
-  const idleMinutes = options.bandIdleMinutes as number
-  const showLimits = options.showLimits as boolean
-  const python = options.python as string
-  const embedModel = options.embedModel as string
-  const compression = compressionLevel(options.compression) // what the model reads of the memory: off, lite, full, ultra (stage 3)
+  // the settings: /config's values now, the mod's own file over them once session.start has read it
+  let syncDir: string, minTokens: number, idleMinutes: number, showLimits: boolean, python: string, embedModel: string, compression: Compression
+  const apply = (o: Record<string, unknown>) => {
+    setLanguage(o.language as string)
+    syncDir = (o.syncDir as string).trim().replace(/^"(.*)"$/, '$1') // Explorer's "Copy as path" puts quotes around it
+    minTokens = o.bandMinTokens as number
+    idleMinutes = o.bandIdleMinutes as number
+    showLimits = o.showLimits as boolean
+    python = o.python as string
+    embedModel = o.embedModel as string
+    compression = compressionLevel(o.compression) // what the model reads of the memory: off, lite, full, ultra (stage 3)
+  }
+  apply(options)
+  let settingsFile: string | undefined
   let isVectorToasted = false // the owner hears of a missing vector search once per load of the mod, not on every recall
+  let isIndexToasted = false // likewise of unreadable transcripts a search came across
   let isCatchUpToasted = false // likewise a failed background catch-up: the status line shows it for 30 s only
 
   on('session.start', async ($, e, next) => {
+    // first, so the language and every other setting of the file hold before anything is drawn or said; a reload reads it again
+    const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
+    if (home !== undefined) {
+      settingsFile = settingsPath(home)
+      try {
+        // missing, it is born with every value of the day; shortcut: a default changed later reaches it only once its key is deleted
+        if (await $.fs.exists(settingsFile)) {
+          const file = withFile(options, await $.fs.read(settingsFile))
+          apply(file.options)
+          if (file.bad.length) await fail($, 'settings', T.settingsBad(settingsFile, file.bad))
+        } else await $.fs.write(settingsFile, `${JSON.stringify(options, null, 2)}\n`)
+      } catch (err) {
+        await fail($, 'settings', `${settingsFile}: ${message(err)}`)
+      }
+    }
+
+
     // timers outlive /clear (no session.start after it), so one tick also keeps a new session's figures fresh
     $.clock.every(30_000, () => void guarded($, 'timer', () => refresh($, python)))
     // session.end has 1.5 s, too little to index: a closed chat is picked up here, or by the next recall. Never awaited, so session.start is not held.
@@ -341,7 +367,7 @@ export const register: Register = (on, options) => {
       const facts = files.filter(f => f.name.endsWith('.md') && f.name !== 'MEMORY.md').length
       const memory = dir === null ? null : { dir, facts, tokens: autoMemTokens(mem) }
       const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" --lang ${language()} embed --model ${embedModel} --max-seconds 100000`
-      return { text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression }).join('\n') }
+      return { text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile }).join('\n') }
     } catch (err) {
       await fail($, 'cg-health', err)
       return { text: T.cgHealthFailed }
@@ -394,7 +420,11 @@ export const register: Register = (on, options) => {
       if (typeof input.query !== 'string' || !input.query.trim()) throw new Error(T.noQuery) // the schema asks for it, but nothing makes the model obey
       // the root, not cwd(): a shell `cd` into a subfolder moves cwd but not the project the conversations are filed under
       const r = await runCg($, python, recallArgs(input, await $.session.root(), embedModel, compression))
-      await indexErrors($, 'recall', r.errors as IndexError[], true)
+      // a transcript that stays unreadable would toast on every search: once per load, as the vector search below
+      if (!isIndexToasted && (r.errors as IndexError[]).length) {
+        isIndexToasted = true
+        await indexErrors($, 'recall', r.errors as IndexError[], true)
+      }
       const hits = formatHits(r.hits as Hit[], input.query, input.scope ?? 'project')
       if (r.vector === 'ok') return hits
       // only the words were searched: the model reads why every time; the owner gets a toast once per load, and /cg-health keeps

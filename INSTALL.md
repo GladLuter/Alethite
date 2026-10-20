@@ -58,7 +58,7 @@ All commands are for PowerShell.
      $env:OLLAMA_IGPU_ENABLE = '1'; ollama serve
      ```
      Run the computation in another window. Then close this one and start Ollama again from the Start menu. Do not keep it on: text models are slower on the built-in card.
-6. **Language.** By default the mod speaks English: the interface, the memory rule, the descriptions of `recall`, and the handoff. For Russian: `/config`, the `cacheguard` row → **Language / Язык / Мова** → `ru`; for Ukrainian — `uk`.
+6. **Language.** By default the mod speaks English: the interface, the memory rule, the descriptions of `recall`, and the handoff. For Russian, open the settings file `%USERPROFILE%\.claude\cacheguard\settings.json` (the mod created it at the first start), set `"language": "ru"` in it and type `/reload-plugins`. For Ukrainian, set `"uk"`.
 7. **Check:** in a new chat type `/cg-health`. It should show the version, the index, the auto-memory folder, the project, the vectors "N of M" and a sync line.
 
 ## Shared memory of two computers (stage 2)
@@ -68,7 +68,7 @@ Each computer puts its new conversations, vectors and auto-memory facts into a s
 - Without the network folder everything works as before; the sync catches up when the folder is reachable again.
 
 1. **Create the folder** on the network drive, once, for example `\\NAS\share\cacheguard`. The mod does not create it itself: if the drive is not connected, it shows an error instead of writing to the local disk.
-2. **On each computer**, set it: `/config` → the `cacheguard` row → **Sync folder**.
+2. **On each computer**, set it in the settings file `%USERPROFILE%\.claude\cacheguard\settings.json`: `"syncDir": "\\\\NAS\\share\\cacheguard"`, then `/reload-plugins`. Backslashes in JSON are doubled.
 3. **The first exchange.** The whole history is tens of megabytes. The mod syncs for at most 60 seconds at a time and goes on at the next run, but the first time is easier from a terminal — first on the i3, then on the laptop:
    ```powershell
    python C:\_git\Claude-CacheGuard\plugin\scripts\cg.py sync --sync-dir \\NAS\share\cacheguard --max-seconds 3600
@@ -94,7 +94,7 @@ What else to know:
 
 The mod compresses what it puts into the model's context itself: the results of `recall` and `recall_more` and the quotes of the conversation in a handoff. The compression is mechanical, with no model calls. Code, paths, links, numbers, names and negations are never touched.
 
-- **Level:** `/config` → the `cacheguard` row → **Memory compression**.
+- **Level:** the `"compression"` key in the settings file `%USERPROFILE%\.claude\cacheguard\settings.json`, then `/reload-plugins`.
   - `off` — no compression;
   - `lite` — spaces and markup;
   - `full` — plus function words;
@@ -113,6 +113,12 @@ The mod compresses what it puts into the model's context itself: the results of 
   - After a `git pull`, type `/reload-plugins` in Claude Code: no need to reinstall.
 - **The index and the vectors** live in `%USERPROFILE%\.claude\cacheguard\index.db` and never get into the repository. Each computer keeps its own index; the shared sync folder only carries batches between them.
 - **`/cg-index rebuild`** re-reads every transcript and adds only what is missing: the vectors stay and nothing is deleted.
-- **Settings:** `/config`, the `cacheguard` rows: the language, the sync folder, the memory compression, the band thresholds, the limits line, the Python command (if it is `py`, not `python`) and the embedding model.
+- **Settings:** a file of its own, `%USERPROFILE%\.claude\cacheguard\settings.json`, one per computer, beside the index. The keys: `language`, `compression`, `syncDir`, `bandMinTokens` and `bandIdleMinutes` (the band thresholds), `showLimits` (the limits line), `python` (the Python command, if it is `py`, not `python`) and `embedModel`. The table with the defaults is in [README.md](README.md).
+  - The mod creates the file at the first start with all the current values, so you only open it and edit. A file may hold just the keys you change.
+  - The mod reads it at every load: the start of a chat and `/reload-plugins`. After an edit, type `/reload-plugins`.
+  - Its values win over `/config`. The desktop app has no settings window for mods, so the settings live in a file. `/config` in a terminal `claude` still works, but where they differ, the file wins.
+  - Backslashes in JSON are doubled: `"Z:\\cacheguard"`.
+  - `/cg-health` shows a line with the file's path.
+  - A broken file (invalid JSON) gives a toast naming the file, and the mod keeps the `/config` values. An unknown key or a value of the wrong type gives the same toast, and that key is skipped.
 - **The band above the prompt** is one area shared by all mods. The CacheGuard band is drawn in a frame of its own, with its title, and the bands of other mods stay under it.
 - **`/cg-stats`** writes measurements to Obsidian through the `obsidian` MCP server, which must be connected on this computer. If Obsidian is unavailable, the measurement waits in a queue and goes out at the next run.

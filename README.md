@@ -47,17 +47,29 @@ So the expensive part is not what is typed, but coming back to a big, idle chat.
 | `/cg-sync [skip <computer> <N>]` | syncs with the other computers now |
 | `/cg-stats [days]` | cost measurement, written to Obsidian |
 
-## Settings (`/config`, `cacheguard` rows)
+## Settings (the `settings.json` file)
 
-| setting | default |
-|---|---|
-| Language / Язык / Мова | `en` (also `ru`, `uk`) |
-| Memory compression | `ultra` (also `off`, `lite`, `full`) |
-| Sync folder | empty: no sync |
-| Band thresholds | 100 000 tokens, 55 minutes |
-| Limits line in the band | on |
-| Python command | `python` |
-| Embedding model | `embeddinggemma` |
+The file `%USERPROFILE%\.claude\cacheguard\settings.json` is one per computer and sits beside the index. The mod creates it at the first start with all the current values, so you only open it and edit. The mod reads the file at every load, and its values win over `/config`. After an edit, type `/reload-plugins`. Backslashes in JSON are doubled.
+
+| key | what it sets | default |
+|---|---|---|
+| `language` | language | `"en"` (also `"ru"`, `"uk"`) |
+| `compression` | memory compression | `"ultra"` (also `"off"`, `"lite"`, `"full"`) |
+| `syncDir` | sync folder | `""` (empty: no sync) |
+| `bandMinTokens` | band threshold: chat size, tokens | `100000` |
+| `bandIdleMinutes` | band threshold: idle time, minutes | `55` |
+| `showLimits` | limits line in the band | `true` |
+| `python` | Python command | `"python"` |
+| `embedModel` | Ollama embedding model | `"embeddinggemma"` |
+
+The file may hold only the keys you change. For example:
+
+```json
+{
+  "language": "ru",
+  "syncDir": "Z:\\cacheguard"
+}
+```
 
 ## Requirements
 

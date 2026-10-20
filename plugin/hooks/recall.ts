@@ -12,7 +12,7 @@ export const recallArgs = (input: { query: string; scope?: string; limit?: numbe
   `--query=${input.query}`,
   ...(input.scope === 'all' ? ['--all'] : ['--cwd', cwd]),
   '--limit',
-  String(input.limit ?? 8),
+  String(Math.min(20, Math.max(1, Math.trunc(Number(input.limit) || 8)))), // the schema's 1..20, which nothing makes the model obey: 0 would find nothing
   '--model',
   model,
   '--compress',

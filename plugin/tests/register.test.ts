@@ -268,7 +268,8 @@ const found = (extra: object = {}) => ran(JSON.stringify({ hits: [hit], errors: 
 const failed = (error: string) => ({ value: { exitCode: 1, stdout: JSON.stringify({ error }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
 // A session that has started: cg.py answers `answer(argv)` and every run is recorded in `runs`; the tools and the index timer exist.
-const started = async ($: any, on: any, answer: (a: string[]) => unknown, statuses: (string | undefined)[] = [], answerUsage: () => unknown = () => ({ value: usage })) => {
+const started = async ($: any, on: any, answer: (a: string[]) => unknown, statuses: (string | undefined)[] = [], answerUsage: () => unknown = () => ({ value: usage }), env: Record<string, string> = {}) => {
+  mock.env(on, env) // no USERPROFILE: no settings file
   const m = { runs: [] as { argv: string[]; timeoutMs?: number }[], langs: [] as string[][], toasts: [] as string[], specs: [] as any[], store: new Map<string, unknown>(), clock: undefined as any }
   on('ui.toast', (_: unknown, e: { text: string }) => (m.toasts.push(e.text), { value: undefined }))
   on('tool.register', (_: unknown, e: unknown) => (m.specs.push(e), { value: { tool: 'x' } }))
@@ -319,7 +320,8 @@ test('recall: no query means no search', async ($, on) => {
 test('recall: unreadable transcripts reach the owner, the hits still reach the model', async ($, on) => {
   const m = await started($, on, () => found({ errors: [bad, bad] }))
   expect(await recall($)).toEqual({ result: hitLine })
-  expect(m.toasts).toEqual([T.toast(T.indexErrors(2))])
+  expect(await recall($)).toEqual({ result: hitLine })
+  expect(m.toasts).toEqual([T.toast(T.indexErrors(2))]) // once per load, not on every search
   expect(m.store.get('lastError')).toMatchObject({ where: 'recall', msg: T.indexErrorFirst(2, bad.path, bad.error) })
 })
 
@@ -439,6 +441,7 @@ test('session.start: a refused registration leaves the status line, the timers a
   const names = { commands: [] as string[], tools: [] as string[] }
   on('command.register', (_: unknown, e: { name: string }) => (names.commands.push(e.name), { value: { command: e.name } }))
   on('tool.register', (_: unknown, e: { name: string }) => (names.tools.push(e.name), { deny: 'schema refused' }))
+  mock.env(on, {})
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   const clock = wire(on, statuses, () => ({ value: usage }), (_, e) => (e.argv.includes('index') ? indexed() : e.argv.includes('embed') ? embedded() : noTurn()), store)
   await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false })
@@ -552,9 +555,8 @@ const fakeVault = (on: any) => {
 }
 
 const statsRig = async ($: any, on: any, answer: (a: string[]) => unknown = () => ran(JSON.stringify({ metrics: {}, note: NOTE, errors: [] })), env: Record<string, string> = { COMPUTERNAME: 'PC-1' }) => {
-  mock.env(on, env)
   const vault = fakeVault(on)
-  const m = await started($, on, a => (a[0] === 'stats' ? answer(a) : ran('{}')))
+  const m = await started($, on, a => (a[0] === 'stats' ? answer(a) : ran('{}')), undefined, undefined, env)
   const stats = (args = '') => $.command.run({ command: 'cg-stats', args }) as Promise<{ text: string }>
   const today = () => flag(ofCg(m, 'stats').at(-1)!.argv, '--today')
   return { vault, m, stats, today }
@@ -745,6 +747,46 @@ test('a language the mod does not know is English', { options: { language: 'xx' 
   await m.clock.advance(3_000)
   expect(m.langs[0]).toEqual(['--lang', 'en'])
   expect((await ($ as any).command.run({ command: 'cg-band', args: '' })).text).toBe(T.cgBandOn)
+})
+
+// ---- the mod's own settings file ----
+const SETTINGS = 'C:\\h\\.claude\\cacheguard\\settings.json'
+const home = { USERPROFILE: 'C:\\h' }
+// the file system holds `file` at SETTINGS (undefined: no file there); what the mod writes is collected
+const settingsRig = (on: any, file: string | undefined) => {
+  const written: [string, string][] = []
+  on('fs.exists', (_: unknown, e: { path: string }) => ({ value: e.path === SETTINGS && file !== undefined }))
+  on('fs.read', (_: unknown, e: { path: string }) => (e.path === SETTINGS && file !== undefined ? { value: file } : { deny: 'ENOENT' }))
+  on('fs.write', (_: unknown, e: { path: string; text: string }) => (written.push([e.path, e.text]), { value: undefined }))
+  return written
+}
+
+test('settings file: its values win over /config, a key that is no setting is named in a toast, /cg-health names the file', { options: { syncDir: 'D:\\old' } }, async ($, on) => {
+  settingsRig(on, '{ "language": "ru", "syncDir": "Z:\\\\cg", "colour": 1 }')
+  const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')), [], undefined, home)
+  await ($ as any).command.run({ command: 'cg-sync', args: '' })
+  expect(ofCg(m, 'sync')[0]!.argv[1]).toBe('--sync-dir=Z:\\cg')
+  expect(m.langs.at(-1)).toEqual(['--lang', 'ru'])
+  expect(m.toasts).toEqual([T.toast(T.failed('settings', ru.settingsBad(SETTINGS, ['colour'])))])
+  expect((await ($ as any).command.run({ command: 'cg-health', args: '' })).text).toContain(ru.healthSettings(SETTINGS))
+})
+
+test('settings file: missing, it is written with the values of /config and nothing is said', { options: { language: 'uk' } }, async ($, on) => {
+  const written = settingsRig(on, undefined)
+  const m = await started($, on, () => ran('{}'), [], undefined, home)
+  expect(written.map(([path]) => path)).toEqual([SETTINGS])
+  expect(JSON.parse(written[0]![1])).toMatchObject({ language: 'uk', syncDir: '', compression: 'ultra', python: 'python' })
+  expect(m.toasts).toEqual([])
+})
+
+test('settings file: broken JSON: a toast with the file, and the values of /config hold', { options: { language: 'uk' } }, async ($, on) => {
+  const written = settingsRig(on, '{ "language": "ru", }')
+  const m = await started($, on, () => indexed(), [], undefined, home)
+  await ($ as any).command.run({ command: 'cg-index', args: '' })
+  expect(m.langs.at(-1)).toEqual(['--lang', 'uk'])
+  expect(m.toasts).toHaveLength(1)
+  expect(m.toasts[0]).toContain(SETTINGS)
+  expect(written).toEqual([]) // the owner's file is never overwritten
 })
 
 // ---- sync of two computers ----
