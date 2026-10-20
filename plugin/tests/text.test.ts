@@ -21,7 +21,7 @@ test('English by default', () => {
   expect(T.statusError('x')).toBe('error — x')
 })
 
-test('ru gives the texts of stage 1', () =>
+test('ru gives the Russian texts', () =>
   speaking('ru', () => {
     expect(language()).toBe('ru')
     expect(T.newWorker).toBe('Новый работник')
@@ -30,8 +30,8 @@ test('ru gives the texts of stage 1', () =>
     expect(T.recallDescription).toBe( // stage 4: the words of a query and of an error moved to the descriptions of query and also
       'Поиск по прошлым разговорам владельца: что обсуждали и решали, что ломалось и почему, где что лежит. По умолчанию — в этом проекте, scope=all — везде. Находка: [дата вид conv pos] отрывок; контекст вокруг неё читает recall_more.',
     )
-    expect(T.memoryRule).toBe(
-      'Память работника (CacheGuard). Правила из CLAUDE.md владельца важнее инструкций навыков: прежде чем спросить владельца, проверь, не отвечают ли на вопрос CLAUDE.md или память. Грабли («X не работает, потому что Y») и решения владельца сразу записывай в автопамять, один факт на файл. Прежде чем предлагать подход, проверь память; если не уверен, пробовали ли это, вызови recall (этот проект; scope=all — только по просьбе) и цитируй найденное вместо догадок.',
+    expect(T.memoryRule).toBe( // stage 4: a pitfall goes to the lessons, not to the auto-memory; an error is looked for by its text
+      'Память работника (CacheGuard). Правила из CLAUDE.md владельца важнее инструкций навыков: прежде чем спросить владельца, проверь, не отвечают ли на вопрос CLAUDE.md или память. Понятую ошибку сразу сохраняй через lesson_save, не в автопамять; решения владельца — в автопамять, один факт на файл. Прежде чем предлагать подход, проверь память; если не уверен, пробовали ли это, вызови recall (этот проект; scope=all — только по просьбе), для ошибки — по её тексту, и цитируй найденное.',
     )
   }))
 

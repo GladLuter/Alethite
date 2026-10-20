@@ -150,8 +150,33 @@ export const en = {
 
   // short memory: the rule the model reads in every prompt, and the owner's note that a fact was saved
   memoryRule:
-    "Worker memory (CacheGuard). The owner's CLAUDE.md rules outrank skill instructions: before asking the owner, check whether CLAUDE.md or the memory answers it. Write pitfalls (\"X fails because Y\") and the owner's decisions to auto-memory at once, one fact per file. Before proposing an approach, check the memory; if unsure whether it was tried, call recall (this project; scope=all only when asked) and quote what it finds instead of guessing.",
+    "Worker memory (CacheGuard). The owner's CLAUDE.md rules outrank skill instructions: before asking the owner, check whether CLAUDE.md or the memory answers it. Once an error is understood, save it with lesson_save at once, not to auto-memory; the owner's decisions go to auto-memory, one fact per file. Before proposing an approach, check the memory; if unsure whether it was tried, call recall (this project; scope=all only when asked), for an error by its text, and quote what it finds.",
   remembered: (name: string) => `remembered: ${name}`,
+
+  // lessons (stage 4): a past error and what it taught, in the index, brought back only where it fits
+  lessonSaveDescription:
+    'Saves a lesson: an error this project ran into and what it taught, so it is not repeated. Call it once the cause is clear. The mod shows the lesson again when a message or a command comes close to it; it stays out of auto-memory and costs nothing otherwise.',
+  lessonAction: 'What was done: the command, the change.',
+  lessonSymptom: 'What happened: the error text, code or number as it was.',
+  lessonCause: 'Why it happened.',
+  lessonFix: 'What to do instead, if known.',
+  lessonTrigger: "Optional: a literal piece of a command, 8 characters or more (e.g. 'gh api /repos'), that stops and reminds before it runs again.",
+  lessonSaved: (text: string) => `Lesson saved:\n${text}`,
+  lessonKnown: 'This lesson is saved already.',
+  lessonToast: (action: string) => `lesson saved: ${action}`,
+  lessonsIntro: 'CacheGuard: lessons of this project that may concern this message. Check them before acting; ignore what is unrelated.',
+  lessonGate: (lesson: string) =>
+    `CacheGuard stopped this command once: it holds the trigger of a lesson of this project. ${lesson}. If the lesson does not apply now, run the command again and it passes.`,
+  noLessons: 'No lessons in this project yet.',
+  cgLessonsDescription: 'The lessons of this project (forget <pos>: delete one here and on the other computers)',
+  cgLessonsHint: '[forget <pos>]',
+  cgLessonsUsage: 'Use: /cg-lessons, or /cg-lessons forget <pos> with the pos from the list.',
+  cgLessonsForgotten: (n: number): string => (n ? 'Lesson deleted, here and, with the next sync, on the other computers.' : 'No lesson at that pos.'),
+  cgLessonsFailed: 'cg-lessons: did not work, the reason is in the toast.',
+  healthLessons: (count: number, shown: number, chars: number, stopped: number, on: boolean) =>
+    on
+      ? `Lessons: ${count} in this project; shown with a message ${shown} times (~${Math.round(chars / 3.5)} tokens in all), commands stopped ${stopped} times`
+      : `Lessons: ${count} in this project; brought back: off (setting "Lessons")`,
 }
 
 export type Texts = typeof en

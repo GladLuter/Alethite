@@ -8,7 +8,7 @@ import memdb
 from texts import t
 
 DIMS, CHUNK, OVERLAP = 256, 1500, 200
-KINDS = ('owner', 'claude', 'task', 'report', 'sub', 'error')  # tool summaries are not embedded; a failed call's error is (stage 4)
+KINDS = ('owner', 'claude', 'task', 'report', 'sub', 'error', 'lesson')  # tool summaries are not embedded; errors and lessons are (stage 4)
 DOC_PREFIX, QUERY_PREFIX = 'title: none | text: ', 'task: search result | query: '
 MODEL, OLLAMA = 'embeddinggemma', 'http://localhost:11434'
 _RECORDS = "FROM chunks WHERE kind IN %s" % (KINDS,)

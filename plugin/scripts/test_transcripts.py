@@ -139,6 +139,11 @@ class TranscriptsTest(unittest.TestCase):
                                          tool('mcp__other__recall', query='проба')])])
         self.assertEqual([(r['kind'], r['text']) for r in read_records(path)[0]], [('claude', 'ответ'), ('tool', 'mcp__other__recall: проба')])
 
+    def test_the_lessons_the_mod_added_are_not_the_owners_words(self):  # stage 4
+        path = self.write('s.jsonl', [u([{'type': 'text', 'text': 'опять 429'}, {'type': 'text', 'text': '[cg-lessons]\nурок\n[/cg-lessons]'}]),
+                                      u('вопрос\n[cg-lessons]\nурок\n[/cg-lessons]\nи ещё')])
+        self.assertEqual([r['text'] for r in read_records(path)[0]], ['опять 429', 'вопрос\n\nи ещё'])
+
     def test_a_failed_tool_call_is_an_error_record_a_good_one_none(self):  # stage 4: a past error is found by its trace
         err = lambda content: u([{'type': 'tool_result', 'tool_use_id': 't1', 'content': content, 'is_error': True}])
         path = self.write('s.jsonl', [

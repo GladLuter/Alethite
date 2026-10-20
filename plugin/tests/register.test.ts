@@ -285,9 +285,13 @@ const started = async ($: any, on: any, answer: (a: string[]) => unknown, status
 const recall = ($: any, input: object = { query: 'кэш' }) => $.tool.call({ tool: 'mcp__cacheguard__recall', ...input })
 const ofCg = <R extends { argv: string[] }>(m: { runs: R[] }, cmd: string) => m.runs.filter(r => r.argv[0] === cmd)
 
-test('memory tools: both in the prompt, not behind ToolSearch', async ($, on) => {
+test('memory tools: all in the prompt, not behind ToolSearch', async ($, on) => {
   const m = await started($, on, () => ran('{}'))
-  expect(m.specs.map(s => [s.name, s.isDeferred, s.description])).toEqual([['recall', false, T.recallDescription], ['recall_more', false, T.recallMoreDescription]])
+  expect(m.specs.map(s => [s.name, s.isDeferred, s.description])).toEqual([
+    ['recall', false, T.recallDescription],
+    ['recall_more', false, T.recallMoreDescription],
+    ['lesson_save', false, T.lessonSaveDescription],
+  ])
   // stage 4: how to search for an error is told by the parameters, the description stays short
   expect(m.specs[0].inputSchema.properties.query.description).toBe(T.recallQuery)
   expect(m.specs[0].inputSchema.properties.also).toEqual({ type: 'array', items: { type: 'string' }, maxItems: 3, description: T.recallAlso })
@@ -452,7 +456,7 @@ test('session.start: a refused registration leaves the status line, the timers a
   expect(statuses.at(-1)!.startsWith(T.statusError(''))).toBe(true) // ...and the refusal is the last word
   expect(statuses.at(-1)).toContain('schema refused')
   expect(store.get('lastError')).toMatchObject({ where: 'register', msg: expect.stringContaining('schema refused') })
-  expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats', 'cg-sync'], tools: ['recall', 'recall_more'] }) // both tools were tried, the commands went through
+  expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats', 'cg-sync', 'cg-lessons'], tools: ['recall', 'recall_more', 'lesson_save'] }) // every tool was tried, the commands went through
   await clock.advance(30_000) // the timers run
   expect(statuses.at(-1)).toMatch(/^ctx /)
 })
@@ -733,7 +737,7 @@ test('language ru: the mod speaks Russian to the owner and to the model, and so 
   await m.clock.advance(3_000)
   for (const lang of m.langs) expect(lang).toEqual(['--lang', 'ru'])
   expect((await ($ as any).command.run({ command: 'cg-band', args: '' })).text).toBe(ru.cgBandOn)
-  expect(m.specs.map(s => s.description)).toEqual([ru.recallDescription, ru.recallMoreDescription])
+  expect(m.specs.map(s => s.description)).toEqual([ru.recallDescription, ru.recallMoreDescription, ru.lessonSaveDescription])
   expect((await ($ as any).prompt.compose(facts)).sections).toEqual([{ id: 'cacheguard:memory-rule', text: ru.memoryRule, scope: 'session' }])
 })
 
@@ -742,7 +746,7 @@ test('language uk: Ukrainian to the owner and to the model, and to cg.py', { opt
   await m.clock.advance(3_000)
   for (const lang of m.langs) expect(lang).toEqual(['--lang', 'uk'])
   expect((await ($ as any).command.run({ command: 'cg-band', args: '' })).text).toBe(uk.cgBandOn)
-  expect(m.specs.map(s => s.description)).toEqual([uk.recallDescription, uk.recallMoreDescription])
+  expect(m.specs.map(s => s.description)).toEqual([uk.recallDescription, uk.recallMoreDescription, uk.lessonSaveDescription])
 })
 
 test('a language the mod does not know is English', { options: { language: 'xx' } }, async ($, on) => {
@@ -772,8 +776,8 @@ test('settings file: its values win over /config, a key that is no setting is na
   await ($ as any).command.run({ command: 'cg-sync', args: '' })
   expect(ofCg(m, 'sync')[0]!.argv[1]).toBe('--sync-dir=Z:\\cg')
   expect(m.langs.at(-1)).toEqual(['--lang', 'ru'])
-  expect(m.toasts).toEqual([T.toast(T.failed('settings', ru.settingsBad(SETTINGS, ['colour'])))])
-  expect((await ($ as any).command.run({ command: 'cg-health', args: '' })).text).toContain(ru.healthSettings(SETTINGS))
+  expect(m.toasts).toEqual([T.toast(T.failed('settings', ru.settingsBad!(SETTINGS, ['colour'])))])
+  expect((await ($ as any).command.run({ command: 'cg-health', args: '' })).text).toContain(ru.healthSettings!(SETTINGS))
 })
 
 test('settings file: missing, it is written with the values of /config and nothing is said', { options: { language: 'uk' } }, async ($, on) => {
@@ -859,7 +863,9 @@ test('/cg-sync: cg.py fails: a toast and a short reply', { options: { syncDir: S
 test('background: the sync follows the index and the vectors, 60 s in cg.py, 120 s for the process', { options: { syncDir: SHARE } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'sync' ? synced() : a[0] === 'embed' ? embedded() : indexed()))
   await m.clock.advance(3_000)
-  expect(m.runs.filter(r => r.argv[0] !== 'last-turn').map(r => [r.argv[0], r.timeoutMs])).toEqual([['index', 600_000], ['embed', 180_000], ['sync', 120_000]])
+  const steps = m.runs.filter(r => r.argv[0] !== 'last-turn').map(r => [r.argv[0], r.timeoutMs])
+  // the lessons are read at the start and again after the sync, which may have brought the other computer's (stage 4)
+  expect(steps).toEqual([['lessons', 120_000], ['index', 600_000], ['embed', 180_000], ['sync', 120_000], ['lessons', 120_000]])
   expect(ofCg(m, 'sync')[0]!.argv).toContain('--max-seconds')
   expect(m.toasts).toEqual([])
 })
@@ -949,4 +955,107 @@ test('/cg-stats: cg.py gets what MEMORY.md takes and the compression level', asy
   await stats()
   const { argv } = ofCg(m, 'stats')[0]!
   expect([flag(argv, '--memory-tokens'), flag(argv, '--compression')]).toEqual(['0', 'ultra'])
+})
+
+// ---- lessons (stage 4) ----
+const lesson = {
+  id: 7,
+  conv: 'lessons-abc',
+  pos: 1792000000000,
+  ts: '2026-10-20T10:00:00.000Z',
+  text: 'Action: gh api in a loop\nSymptom: HTTP 429\nCause: 120 requests an hour\nTrigger: gh api /repos',
+  trigger: 'gh api /repos',
+  from: null,
+}
+const listed = (list: object[] = [lesson]) => ran(JSON.stringify({ lessons: list }))
+// cg.py answers the lesson commands; `found` is what lessons-match finds for any message
+const lessonRig = async ($: any, on: any, found: object[] = [{ ...lesson, score: 0.81 }], list: object[] = [lesson], options: { context?: string[][] } = {}) => {
+  const contexts = options.context ?? []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => (contexts.push([...(e.context ?? [])]), { text: e.text, context: e.context }))
+  on('tool.call', { tool: 'Bash' }, () => ({ result: 'ran' }))
+  const m = await started($, on, a =>
+    a[0] === 'lessons' ? listed(list) : a[0] === 'lessons-match' ? ran(JSON.stringify({ lessons: found, vector: 'ok' })) : a[0] === 'lesson-save' ? ran(JSON.stringify({ id: 9, conv: 'lessons-abc', pos: 1, text: 'Action: x\nSymptom: y\nCause: z', new: true, vector: 'ok' })) : a[0] === 'forget' ? ran('{"forgotten":1}') : ran('{}'),
+  )
+  await ($ as any).command.run({ command: 'cg-lessons', args: '' }) // the list, awaited: the start reads it in the background
+  return { m, contexts }
+}
+const typed = ($: any, text: string, extra: object = {}) => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' }, ...extra })
+
+test('lesson_save: the fields go to cg.py one item each, the owner gets a toast, the model the lesson', async ($, on) => {
+  const { m } = await lessonRig($, on)
+  const r = await ($ as any).tool.call({ tool: 'mcp__cacheguard__lesson_save', action: '-x', symptom: 'HTTP 429', cause: 'limit', fix: '', trigger: 7 })
+  expect(ofCg(m, 'lesson-save')[0]!.argv).toEqual(['lesson-save', '--cwd', 'C:/w', '--model', 'embeddinggemma', '--action=-x', '--symptom=HTTP 429', '--cause=limit'])
+  expect(r).toEqual({ result: T.lessonSaved('Action: x\nSymptom: y\nCause: z') })
+  expect(m.toasts).toEqual([T.toast(T.lessonToast('-x'))])
+})
+
+test('lessons: one that fits goes beside the owner\'s message once a chat, in the hidden context; nothing else is asked or added', async ($, on) => {
+  const contexts: string[][] = []
+  const { m } = await lessonRig($, on, undefined, undefined, { context: contexts })
+  await typed($, 'опять 429 на сборке, что делать?')
+  await typed($, 'опять 429 на сборке, что делать?')
+  expect(contexts[0]).toEqual([['[cg-lessons]', T.lessonsIntro, '- Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos', '[/cg-lessons]'].join('\n')])
+  expect(contexts[1]).toEqual([]) // shown once in this chat
+  const [match] = ofCg(m, 'lessons-match')
+  expect(match!.argv).toEqual(['lessons-match', '--cwd', 'C:/w', '--text=опять 429 на сборке, что делать?', '--model', 'embeddinggemma', '--min-score', '0.6', '--limit', '2', '--timeout', '3'])
+  expect(match!.timeoutMs).toBe(8_000)
+  await typed($, 'короткий') // too short to be about anything
+  await typed($, 'сообщение от другого плагина', { origin: { kind: 'plugin', name: 'x' } })
+  await typed($, '/cg-health', { command: { name: 'cg-health', args: '' } })
+  expect(ofCg(m, 'lessons-match')).toHaveLength(2)
+})
+
+test('lessons: none in the project, none asked for; off in the settings, none either', { options: { lessons: false } }, async ($, on) => {
+  const { m } = await lessonRig($, on)
+  await typed($, 'опять 429 на сборке, что делать?')
+  expect(ofCg(m, 'lessons-match')).toEqual([])
+  expect(await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })).toEqual({ result: 'ran' })
+})
+
+test('lessons: a project without lessons runs no Python on a message', async ($, on) => {
+  const { m } = await lessonRig($, on, [], [])
+  await typed($, 'опять 429 на сборке, что делать?')
+  expect(ofCg(m, 'lessons-match')).toEqual([])
+})
+
+test('lessons: a failed search costs the owner a line in /cg-health once, and the message goes on as typed', async ($, on) => {
+  const contexts: string[][] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => (contexts.push([...(e.context ?? [])]), { text: e.text }))
+  const m = await started($, on, a => (a[0] === 'lessons' ? listed() : a[0] === 'lessons-match' ? failed('OperationalError: database is locked') : ran('{}')))
+  await ($ as any).command.run({ command: 'cg-lessons', args: '' })
+  await typed($, 'опять 429 на сборке, что делать?')
+  m.store.set('lastError', { at: 1, where: 'sync', msg: 'later' })
+  await typed($, 'опять 429 на сборке, что делать?')
+  expect(contexts).toEqual([[], []])
+  expect(m.toasts).toEqual([])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'sync' })
+})
+
+test('lessons: a command with a trigger is stopped once with the lesson, then passes', async ($, on) => {
+  const { m } = await lessonRig($, on)
+  const stop = await ($ as any).tool.call({ tool: 'Bash', command: 'GH API /repos/owner/x --paginate' })
+  expect(stop).toEqual({ deny: T.lessonGate('Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos') })
+  expect(await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/owner/x --paginate' })).toEqual({ result: 'ran' })
+  expect(await ($ as any).tool.call({ tool: 'Bash', command: 'git status' })).toEqual({ result: 'ran' })
+  expect(m.store.get('lessonCounts')).toEqual({ stopped: 1 })
+})
+
+test('/cg-lessons: the list; forget deletes by pos through cg.py; anything else, how to ask', async ($, on) => {
+  const { m } = await lessonRig($, on)
+  expect((await ($ as any).command.run({ command: 'cg-lessons', args: '' })).text).toBe(
+    'pos=1792000000000 [2026-10-20] Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos',
+  )
+  expect((await ($ as any).command.run({ command: 'cg-lessons', args: 'forget 1792000000000' })).text).toBe(T.cgLessonsForgotten(1))
+  expect(ofCg(m, 'forget')[0]!.argv).toEqual(['forget', '--conv=lessons-abc', '--pos=1792000000000'])
+  expect((await ($ as any).command.run({ command: 'cg-lessons', args: 'forget 5' })).text).toBe(T.cgLessonsForgotten(0))
+  expect((await ($ as any).command.run({ command: 'cg-lessons', args: 'drop all' })).text).toBe(T.cgLessonsUsage)
+})
+
+test('/cg-health: how many lessons, how often they came back and what that cost', async ($, on) => {
+  const { m } = await lessonRig($, on)
+  await typed($, 'опять 429 на сборке, что делать?')
+  await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })
+  const counts = m.store.get('lessonCounts') as Record<string, number>
+  const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
+  expect(text).toContain(T.healthLessons(1, 1, counts.chars!, 1, true))
 })

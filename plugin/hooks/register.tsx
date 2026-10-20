@@ -9,6 +9,8 @@ import { FOLDER, flush, notePath, SUMMARY_PATH, summaryNote } from './notes'
 import type { Note } from './notes'
 import { healthLines, message, parseCg } from './py'
 import type { LastError } from './py'
+import { forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, lessonsMatchArgs, oneLine } from './lessons'
+import type { Found, Lesson } from './lessons'
 import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
 import { skipArgs, syncArgs, syncReport } from './sync'
@@ -108,6 +110,26 @@ const catchUp = async ($: EngineInterface, python: string, model: string, syncDi
     }))
   const failed = [...(isEmbedded ? [] : ['embed']), ...(isSynced ? [] : ['sync'])]
   return failed.length ? failed.join(', ') : null
+}
+
+// The lessons of this chat's project (stage 4).
+const lessonsOf = async ($: EngineInterface, python: string) =>
+  ((await runCg($, python, ['lessons', '--cwd', await $.session.root()])).lessons as Lesson[] | undefined) ?? []
+
+// The same, quietly, for the paths nobody asked on: a failure keeps the list there was, and must not push the first cause of a failed
+// start out of /cg-health (the database that failed the index fails this too); /cg-lessons tells it when asked.
+const lessonsOr = async ($: EngineInterface, python: string, kept: Lesson[]) => {
+  try {
+    return await lessonsOf($, python)
+  } catch {
+    return kept
+  }
+}
+
+// How often the lessons came back, on this computer, for /cg-health: what they cost and whether they stop anything.
+const countLessons = async ($: EngineInterface, key: 'shown' | 'chars' | 'stopped', n: number) => {
+  const all = ((await $.store.get('lessonCounts')) as Record<string, number> | undefined) ?? {}
+  await $.store.set('lessonCounts', { ...all, [key]: (all[key] ?? 0) + n })
 }
 
 // chats whose size was already asked of cg.py in this load, so a failure is not retried on every tick
@@ -245,6 +267,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
 export const register: Register = (on, options) => {
   // the settings: /config's values now, the mod's own file over them once session.start has read it
   let syncDir: string, minTokens: number, idleMinutes: number, showLimits: boolean, python: string, embedModel: string, compression: Compression
+  let isLessonsOn: boolean, lessonsMinScore: number
   const apply = (o: Record<string, unknown>) => {
     setLanguage(o.language as string)
     syncDir = (o.syncDir as string).trim().replace(/^"(.*)"$/, '$1') // Explorer's "Copy as path" puts quotes around it
@@ -254,12 +277,20 @@ export const register: Register = (on, options) => {
     python = o.python as string
     embedModel = o.embedModel as string
     compression = compressionLevel(o.compression) // what the model reads of the memory: off, lite, full, ultra (stage 3)
+    isLessonsOn = o.lessons !== false
+    lessonsMinScore = typeof o.lessonsMinScore === 'number' ? o.lessonsMinScore : 0.6
   }
   apply(options)
   let settingsFile: string | undefined
   let isVectorToasted = false // the owner hears of a missing vector search once per load of the mod, not on every recall
   let isIndexToasted = false // likewise of unreadable transcripts a search came across
   let isCatchUpToasted = false // likewise a failed background catch-up: the status line shows it for 30 s only
+  // the lessons of this chat's project (stage 4), read at the start, after a sync and after a save; what each chat was shown or stopped
+  let lessonList: Lesson[] = []
+  const shownIn = new Map<string, Set<number>>()
+  const stoppedIn = new Map<string, Set<number>>()
+  const setOf = (m: Map<string, Set<number>>, id: string) => m.get(id) ?? m.set(id, new Set()).get(id)!
+  let isLessonsNoted = false // a lesson search that fails on every message is kept for /cg-health once, not on each
 
   on('session.start', async ($, e, next) => {
     // first, so the language and every other setting of the file hold before anything is drawn or said; a reload reads it again
@@ -285,9 +316,10 @@ export const register: Register = (on, options) => {
     $.clock.after(
       3_000,
       () =>
-        void catchUp($, python, embedModel, syncDir).then(failed => {
+        void catchUp($, python, embedModel, syncDir).then(async failed => {
           if (failed && !isCatchUpToasted) toast($, T.catchUpFailed(failed))
           if (failed) isCatchUpToasted = true
+          lessonList = await lessonsOr($, python, lessonList) // the sync may have brought the other computer's
         }),
     )
     await guarded($, 'session.start', () => refresh($, python))
@@ -300,6 +332,7 @@ export const register: Register = (on, options) => {
       () => $.command.register({ name: 'cg-index', description: T.cgIndexDescription, argumentHint: T.cgIndexHint }),
       () => $.command.register({ name: 'cg-stats', description: T.cgStatsDescription, argumentHint: T.cgStatsHint }),
       () => $.command.register({ name: 'cg-sync', description: T.cgSyncDescription, argumentHint: T.cgSyncHint }),
+      () => $.command.register({ name: 'cg-lessons', description: T.cgLessonsDescription, argumentHint: T.cgLessonsHint }),
       () =>
         $.tool.register({
           name: 'recall',
@@ -323,8 +356,26 @@ export const register: Register = (on, options) => {
           inputSchema: { type: 'object', properties: { conv: { type: 'string' }, pos: { type: 'integer' } }, required: ['conv', 'pos'] },
           isDeferred: false,
         }),
+      () =>
+        $.tool.register({
+          name: 'lesson_save',
+          description: T.lessonSaveDescription,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              action: { type: 'string', description: T.lessonAction },
+              symptom: { type: 'string', description: T.lessonSymptom },
+              cause: { type: 'string', description: T.lessonCause },
+              fix: { type: 'string', description: T.lessonFix },
+              trigger: { type: 'string', description: T.lessonTrigger },
+            },
+            required: ['action', 'symptom', 'cause'],
+          },
+          isDeferred: false,
+        }),
     ]
     for (const work of registrations) await guarded($, 'register', work)
+    void lessonsOr($, python, lessonList).then(l => void (lessonList = l)) // never awaited: a slow Python must not hold session.start
 
     return next(e)
   })
@@ -372,7 +423,11 @@ export const register: Register = (on, options) => {
       const facts = files.filter(f => f.name.endsWith('.md') && f.name !== 'MEMORY.md').length
       const memory = dir === null ? null : { dir, facts, tokens: autoMemTokens(mem) }
       const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" --lang ${language()} embed --model ${embedModel} --max-seconds 100000`
-      return { text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile }).join('\n') }
+      const counts = ((await $.store.get('lessonCounts')) as Record<string, number> | undefined) ?? {}
+      const lessons = { count: lessonList.length, shown: counts.shown ?? 0, chars: counts.chars ?? 0, stopped: counts.stopped ?? 0, on: isLessonsOn }
+      return {
+        text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile, lessons }).join('\n'),
+      }
     } catch (err) {
       await fail($, 'cg-health', err)
       return { text: T.cgHealthFailed }
@@ -396,6 +451,7 @@ export const register: Register = (on, options) => {
     if (skip === null) return { text: T.cgSyncSkipUsage }
     try {
       const r = await runSync($, python, syncDir, embedModel, skip)
+      lessonList = await lessonsOr($, python, lessonList) // the other computer's lessons, if it brought any
       if (r.errors.length) {
         // the reply lists them all; the toast and /cg-health keep the first one for when the reply has scrolled away
         toast($, T.syncErrors(r.errors.length))
@@ -447,6 +503,69 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'mcp__cacheguard__recall_more' }, ($, e) =>
     served($, 'recall_more', async () => formatRows((await runCg($, python, ['expand', `--conv=${e.conv}`, `--pos=${e.pos}`, '--compress', compression])).rows as Row[])),
   )
+
+  on('tool.call', { tool: 'mcp__cacheguard__lesson_save' }, ($, e) =>
+    served($, 'lesson_save', async () => {
+      const input = e as unknown as Record<string, unknown>
+      const r = await runCg($, python, lessonSaveArgs(input, await $.session.root(), embedModel))
+      lessonList = await lessonsOr($, python, lessonList)
+      if (!r.new) return T.lessonKnown
+      toast($, T.lessonToast(String(input.action)))
+      return T.lessonSaved(String(r.text))
+    }),
+  )
+
+  on('command.run', { command: 'cg-lessons' }, async ($, e) => {
+    const pos = forgetArg(e.args)
+    if (pos === undefined) return { text: T.cgLessonsUsage }
+    try {
+      lessonList = await lessonsOf($, python)
+      if (pos === null) return { text: formatLessons(lessonList) }
+      const lesson = lessonList.find(l => l.pos === pos)
+      const n = lesson ? ((await runCg($, python, ['forget', `--conv=${lesson.conv}`, `--pos=${pos}`])).forgotten as number) : 0
+      lessonList = await lessonsOf($, python)
+      return { text: T.cgLessonsForgotten(n) }
+    } catch (err) {
+      await fail($, 'cg-lessons', err)
+      return { text: T.cgLessonsFailed }
+    }
+  })
+
+  // The lessons that fit the owner's message go to the model beside it, in the hidden context, not the system prompt: the prompt cache
+  // stays whole. Only the owner's own words; nothing when the project has no lessons (no Python then), when none is close enough, or
+  // when the chat was shown it already. A failure costs the owner nothing but a line in /cg-health.
+  on('prompt.submit', async ($, e, next) => {
+    const isOwners = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
+    if (!isLessonsOn || lessonList.length === 0 || e.command !== undefined || e.isMeta || !isOwners || e.text.trim().length < 12) return next(e)
+    let block: string | undefined
+    try {
+      const [root, id] = await Promise.all([$.session.root(), $.session.id()])
+      const shown = setOf(shownIn, id)
+      const r = await runCg($, python, lessonsMatchArgs(e.text, root, embedModel, lessonsMinScore), 8_000)
+      const fresh = (r.lessons as Found[]).filter(l => !shown.has(l.id))
+      if (fresh.length) {
+        block = lessonContext(fresh)
+        for (const l of fresh) shown.add(l.id)
+        await countLessons($, 'shown', fresh.length)
+        await countLessons($, 'chars', block.length)
+      }
+    } catch (err) {
+      if (!isLessonsNoted) await noteError($, 'lessons', err)
+      isLessonsNoted = true
+    }
+    return next(block === undefined ? e : { ...e, context: [...(e.context ?? []), block] })
+  })
+
+  // A command that holds a lesson's trigger is stopped once in a chat, with the lesson; the same command again passes.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    if (!isLessonsOn || lessonList.length === 0) return next(e)
+    const stopped = setOf(stoppedIn, await $.session.id())
+    const lesson = gateFor(e.command, lessonList, stopped)
+    if (lesson === undefined) return next(e)
+    stopped.add(lesson.id)
+    await countLessons($, 'stopped', 1)
+    return { deny: T.lessonGate(oneLine(lesson.text)) }
+  })
 
   // last and on the session side: every shared section must precede it, and the text never varies, so the prompt cache is not spent
   on('prompt.compose', async (_, e, next) => ({ sections: [...(await next(e)).sections, { id: 'cacheguard:memory-rule', text: T.memoryRule, scope: 'session' }] }))

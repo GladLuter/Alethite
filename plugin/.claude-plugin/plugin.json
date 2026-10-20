@@ -12,6 +12,8 @@
     "bandIdleMinutes": { "type": "number", "title": "Band: how many minutes after a reply", "description": "The band appears when more minutes than this have passed since the last reply. The cache lives 60 minutes.", "default": 55 },
     "showLimits": { "type": "boolean", "title": "Band: show the limit percentages", "description": "Add a line with the used percentages of the limits (5 hours, week) to the band.", "default": true },
     "python": { "type": "string", "title": "Python command", "description": "The command the mod runs its Python scripts with.", "default": "python" },
-    "embedModel": { "type": "string", "title": "Embedding model", "description": "The Ollama model of the vector search in the memory (ollama pull <name>). On a change every vector is computed again.", "default": "embeddinggemma" }
+    "embedModel": { "type": "string", "title": "Embedding model", "description": "The Ollama model of the vector search in the memory (ollama pull <name>). On a change every vector is computed again.", "default": "embeddinggemma" },
+    "lessons": { "type": "boolean", "title": "Lessons", "description": "Bring the project's lessons (past errors and what they taught) back where they fit: beside an owner's message close to one (hidden, at most 2, each once a chat) and as a one-time stop before a command that holds a lesson's trigger. Off: lessons are still saved and recall still finds them.", "default": true },
+    "lessonsMinScore": { "type": "number", "title": "Lessons: how close a message must be", "description": "The similarity (0 to 1) of a message and a lesson from which the lesson is shown. Higher: fewer lessons, surer ones.", "default": 0.6 }
   }
 }

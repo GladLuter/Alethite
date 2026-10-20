@@ -11,6 +11,8 @@ _HANDOFF = re.compile(r'\A\s*%s.*?(?:%s|\Z)|%s.*?%s' % ((re.escape(HANDOFF_START
 # user text Claude Code injects without isMeta: cc_token_audit.INJECTED plus the echo of a typed slash command
 INJECTED = re.compile(r'\s*<(task-notification|local-command-|system-reminder|command-(?:name|message)>)')
 _REMINDER = re.compile(r'<system-reminder>.*?</system-reminder>', re.S)
+# the lessons the mod put beside the owner's message (stage 4), wherever the engine keeps that context: not the owner's words
+_LESSONS = re.compile(r'\[cg-lessons\].*?(?:\[/cg-lessons\]|\Z)', re.S)
 _WORKTREE = re.compile(r'[\\/]\.claude[\\/]worktrees(?:[\\/].*)?$')
 _ARGS = ('command', 'file_path', 'notebook_path', 'path', 'pattern', 'skill', 'url', 'query', 'description')
 _USAGE = ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'output_tokens')
@@ -68,7 +70,7 @@ def _typed(text, kind):
     """What a person (or, in a subagent, the parent agent) wrote, without injected parts."""
     if not isinstance(text, str):
         return []
-    text = _REMINDER.sub('', strip_handoff(text)).strip()
+    text = _LESSONS.sub('', _REMINDER.sub('', strip_handoff(text))).strip()
     text = '' if INJECTED.match(text) or text.startswith('[Request interrupted by user') else text  # what is left still starts like injected text: an unclosed reminder, a slash command, an Esc interrupt
     return [(kind, text, None)] if text else []
 

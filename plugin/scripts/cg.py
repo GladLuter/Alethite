@@ -9,6 +9,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import lessons
 import memdb
 import stats
 import sync
@@ -142,6 +143,25 @@ def _forget(a):
     return {'forgotten': memdb.forget(memdb.connect(a.db), a.conv, a.pos)}
 
 
+# ---- lessons (stage 4): the model saves one with lesson_save; the mod lists them and asks which fit the owner's message
+
+def _lesson_save(a):
+    conn = memdb.connect(a.db)
+    fields = {k: getattr(a, k) for k in lessons.FIELDS}
+    out = lessons.save(conn, project_key(a.cwd), fields)
+    out['vector'] = lessons.embed_one(conn, out['id'], a.model) if out['new'] else 'ok'
+    return out
+
+
+def _lessons(a):
+    return {'lessons': lessons.listing(memdb.connect(a.db), None if a.all else project_key(a.cwd))}
+
+
+def _lessons_match(a):
+    found, state = lessons.match(memdb.connect(a.db), a.text, project_key(a.cwd), a.model, a.min_score, a.limit, timeout=a.timeout)
+    return {'lessons': found, 'vector': state}
+
+
 def _day(s):  # argparse reports a ValueError from a type function as a bad argument
     return datetime.date.fromisoformat(s).isoformat()
 
@@ -202,6 +222,22 @@ def _parser():
     s.add_argument('--memory-dir')  # the auto-memory folder of the current project, and its root: the short memory is synced for it
     s.add_argument('--project-cwd')
     s.add_argument('--skip-batch', nargs=2, metavar=('MACHINE', 'N'))
+    s = add('lesson-save', _lesson_save)
+    s.add_argument('--cwd', default=os.getcwd())
+    s.add_argument('--model', default=vectors.MODEL)
+    for k in lessons.FIELDS:
+        s.add_argument('--' + k, required=k in lessons.REQUIRED)
+    s = add('lessons', _lessons)
+    scope = s.add_mutually_exclusive_group()
+    scope.add_argument('--cwd', default=os.getcwd())
+    scope.add_argument('--all', action='store_true')
+    s = add('lessons-match', _lessons_match)
+    s.add_argument('--cwd', default=os.getcwd())
+    s.add_argument('--text', required=True)
+    s.add_argument('--model', default=vectors.MODEL)
+    s.add_argument('--min-score', type=float, default=0.6)
+    s.add_argument('--limit', type=int, default=2)
+    s.add_argument('--timeout', type=float, default=5)  # the owner waits for this one: a cold Ollama is skipped, not waited for
     s = add('forget', _forget)
     s.add_argument('--conv', required=True)
     s.add_argument('--pos', type=int, required=True)
