@@ -456,7 +456,7 @@ test('session.start: a refused registration leaves the status line, the timers a
   expect(statuses.at(-1)!.startsWith(T.statusError(''))).toBe(true) // ...and the refusal is the last word
   expect(statuses.at(-1)).toContain('schema refused')
   expect(store.get('lastError')).toMatchObject({ where: 'register', msg: expect.stringContaining('schema refused') })
-  expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats', 'cg-sync', 'cg-lessons'], tools: ['recall', 'recall_more', 'lesson_save'] }) // every tool was tried, the commands went through
+  expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats', 'cg-sync', 'cg-lessons', 'cg-job'], tools: ['recall', 'recall_more', 'lesson_save'] }) // every tool was tried, the commands went through
   await clock.advance(30_000) // the timers run
   expect(statuses.at(-1)).toMatch(/^ctx /)
 })
@@ -1058,4 +1058,40 @@ test('/cg-health: how many lessons, how often they came back and what that cost'
   const counts = m.store.get('lessonCounts') as Record<string, number>
   const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
   expect(text).toContain(T.healthLessons(1, 1, counts.chars!, 1, true))
+})
+
+// ---- the background job (stage 4) ----
+const lastRun = { at: '2026-10-20T10:00:00Z', index: { rows: 3, errors: 0 }, embed: { skipped: 'battery' }, sync: { pushed: 2, pulled: 5, errors: 1 }, errors: [{ where: 'sync', error: 'batch 4 is broken' }] }
+
+test('/cg-job: on and off go to cg.py with the minutes; the state shows the last run; anything else, how to ask', async ($, on) => {
+  const m = await started($, on, a =>
+    a[0] !== 'job' ? ran('{}') : a[1] === 'install' ? ran(JSON.stringify({ installed: true, minutes: Number(a[3]) })) : a[1] === 'remove' ? ran('{"installed":false}') : ran(JSON.stringify({ supported: true, minutes: 30, last: lastRun })),
+  )
+  const run = async (args: string) => (await ($ as any).command.run({ command: 'cg-job', args })).text
+  expect(await run('on')).toBe(T.cgJobOn(30))
+  expect(await run('on 15')).toBe(T.cgJobOn(15))
+  expect(await run('off')).toBe(T.cgJobOff)
+  expect((await run('')).split('\n')).toEqual([
+    T.cgJobState(30),
+    T.jobLast(new Date(lastRun.at).toLocaleString(T.locale), [T.jobIndex(3), T.jobOnBattery, T.jobSync(2, 5)].join(', '), 1),
+    T.jobError('sync', 'batch 4 is broken'),
+  ])
+  expect(await run('on soon')).toBe(T.cgJobUsage)
+  expect(ofCg(m, 'job').map(r => r.argv)).toEqual([['job', 'install', '--minutes', '30'], ['job', 'install', '--minutes', '15'], ['job', 'remove'], ['job', 'status']])
+})
+
+test('/cg-job: not on this system, said plainly; a failure is a toast', async ($, on) => {
+  const m = await started($, on, a => (a[0] !== 'job' ? ran('{}') : a[1] === 'status' ? ran(JSON.stringify({ supported: false, minutes: null, last: null })) : failed('ValueError: the background job is for Windows for now')))
+  expect((await ($ as any).command.run({ command: 'cg-job', args: '' })).text).toBe([T.cgJobState(null), T.jobNever].join('\n'))
+  expect((await ($ as any).command.run({ command: 'cg-job', args: 'on' })).text).toBe(T.cgJobFailed)
+  expect(m.toasts).toEqual([T.toast(T.failed('cg-job', 'ValueError: the background job is for Windows for now'))])
+})
+
+test('/cg-health: the background job\'s last run', async ($, on) => {
+  wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) =>
+    e.argv.includes('status') ? ran(JSON.stringify({ db: 'd', convs: 0, rows: 0, size_mb: 0, job: lastRun })) : noTurn(),
+  )
+  on('session.root', () => ({ value: 'C:/w' }))
+  const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
+  expect(text).toContain(T.jobError('sync', 'batch 4 is broken'))
 })

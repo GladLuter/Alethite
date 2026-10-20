@@ -177,6 +177,25 @@ export const en = {
     on
       ? `Lessons: ${count} in this project; shown with a message ${shown} times (~${Math.round(chars / 3.5)} tokens in all), commands stopped ${stopped} times`
       : `Lessons: ${count} in this project; brought back: off (setting "Lessons")`,
+
+  // the background job (stage 4)
+  cgJobDescription: 'The background job of this computer (Windows): on [minutes], off, or its state',
+  cgJobHint: '[on [minutes] | off]',
+  cgJobUsage: 'Use: /cg-job, /cg-job on [minutes, 30 by default], /cg-job off.',
+  cgJobOn: (minutes: number) =>
+    `Background job on: every ${minutes} minutes the index, the vectors (on mains power) and the sync run with no chat open. It is the task "CacheGuard" of the Task Scheduler, with the settings of the mod's file.`,
+  cgJobOff: 'Background job off: the task "CacheGuard" is removed. The mod catches up when a chat starts, as before.',
+  cgJobState: (minutes: number | null): string =>
+    minutes === null ? 'Background job: not on this system yet (Windows only); the mod catches up when a chat starts.' : minutes ? `Background job: on, every ${minutes} minutes.` : 'Background job: off (/cg-job on).',
+  cgJobFailed: 'cg-job: did not work, the reason is in the toast.',
+  jobIndex: (rows: number) => `index +${rows}`,
+  jobEmbed: (done: number, left: number) => `vectors +${done} (${left} left)`,
+  jobOnBattery: 'vectors wait for the mains',
+  jobEmbedBusy: 'vectors: a chat was at it',
+  jobSync: (up: number, down: number) => `sync ↑${up} ↓${down}`,
+  jobLast: (at: string, did: string, errors: number) => `Background job, last run ${at}: ${did}${errors ? `; errors: ${errors}` : ''}`,
+  jobError: (where: string, error: string) => `Background job error (${where}): ${error}`,
+  jobNever: 'Background job: no run yet (/cg-job on).',
 }
 
 export type Texts = typeof en

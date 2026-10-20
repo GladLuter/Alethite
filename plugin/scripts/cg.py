@@ -9,6 +9,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import job
 import lessons
 import memdb
 import stats
@@ -47,6 +48,7 @@ def _status(a):
     conn = memdb.connect(a.db)
     out = memdb.status(conn)
     out['sync'] = sync.status(conn, a.machine)
+    out['job'] = json.loads(memdb.meta(conn, 'job_last') or 'null')  # the background job's last run (stage 4), for /cg-health
     if a.cwd:  # the scope of «в этом проекте»: a key that matches no conversation makes the project search find nothing
         key = project_key(a.cwd)
         out['project'] = {'key': key, 'convs': conn.execute('SELECT count(*) FROM convs WHERE ' + memdb.IN_PROJECT, {'p': key}).fetchone()[0]}
@@ -111,6 +113,94 @@ def _embed(a):
         return out
 
     return vectors.embed_pending(conn, a.model, embed, a.max_seconds)
+
+
+# ---- the background job (stage 4): what the scheduled task runs, and the task itself
+
+def _settings(path):
+    """The mod's own settings file (%USERPROFILE%\\.claude\\cacheguard\\settings.json): the job runs with what the mod runs with.
+    (settings, None), or ({}, why) when the file is broken: the job goes on with the defaults and says so."""
+    try:
+        with open(path, encoding='utf-8-sig') as f:  # Windows editors save it with a BOM
+            s = json.load(f)
+    except FileNotFoundError:
+        return {}, None
+    except ValueError as e:
+        return {}, '%s: %s' % (path, e)
+    return (s, None) if isinstance(s, dict) else ({}, path)
+
+
+def maintain(a, embed_fn=vectors.ollama_embed, battery=job.on_battery, digest=sync.ollama_digest):
+    """One run of the background job: the index, then the vectors (on mains power, while no chat embeds), then the sync (when a folder
+    is set). Each step under the lock a chat takes for it, so a chat and the job never do one thing twice at a time; a step that fails
+    does not stop the next. The result is kept in meta.job_last for /cg-health. The short memory waits for a chat: only a chat knows its
+    project's auto-memory folder."""
+    conn = memdb.connect(a.db)  # first: it also makes the folder the lock files lie in
+    try:
+        lock = _alone(a, 'maintain', 0)  # noqa: F841 (held until the return)
+    except sqlite3.OperationalError as e:
+        if 'locked' not in str(e):
+            raise
+        return {'busy': True}
+    s, broken = _settings(a.settings or os.path.join(os.path.dirname(a.db), 'settings.json'))
+    if s.get('language') in texts.TABLES:
+        texts.lang = s['language']
+    model = s.get('embedModel') if isinstance(s.get('embedModel'), str) and s['embedModel'].strip() else vectors.MODEL
+    sync_dir = s.get('syncDir').strip().strip('"') if isinstance(s.get('syncDir'), str) else ''
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    out = {'at': stamp, 'index': None, 'embed': None, 'sync': None, 'errors': []}
+    fault = lambda where, e: out['errors'].append({'where': where, 'error': '%s: %s' % (type(e).__name__, e)})
+    if broken:
+        out['errors'].append({'where': 'settings', 'error': broken})
+    try:
+        u = memdb.update(conn, a.projects)
+        out['index'] = {'rows': u['rows'], 'errors': len(u['errors'])}
+    except Exception as e:
+        fault('index', e)
+    if battery():
+        out['embed'] = {'skipped': 'battery'}
+    else:
+        try:
+            held = _alone(a, 'embed', 0)
+        except sqlite3.OperationalError:
+            out['embed'] = {'skipped': 'busy'}  # a chat embeds right now
+        else:
+            try:
+                r = vectors.embed_pending(conn, model, embed_fn, a.embed_seconds)
+                out['embed'] = {'done': r['done'], 'pending': r['pending'], 'errors': len(r['errors'])}
+                if r['errors']:
+                    out['errors'].append({'where': 'embed', 'error': r['errors'][0]['error']})
+            except Exception as e:
+                fault('embed', e)
+            finally:
+                held.close()
+    if sync_dir:
+        try:
+            held = _alone(a, 'sync', a.sync_seconds)
+            try:
+                r = sync.sync(conn, sync_dir, None, model, a.sync_seconds, digest=digest)
+            finally:
+                held.close()
+            out['sync'] = {'pushed': r['pushed'], 'pulled': r['pulled'], 'errors': len(r['errors'])}
+            if r['errors']:
+                out['errors'].append({'where': 'sync', 'error': r['errors'][0]['error']})
+        except Exception as e:
+            fault('sync', e)
+    conn.execute("INSERT OR REPLACE INTO meta VALUES('job_last', ?)", (json.dumps(out, ensure_ascii=False),))
+    return out
+
+
+def _maintain(a):
+    return maintain(a)
+
+
+def _job(a):
+    folder = os.path.dirname(a.db)
+    if a.action == 'install':
+        return job.install(folder, a.minutes)
+    if a.action == 'remove':
+        return job.remove()
+    return {'supported': job.is_supported(), 'minutes': job.installed(), 'last': json.loads(memdb.meta(memdb.connect(a.db), 'job_last') or 'null')}
 
 
 def _last_turn(a):
@@ -238,6 +328,13 @@ def _parser():
     s.add_argument('--min-score', type=float, default=0.6)
     s.add_argument('--limit', type=int, default=2)
     s.add_argument('--timeout', type=float, default=5)  # the owner waits for this one: a cold Ollama is skipped, not waited for
+    s = add('maintain', _maintain)
+    s.add_argument('--settings')  # the mod's settings file; beside the index by default
+    s.add_argument('--embed-seconds', type=float, default=300)
+    s.add_argument('--sync-seconds', type=float, default=60)
+    s = add('job', _job)
+    s.add_argument('action', choices=('install', 'remove', 'status'))
+    s.add_argument('--minutes', type=int, default=job.MINUTES)
     s = add('forget', _forget)
     s.add_argument('--conv', required=True)
     s.add_argument('--pos', type=int, required=True)
@@ -254,9 +351,9 @@ def _parser():
 
 
 def main(argv):
-    sys.stdout.reconfigure(encoding='utf-8')
-    sys.stderr.reconfigure(encoding='utf-8')  # the progress line of embed
-    sys.stdin.reconfigure(encoding='utf-8')  # the text cg.py compress reads
+    for stream in (sys.stdout, sys.stderr, sys.stdin):  # stderr: the progress line of embed; stdin: the text cg.py compress reads
+        if stream is not None:  # pythonw, the background job's, has none of them
+            stream.reconfigure(encoding='utf-8')
     try:
         a = _parser().parse_args(argv)
         texts.lang = a.lang

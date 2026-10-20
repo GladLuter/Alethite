@@ -9,6 +9,8 @@ import { FOLDER, flush, notePath, SUMMARY_PATH, summaryNote } from './notes'
 import type { Note } from './notes'
 import { healthLines, message, parseCg } from './py'
 import type { LastError } from './py'
+import { jobArgs, jobHealth } from './job'
+import type { JobRun } from './job'
 import { forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, lessonsMatchArgs, oneLine } from './lessons'
 import type { Found, Lesson } from './lessons'
 import { formatHits, formatRows, recallArgs } from './recall'
@@ -333,6 +335,7 @@ export const register: Register = (on, options) => {
       () => $.command.register({ name: 'cg-stats', description: T.cgStatsDescription, argumentHint: T.cgStatsHint }),
       () => $.command.register({ name: 'cg-sync', description: T.cgSyncDescription, argumentHint: T.cgSyncHint }),
       () => $.command.register({ name: 'cg-lessons', description: T.cgLessonsDescription, argumentHint: T.cgLessonsHint }),
+      () => $.command.register({ name: 'cg-job', description: T.cgJobDescription, argumentHint: T.cgJobHint }),
       () =>
         $.tool.register({
           name: 'recall',
@@ -514,6 +517,20 @@ export const register: Register = (on, options) => {
       return T.lessonSaved(String(r.text))
     }),
   )
+
+  on('command.run', { command: 'cg-job' }, async ($, e) => {
+    const args = jobArgs(e.args)
+    if (args === null) return { text: T.cgJobUsage }
+    try {
+      const r = await runCg($, python, args, 60_000)
+      if (args[1] === 'install') return { text: T.cgJobOn(r.minutes as number) }
+      if (args[1] === 'remove') return { text: T.cgJobOff }
+      return { text: [T.cgJobState(r.minutes as number | null), ...jobHealth(r.last as JobRun | null)].join('\n') }
+    } catch (err) {
+      await fail($, 'cg-job', err)
+      return { text: T.cgJobFailed }
+    }
+  })
 
   on('command.run', { command: 'cg-lessons' }, async ($, e) => {
     const pos = forgetArg(e.args)

@@ -178,4 +178,23 @@ export const uk: Partial<Texts> = {
     on
       ? `Уроки: у цьому проєкті ${count}; показано з повідомленням ${shown} разів (~${Math.round(chars / 3.5)} токенів загалом), команд зупинено ${stopped}`
       : `Уроки: у цьому проєкті ${count}; нагадування вимкнено (налаштування «Lessons»)`,
+
+  // the background job (stage 4)
+  cgJobDescription: "Фонове завдання цього комп'ютера (Windows): on [хвилин], off або його стан",
+  cgJobHint: '[on [хвилин] | off]',
+  cgJobUsage: 'Так: /cg-job, /cg-job on [хвилин, типово 30], /cg-job off.',
+  cgJobOn: (minutes: number) =>
+    `Фонове завдання ввімкнено: раз на ${minutes} хвилин індекс, вектори (від мережі) і синхронізація йдуть без відкритого чату. Це завдання «CacheGuard» Планувальника завдань, з налаштуваннями з файлу мода.`,
+  cgJobOff: 'Фонове завдання вимкнено: завдання «CacheGuard» видалено. Мод наздоганяє, коли відкривається чат, як раніше.',
+  cgJobState: (minutes: number | null) =>
+    minutes === null ? 'Фонове завдання: на цій системі поки немає (лише Windows); мод наздоганяє, коли відкривається чат.' : minutes ? `Фонове завдання: увімкнено, раз на ${minutes} хвилин.` : 'Фонове завдання: вимкнено (/cg-job on).',
+  cgJobFailed: 'cg-job: не вийшло, причина — у сповіщенні.',
+  jobIndex: (rows: number) => `індекс +${rows}`,
+  jobEmbed: (done: number, left: number) => `вектори +${done} (лишилося ${left})`,
+  jobOnBattery: 'вектори чекають на мережу',
+  jobEmbedBusy: 'вектори рахував чат',
+  jobSync: (up: number, down: number) => `синхронізація ↑${up} ↓${down}`,
+  jobLast: (at: string, did: string, errors: number) => `Фонове завдання, останній запуск ${at}: ${did}${errors ? `; помилок: ${errors}` : ''}`,
+  jobError: (where: string, error: string) => `Помилка фонового завдання (${where}): ${error}`,
+  jobNever: 'Фонове завдання: запусків ще не було (/cg-job on).',
 }
