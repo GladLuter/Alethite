@@ -1095,3 +1095,10 @@ test('/cg-health: the background job\'s last run', async ($, on) => {
   const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
   expect(text).toContain(T.jobError('sync', 'batch 4 is broken'))
 })
+
+test('lessons: a message with no origin (an engine older than the origin) is the owner\'s', async ($, on) => {
+  const contexts: string[][] = []
+  await lessonRig($, on, undefined, undefined, { context: contexts })
+  await ($ as any).prompt.submit({ text: 'опять 429 на сборке, что делать?', wait: false })
+  expect(contexts[0]!.length).toBe(1)
+})

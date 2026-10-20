@@ -20,7 +20,7 @@ So the expensive part is not what is typed, but coming back to a big, idle chat.
 - The **New worker** button starts a clean chat: a mechanical handoff (no model calls) plus the message you already typed.
 
 **Short memory.** Claude Code's own auto-memory. The mod adds:
-- one short rule to the system prompt: write pitfalls and decisions down at once, check memory before proposing;
+- one short rule to the system prompt: write decisions down at once, save an understood error as a lesson, check memory before proposing;
 - a toast whenever a fact is saved.
 
 **Long memory.** Every past conversation of every project, subagents included, in a local SQLite index (FTS5) with vectors from a local Ollama model.
@@ -35,6 +35,14 @@ So the expensive part is not what is typed, but coming back to a big, idle chat.
 **Memory compression** (stage 3). What the mod gives the model (search results, handoff quotes) is squeezed mechanically. Four levels, `ultra` by default; code, paths and negations are never touched.
 - `/cg-stats` measures how much memory sits in the context.
 
+**Lessons** (stage 4). An understood error is saved as a lesson in the index, not in the auto-memory that goes into every request.
+- The mod brings a lesson back mechanically and only where it fits: beside an owner's message close in meaning (hidden context, at most 2, each once a chat), and as one stop before a command that holds its trigger.
+- No lessons, or none fits — zero tokens. `/cg-health` shows what they cost.
+
+**Searching by an error's traces** (stage 4). Tool errors go into the index; `recall` searches several wordings at once (the error text, the action, the cause).
+
+**A background job** (stage 4, Windows). A Task Scheduler task keeps the index, the vectors (on mains power) and the sync up to date with no chat open.
+
 **Languages.** English (default), Russian, Ukrainian: the interface, the texts for the model and the handoff.
 
 ## Commands
@@ -46,6 +54,8 @@ So the expensive part is not what is typed, but coming back to a big, idle chat.
 | `/cg-index [rebuild]` | updates the index (rebuild: re-read everything, add what is missing) |
 | `/cg-sync [skip <computer> <N>]` | syncs with the other computers now |
 | `/cg-stats [days]` | cost measurement, written to Obsidian |
+| `/cg-lessons [forget <pos>]` | the lessons of this project; delete one |
+| `/cg-job [on [minutes] \| off]` | the background job (Windows): on, off, its state |
 
 ## Settings (the `settings.json` file)
 
@@ -61,6 +71,8 @@ The file `%USERPROFILE%\.claude\cacheguard\settings.json` is one per computer an
 | `showLimits` | limits line in the band | `true` |
 | `python` | Python command | `"python"` |
 | `embedModel` | Ollama embedding model | `"embeddinggemma"` |
+| `lessons` | bring lessons back to messages and commands | `true` |
+| `lessonsMinScore` | how close a message must be (0–1) | `0.6` |
 
 The file may hold only the keys you change. For example:
 
@@ -89,6 +101,7 @@ Installation: [INSTALL.md](INSTALL.md).
 | Stage 1 plan | [plan](docs/plans/2026-10-13-stage1-plan.md) | [план](docs/plans/2026-10-13-stage1-plan.ru.md) | [план](docs/plans/2026-10-13-stage1-plan.uk.md) |
 | Stage 2 spec | [spec](docs/specs/2026-10-19-stage2-shared-memory-design.md) | [спека](docs/specs/2026-10-19-stage2-shared-memory-design.ru.md) | [специфікація](docs/specs/2026-10-19-stage2-shared-memory-design.uk.md) |
 | Stage 3 spec | [spec](docs/specs/2026-10-19-stage3-memory-archiver-design.md) | [спека](docs/specs/2026-10-19-stage3-memory-archiver-design.ru.md) | [специфікація](docs/specs/2026-10-19-stage3-memory-archiver-design.uk.md) |
+| Stage 4 spec | [spec](docs/specs/2026-10-20-stage4-errors-lessons-job-design.md) | [спека](docs/specs/2026-10-20-stage4-errors-lessons-job-design.ru.md) | [специфікація](docs/specs/2026-10-20-stage4-errors-lessons-job-design.uk.md) |
 
 The design documents were written in Russian. The English and Ukrainian versions are translations; where they differ, the Russian original is right.
 

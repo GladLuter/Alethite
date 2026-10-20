@@ -552,7 +552,9 @@ export const register: Register = (on, options) => {
   // stays whole. Only the owner's own words; nothing when the project has no lessons (no Python then), when none is close enough, or
   // when the chat was shown it already. A failure costs the owner nothing but a line in /cg-health.
   on('prompt.submit', async ($, e, next) => {
-    const isOwners = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
+    // an engine older than the origin (2.1.29x) stamps none: there a prompt is the owner's
+    const kind = (e.origin as { kind?: string } | undefined)?.kind
+    const isOwners = kind === undefined || kind === 'composer' || kind === 'bridge'
     if (!isLessonsOn || lessonList.length === 0 || e.command !== undefined || e.isMeta || !isOwners || e.text.trim().length < 12) return next(e)
     let block: string | undefined
     try {
@@ -574,14 +576,21 @@ export const register: Register = (on, options) => {
   })
 
   // A command that holds a lesson's trigger is stopped once in a chat, with the lesson; the same command again passes.
+  // Whatever goes wrong here lets the command run: the lessons must never be what stops the owner's work.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     if (!isLessonsOn || lessonList.length === 0) return next(e)
-    const stopped = setOf(stoppedIn, await $.session.id())
-    const lesson = gateFor(e.command, lessonList, stopped)
-    if (lesson === undefined) return next(e)
-    stopped.add(lesson.id)
-    await countLessons($, 'stopped', 1)
-    return { deny: T.lessonGate(oneLine(lesson.text)) }
+    let lesson: Lesson | undefined
+    try {
+      const stopped = setOf(stoppedIn, await $.session.id())
+      lesson = gateFor(e.command, lessonList, stopped)
+      if (lesson !== undefined) {
+        stopped.add(lesson.id)
+        await countLessons($, 'stopped', 1)
+      }
+    } catch {
+      lesson = undefined
+    }
+    return lesson === undefined ? next(e) : { deny: T.lessonGate(oneLine(lesson.text)) }
   })
 
   // last and on the session side: every shared section must precede it, and the text never varies, so the prompt cache is not spent
