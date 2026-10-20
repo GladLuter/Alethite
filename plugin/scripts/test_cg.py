@@ -169,6 +169,13 @@ class CgTest(unittest.TestCase):
         rows = self.run_cg('expand', '--conv', hit['conv'], '--pos', str(hit['pos']), '--compress', 'ultra')[1]['rows']
         self.assertIn('Bash: ' + command, [r['text'] for r in rows])
 
+    def test_recall_takes_other_wordings_and_reads_an_error_as_it_is(self):  # stage 4
+        err = {'type': 'tool_result', 'tool_use_id': 't1', 'content': 'HTTP 429: the limit of 120 requests per hour', 'is_error': True}
+        self.write('P/S1.jsonl', [owner_line('запусти ещё раз'), dict(type='user', timestamp=TS, cwd='C:\\a', message={'role': 'user', 'content': [err]})])
+        out = self.run_cg('recall', '--query=повторный запуск', '--also=429 limit', '--all', '--compress', 'ultra')[1]
+        self.assertEqual(out['hits'][0]['kind'], 'error')
+        self.assertIn('HTTP «429»: the «limit» of 120 requests per hour', out['hits'][0]['snippet'])  # an error is not compressed
+
     def test_compress_previews_a_level(self):
         env = {k: v for k, v in os.environ.items() if k not in ('PYTHONIOENCODING', 'PYTHONUTF8')}
         p = subprocess.run([sys.executable, CG, 'compress', '--level', 'ultra'], input='Это очень просто, правда.'.encode('utf-8'), capture_output=True, env=env)

@@ -19,7 +19,7 @@ EN = {
     'handoff_head': 'Handoff from the previous chat (session {id}, {today}). This is a new chat of the same worker.',
     'handoff_memory': 'Short memory: {dir} ({n} facts)',
     'handoff_no_memory': 'Short memory is EMPTY: {dir}',
-    'handoff_recall': 'Long memory: the recall tool; the old conversation is id {id}.',
+    'handoff_recall': 'Long memory: the recall tool; the old conversation is id {id}, the files it changed are found there too.',
     'handoff_resume': 'To open the old conversation (it is not in the sidebar): in a terminal `cd "{cwd}"`, then `claude --resume {id}`.',
     'handoff_stopped': '## Where we stopped',
     'handoff_owner': '**You:** ',
@@ -27,7 +27,6 @@ EN = {
     'handoff_state': '## State of the work',
     'handoff_commits': 'Latest commits:',
     'handoff_git_timeout': 'git did not answer in {s} s',
-    'handoff_files': '### Files changed (chat and subagents)',
     'bad_session': 'not a session id: {id}',
 
     # stats.py: the measurement note written into the vault
@@ -86,7 +85,7 @@ RU = {
     'handoff_head': 'Передача дел от предыдущего чата (сессия {id}, {today}). Это новый чат того же работника.',
     'handoff_memory': 'Короткая память: {dir} (фактов: {n})',
     'handoff_no_memory': 'Короткая память ПУСТА: {dir}',
-    'handoff_recall': 'Долгая память: инструмент recall; старый разговор — id {id}.',
+    'handoff_recall': 'Долгая память: инструмент recall; старый разговор — id {id}, файлы, которые он менял, тоже находятся там.',
     'handoff_resume': 'Открыть старый разговор (в боковой панели его нет): в терминале `cd "{cwd}"`, затем `claude --resume {id}`.',
     'handoff_stopped': '## Где остановились',
     'handoff_owner': '**Ты:** ',
@@ -94,7 +93,6 @@ RU = {
     'handoff_state': '## Состояние работы',
     'handoff_commits': 'Последние коммиты:',
     'handoff_git_timeout': 'git не ответил за {s} с',
-    'handoff_files': '### Файлы, которые меняли (чат и субагенты)',
     'bad_session': 'это не id сессии: {id}',
 
     'stats_weekly_base': '70% за 4,5 дня (2026-10-13)',
@@ -151,7 +149,7 @@ UK = {
     'handoff_head': 'Передача справ від попереднього чату (сесія {id}, {today}). Це новий чат того самого працівника.',
     'handoff_memory': "Коротка пам'ять: {dir} (фактів: {n})",
     'handoff_no_memory': "Коротка пам'ять ПОРОЖНЯ: {dir}",
-    'handoff_recall': "Довга пам'ять: інструмент recall; стара розмова — id {id}.",
+    'handoff_recall': "Довга пам'ять: інструмент recall; стара розмова — id {id}, файли, які вона змінювала, теж знаходяться там.",
     'handoff_resume': 'Відкрити стару розмову (на бічній панелі її немає): у терміналі `cd "{cwd}"`, потім `claude --resume {id}`.',
     'handoff_stopped': '## Де зупинилися',
     'handoff_owner': '**Ти:** ',
@@ -159,7 +157,6 @@ UK = {
     'handoff_state': '## Стан роботи',
     'handoff_commits': 'Останні коміти:',
     'handoff_git_timeout': 'git не відповів за {s} с',
-    'handoff_files': '### Файли, які змінювали (чат і субагенти)',
     'bad_session': 'це не id сесії: {id}',
 
     'stats_weekly_base': '70% за 4,5 дня (2026-10-13)',

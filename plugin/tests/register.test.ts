@@ -288,6 +288,9 @@ const ofCg = <R extends { argv: string[] }>(m: { runs: R[] }, cmd: string) => m.
 test('memory tools: both in the prompt, not behind ToolSearch', async ($, on) => {
   const m = await started($, on, () => ran('{}'))
   expect(m.specs.map(s => [s.name, s.isDeferred, s.description])).toEqual([['recall', false, T.recallDescription], ['recall_more', false, T.recallMoreDescription]])
+  // stage 4: how to search for an error is told by the parameters, the description stays short
+  expect(m.specs[0].inputSchema.properties.query.description).toBe(T.recallQuery)
+  expect(m.specs[0].inputSchema.properties.also).toEqual({ type: 'array', items: { type: 'string' }, maxItems: 3, description: T.recallAlso })
 })
 
 test('recall: project by default, scope=all and the limit when asked; the model reads the hits', async ($, on) => {
@@ -752,11 +755,13 @@ test('a language the mod does not know is English', { options: { language: 'xx' 
 // ---- the mod's own settings file ----
 const SETTINGS = 'C:\\h\\.claude\\cacheguard\\settings.json'
 const home = { USERPROFILE: 'C:\\h' }
-// the file system holds `file` at SETTINGS (undefined: no file there); what the mod writes is collected
+// the file system holds `file` at SETTINGS (undefined: no file there); what the mod writes is collected. A Windows path reaches the
+// hooks resolved against the folder of the run on Linux, so the path is known by its end
+const isSettings = (path: string) => path.endsWith(SETTINGS)
 const settingsRig = (on: any, file: string | undefined) => {
   const written: [string, string][] = []
-  on('fs.exists', (_: unknown, e: { path: string }) => ({ value: e.path === SETTINGS && file !== undefined }))
-  on('fs.read', (_: unknown, e: { path: string }) => (e.path === SETTINGS && file !== undefined ? { value: file } : { deny: 'ENOENT' }))
+  on('fs.exists', (_: unknown, e: { path: string }) => ({ value: isSettings(e.path) && file !== undefined }))
+  on('fs.read', (_: unknown, e: { path: string }) => (isSettings(e.path) && file !== undefined ? { value: file } : { deny: 'ENOENT' }))
   on('fs.write', (_: unknown, e: { path: string; text: string }) => (written.push([e.path, e.text]), { value: undefined }))
   return written
 }
@@ -774,7 +779,7 @@ test('settings file: its values win over /config, a key that is no setting is na
 test('settings file: missing, it is written with the values of /config and nothing is said', { options: { language: 'uk' } }, async ($, on) => {
   const written = settingsRig(on, undefined)
   const m = await started($, on, () => ran('{}'), [], undefined, home)
-  expect(written.map(([path]) => path)).toEqual([SETTINGS])
+  expect(written.map(([path]) => isSettings(path))).toEqual([true])
   expect(JSON.parse(written[0]![1])).toMatchObject({ language: 'uk', syncDir: '', compression: 'ultra', python: 'python' })
   expect(m.toasts).toEqual([])
 })

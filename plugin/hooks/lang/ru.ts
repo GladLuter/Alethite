@@ -65,9 +65,12 @@ export const ru: Partial<Texts> = {
   catchUpFailed: (where: string) => `фоновое обновление памяти (${where}) не удалось, подробности — /cg-health`,
 
   // long memory: what the model reads (tool descriptions, results) and what the owner sees about the index
-  recallDescription: 'Поиск по прошлым разговорам владельца: что обсуждали, решали, где что лежит. query — слова искомого, не вопрос. По умолчанию ищет в этом проекте, scope=all — везде. Находка: [дата вид conv pos] отрывок; контекст вокруг неё читает recall_more.',
+  recallDescription: 'Поиск по прошлым разговорам владельца: что обсуждали и решали, что ломалось и почему, где что лежит. По умолчанию — в этом проекте, scope=all — везде. Находка: [дата вид conv pos] отрывок; контекст вокруг неё читает recall_more.',
+  recallQuery: 'Слова, как их писали, не вопрос. Для прошлой ошибки — её точный текст, код или число (429, ENOENT, «database is locked»).',
+  recallAlso: 'До 3 других формулировок, ищутся в том же вызове: для ошибки — действие и причина рядом с её текстом.',
   recallMoreDescription: 'Читает записи вокруг находки recall: по conv и pos из её строки возвращает соседние сообщения того разговора по порядку.',
-  noHits: (query: string, scope: string) => `По «${query}» ничего не найдено${scope === 'all' ? '' : ' в этом проекте'}. Попробуй ${scope === 'all' ? '' : 'scope=all или '}другие слова.`,
+  noHits: (query: string, scope: string) =>
+    `По «${query}» ничего не найдено${scope === 'all' ? '' : ' в этом проекте'}. Попробуй ${scope === 'all' ? '' : 'scope=all или '}другие слова; для ошибки — её текст или код в also.`,
   noQuery: 'query не передан: нужны слова, которые встретились бы в разговоре.',
   noRows: 'Записей нет: проверь conv и pos в строке находки recall.',
   recallFailed: (msg: string) => `Поиск по памяти не удался: ${msg}`,

@@ -306,7 +306,12 @@ export const register: Register = (on, options) => {
           description: T.recallDescription,
           inputSchema: {
             type: 'object',
-            properties: { query: { type: 'string' }, scope: { type: 'string', enum: ['project', 'all'] }, limit: { type: 'integer', minimum: 1, maximum: 20 } },
+            properties: {
+              query: { type: 'string', description: T.recallQuery },
+              also: { type: 'array', items: { type: 'string' }, maxItems: 3, description: T.recallAlso },
+              scope: { type: 'string', enum: ['project', 'all'] },
+              limit: { type: 'integer', minimum: 1, maximum: 20 },
+            },
             required: ['query'],
           },
           isDeferred: false,
@@ -416,7 +421,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: 'mcp__cacheguard__recall' }, ($, e) =>
     served($, 'recall', async () => {
-      const input = e as unknown as { query: string; scope?: string; limit?: number }
+      const input = e as unknown as { query: string; also?: unknown; scope?: string; limit?: number }
       if (typeof input.query !== 'string' || !input.query.trim()) throw new Error(T.noQuery) // the schema asks for it, but nothing makes the model obey
       // the root, not cwd(): a shell `cd` into a subfolder moves cwd but not the project the conversations are filed under
       const r = await runCg($, python, recallArgs(input, await $.session.root(), embedModel, compression))

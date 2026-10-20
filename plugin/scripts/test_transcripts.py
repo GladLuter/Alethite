@@ -139,6 +139,21 @@ class TranscriptsTest(unittest.TestCase):
                                          tool('mcp__other__recall', query='проба')])])
         self.assertEqual([(r['kind'], r['text']) for r in read_records(path)[0]], [('claude', 'ответ'), ('tool', 'mcp__other__recall: проба')])
 
+    def test_a_failed_tool_call_is_an_error_record_a_good_one_none(self):  # stage 4: a past error is found by its trace
+        err = lambda content: u([{'type': 'tool_result', 'tool_use_id': 't1', 'content': content, 'is_error': True}])
+        path = self.write('s.jsonl', [
+            a([tool('Bash', command='gh api /repos')]),
+            err('HTTP 429:   API rate limit exceeded\n(limit 120 requests per hour)'),
+            err([{'type': 'text', 'text': 'Exit code 1'}, {'type': 'image'}, {'type': 'text', 'text': 'ENOENT: ' + 'x' * 900}]),
+            err('<system-reminder>шум</system-reminder>'),
+            u([{'type': 'tool_result', 'tool_use_id': 't2', 'content': 'всё хорошо'}]),
+            u([{'type': 'tool_result', 'tool_use_id': 't3', 'content': 'не ошибка', 'is_error': False}])])
+        errors = [r['text'] for r in read_records(path)[0] if r['kind'] == 'error']
+        self.assertEqual(errors[0], 'HTTP 429: API rate limit exceeded (limit 120 requests per hour)')
+        self.assertTrue(errors[1].startswith('Exit code 1 ENOENT: x'))
+        self.assertEqual(len(errors[1]), 500)
+        self.assertEqual(len(errors), 2)  # a reminder alone, a good result and is_error false give none
+
     def test_subagent_kinds(self):
         path = self.write('S/subagents/agent-a1.jsonl', [
             u('сделай Y'), a([text('шаг')]), u([{'type': 'tool_result', 'tool_use_id': 't1', 'content': 'ок'}]), a([text('отчёт')], mid='m2')])

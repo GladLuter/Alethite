@@ -8,6 +8,11 @@ test('args: all', () => expect(recallArgs({ query: 'q', scope: 'all', limit: 3 }
 test('args: a limit outside the schema is brought into 1..20', () =>
   expect([0, -1, 99, 2.7, Number.NaN].map(limit => recallArgs({ query: 'q', limit }, 'C:\\w', 'm', 'off')[5])).toEqual(['8', '1', '20', '2', '8']))
 test('args: query that looks like a flag', () => expect(recallArgs({ query: '--no-verify' }, 'C:\\w', 'm', 'off')[1]).toBe('--query=--no-verify'))
+test('args: other wordings, each one item; no strings, blanks, repeats and the query itself left out, three at most', () => {
+  const args = recallArgs({ query: 'повторный запуск', also: ['429 limit', '', 7, '429 limit', 'повторный запуск', '-x', 'b', 'c'] }, 'C:\\w', 'm', 'off')
+  expect(args.slice(0, 5)).toEqual(['recall', '--query=повторный запуск', '--also=429 limit', '--also=-x', '--also=b'])
+  expect(recallArgs({ query: 'q', also: 'not a list' }, 'C:\\w', 'm', 'off')[2]).toBe('--cwd')
+})
 test('hits format', () =>
   expect(formatHits([{ conv: 'S', parent: '', ts: '2026-10-10T08:00:00Z', kind: 'owner', pos: 42, snippet: '«кэш» истёк' }], 'кэш', 'project')).toBe(
     '[2026-10-10 owner conv=S pos=42] «кэш» истёк',

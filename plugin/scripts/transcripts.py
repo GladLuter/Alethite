@@ -82,15 +82,28 @@ def _tool(b):
     return 'tool', name + ': ' + ' '.join(arg.split())[:300] if arg else name, edit
 
 
+ERROR_CHARS = 500
+
+
+def _error(b):
+    """A failed tool call's result, the head of it: the trace a past error is found by again (429, ENOENT, 'database is locked')."""
+    c = b.get('content')
+    text = c if isinstance(c, str) else '\n'.join(x['text'] for x in _blocks(c) if x.get('type') == 'text' and isinstance(x.get('text'), str))
+    text = ' '.join(_REMINDER.sub('', text).split())[:ERROR_CHARS]
+    return [('error', text, None)] if text else []
+
+
 def _items(o, sub):
     """(kind, text, edit) for each indexable piece of one transcript line."""
     t, m = o.get('type'), o.get('message')
     m = m if isinstance(m, dict) else {}
     out = []
     if t == 'user' and not (o.get('isMeta') or o.get('isCompactSummary')):
-        for b in _blocks(m.get('content')):  # tool_result and image blocks are not indexed
+        for b in _blocks(m.get('content')):  # a successful tool_result and image blocks are not indexed
             if b.get('type') == 'text':
                 out += _typed(b.get('text'), 'task' if sub else 'owner')
+            elif b.get('type') == 'tool_result' and b.get('is_error') is True:
+                out += _error(b)
     elif t == 'attachment' and isinstance(o.get('attachment'), dict):
         a = o['attachment']  # a message typed while Claude was busy
         if a.get('type') == 'queued_command' and not a.get('isMeta') and a.get('commandMode') != 'task-notification':

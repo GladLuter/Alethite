@@ -67,9 +67,12 @@ export const uk: Partial<Texts> = {
 
   // long memory: what the model reads (tool descriptions, results) and what the owner sees about the index
   recallDescription:
-    'Пошук у минулих розмовах власника: що обговорювали, вирішували, де що лежить. query — слова шуканого, не питання. Типово шукає в цьому проєкті, scope=all — скрізь. Знахідка: [дата вид conv pos] уривок; контекст навколо неї читає recall_more.',
+    'Пошук у минулих розмовах власника: що обговорювали й вирішували, що ламалося й чому, де що лежить. Типово — в цьому проєкті, scope=all — скрізь. Знахідка: [дата вид conv pos] уривок; контекст навколо неї читає recall_more.',
+  recallQuery: 'Слова, як їх писали, не питання. Для минулої помилки — її точний текст, код або число (429, ENOENT, «database is locked»).',
+  recallAlso: 'До 3 інших формулювань, шукаються в тому самому виклику: для помилки — дія й причина поруч з її текстом.',
   recallMoreDescription: 'Читає записи навколо знахідки recall: за conv і pos з її рядка повертає сусідні повідомлення тієї розмови по черзі.',
-  noHits: (query: string, scope: string) => `За «${query}» нічого не знайдено${scope === 'all' ? '' : ' в цьому проєкті'}. Спробуйте ${scope === 'all' ? '' : 'scope=all або '}інші слова.`,
+  noHits: (query: string, scope: string) =>
+    `За «${query}» нічого не знайдено${scope === 'all' ? '' : ' в цьому проєкті'}. Спробуйте ${scope === 'all' ? '' : 'scope=all або '}інші слова; для помилки — її текст або код в also.`,
   noQuery: 'query не передано: потрібні слова, які трапилися б у розмові.',
   noRows: 'Записів немає: перевірте conv і pos у рядку знахідки recall.',
   recallFailed: (msg: string) => `Пошук у пам'яті не вдався: ${msg}`,

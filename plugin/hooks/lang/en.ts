@@ -66,9 +66,12 @@ export const en = {
 
   // long memory: what the model reads (tool descriptions, results) and what the owner sees about the index
   recallDescription:
-    "Searches the owner's past conversations: what was discussed and decided, where things are. query: words of what you look for, not a question. This project by default, scope=all everywhere. A hit: [date kind conv pos] excerpt; recall_more reads around it.",
+    "Searches the owner's past conversations: what was discussed and decided, what failed and why, where things are. This project by default, scope=all everywhere. A hit: [date kind conv pos] excerpt; recall_more reads around it.",
+  recallQuery: "Words as they were written, not a question. For a past error: its exact text, code or number (429, ENOENT, 'database is locked').",
+  recallAlso: 'Up to 3 other wordings searched in the same call: for an error, the action and the cause beside its text.',
   recallMoreDescription: 'Reads the records around a recall hit: given conv and pos from its line, returns the neighbouring messages of that conversation in order.',
-  noHits: (query: string, scope: string) => `Nothing found for "${query}"${scope === 'all' ? '' : ' in this project'}. Try ${scope === 'all' ? '' : 'scope=all or '}other words.`,
+  noHits: (query: string, scope: string) =>
+    `Nothing found for "${query}"${scope === 'all' ? '' : ' in this project'}. Try ${scope === 'all' ? '' : 'scope=all or '}other words; for an error, its text or code in also.`,
   noQuery: 'no query given: it takes words that would occur in the conversation.',
   noRows: 'No records: check conv and pos in the line of the recall hit.',
   recallFailed: (msg: string) => `The memory search failed: ${msg}`,

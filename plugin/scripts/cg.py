@@ -58,13 +58,17 @@ def _recall(a):
         upd = memdb.update(conn, a.projects)  # seconds when nothing is new
     except Exception as e:  # e.g. the index stays locked by another run: what it already holds is still searched
         upd = {'errors': [memdb._error(a.projects, e)]}
-    hits, vector = vectors.hybrid_search(conn, a.query, None if a.all else project_key(a.cwd), a.limit, model=a.model)
+    hits, vector = vectors.hybrid_search(conn, a.query, None if a.all else project_key(a.cwd), a.limit, model=a.model, also=a.also)
     return {'hits': _squeeze(hits, 'snippet', a.compress), 'errors': upd['errors'], 'vector': vector}
 
 
+EXACT = ('tool', 'error')  # a command and an error message are read as they are: one squeezed word changes what they say
+
+
 def _squeeze(items, field, level):
-    """`items` with `field` compressed at `level` (stage 3): what the model reads of the memory. A tool call is a command: as it is."""
-    return [i if i.get('kind') == 'tool' else dict(i, **{field: compress(i[field], level)}) for i in items]
+    """`items` with `field` compressed at `level` (stage 3): what the model reads of the memory. A tool call is a command, an error is the
+    trace it is found by: as they are."""
+    return [i if i.get('kind') in EXACT else dict(i, **{field: compress(i[field], level)}) for i in items]
 
 
 def _expand(a):
@@ -167,6 +171,7 @@ def _parser():
     s.add_argument('--machine')  # the name of this computer's folder in the sync folder; COMPUTERNAME by default
     s = add('recall', _recall)
     s.add_argument('--query', required=True)
+    s.add_argument('--also', action='append', default=[])  # other wordings of the same search (stage 4), one item each
     s.add_argument('--limit', type=int, default=8)
     s.add_argument('--model', default=vectors.MODEL)
     s.add_argument('--compress', choices=LEVELS, default='off')  # what the model reads of the memory (stage 3); the mod passes its setting
