@@ -97,13 +97,6 @@
 | документ | English | Русский | Українська |
 |---|---|---|---|
 | Встановлення | [INSTALL.md](INSTALL.md) | [INSTALL.ru.md](INSTALL.ru.md) | [INSTALL.uk.md](INSTALL.uk.md) |
-| Дизайн етапу 1 | [design](docs/specs/2026-10-13-worker-memory-design.md) | [дизайн](docs/specs/2026-10-13-worker-memory-design.ru.md) | [дизайн](docs/specs/2026-10-13-worker-memory-design.uk.md) |
-| План етапу 1 | [plan](docs/plans/2026-10-13-stage1-plan.md) | [план](docs/plans/2026-10-13-stage1-plan.ru.md) | [план](docs/plans/2026-10-13-stage1-plan.uk.md) |
-| Специфікація етапу 2 | [spec](docs/specs/2026-10-19-stage2-shared-memory-design.md) | [спека](docs/specs/2026-10-19-stage2-shared-memory-design.ru.md) | [специфікація](docs/specs/2026-10-19-stage2-shared-memory-design.uk.md) |
-| Специфікація етапу 3 | [spec](docs/specs/2026-10-19-stage3-memory-archiver-design.md) | [спека](docs/specs/2026-10-19-stage3-memory-archiver-design.ru.md) | [специфікація](docs/specs/2026-10-19-stage3-memory-archiver-design.uk.md) |
-| Специфікація етапу 4 | [spec](docs/specs/2026-10-20-stage4-errors-lessons-job-design.md) | [спека](docs/specs/2026-10-20-stage4-errors-lessons-job-design.ru.md) | [специфікація](docs/specs/2026-10-20-stage4-errors-lessons-job-design.uk.md) |
-
-Проєктні документи написано російською. Англійська й українська версії — переклади; у разі розбіжностей правий російський оригінал.
 
 ## Приватність
 
