@@ -12,6 +12,7 @@ import time
 import unittest
 from unittest import mock
 import cg
+import lessons
 import memdb
 import vectors
 from test_texts import use_lang
@@ -175,6 +176,14 @@ class CgTest(unittest.TestCase):
         out = self.run_cg('recall', '--query=повторный запуск', '--also=429 limit', '--all', '--compress', 'ultra')[1]
         self.assertEqual(out['hits'][0]['kind'], 'error')
         self.assertIn('HTTP «429»: the «limit» of 120 requests per hour', out['hits'][0]['snippet'])  # an error is not compressed
+
+    def test_a_lesson_is_read_as_it_is(self):  # stage 4: its wording is the lesson
+        conn = memdb.connect(self.db)
+        lessons.save(conn, project_key('C:\\a'), {'action': 'запустил сборку', 'symptom': 'HTTP 429 от GitHub', 'cause': 'это очень частые вызовы API'})
+        conn.close()
+        hit = self.run_cg('recall', '--query', '429', '--all', '--compress', 'ultra')[1]['hits'][0]
+        self.assertEqual(hit['kind'], 'lesson')
+        self.assertIn('это очень частые вызовы API', hit['snippet'])
 
     def test_compress_previews_a_level(self):
         env = {k: v for k, v in os.environ.items() if k not in ('PYTHONIOENCODING', 'PYTHONUTF8')}

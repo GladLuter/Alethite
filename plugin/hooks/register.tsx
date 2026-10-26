@@ -11,7 +11,7 @@ import { healthLines, message, parseCg } from './py'
 import type { LastError } from './py'
 import { jobArgs, jobHealth } from './job'
 import type { JobRun } from './job'
-import { forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, lessonsMatchArgs, oneLine } from './lessons'
+import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, lessonsMatchArgs, oneLine, START } from './lessons'
 import type { Found, Lesson } from './lessons'
 import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
@@ -60,12 +60,12 @@ const indexErrors = async ($: EngineInterface, where: string, errors: IndexError
 }
 
 // A memory tool call: its text for the model, or a refusal the model reads as an error, and the owner sees the failure too.
-const served = async ($: EngineInterface, where: string, work: () => Promise<string>) => {
+const served = async ($: EngineInterface, where: string, work: () => Promise<string>, failed: (msg: string) => string = T.recallFailed) => {
   try {
     return { result: await work() }
   } catch (err) {
     await fail($, where, err)
-    return { deny: T.recallFailed(message(err)) }
+    return { deny: failed(message(err)) }
   }
 }
 
@@ -280,7 +280,7 @@ export const register: Register = (on, options) => {
     embedModel = o.embedModel as string
     compression = compressionLevel(o.compression) // what the model reads of the memory: off, lite, full, ultra (stage 3)
     isLessonsOn = o.lessons !== false
-    lessonsMinScore = typeof o.lessonsMinScore === 'number' ? o.lessonsMinScore : 0.6
+    lessonsMinScore = typeof o.lessonsMinScore === 'number' ? o.lessonsMinScore : 0.45
   }
   apply(options)
   let settingsFile: string | undefined
@@ -314,6 +314,8 @@ export const register: Register = (on, options) => {
 
     // timers outlive /clear (no session.start after it), so one tick also keeps a new session's figures fresh
     $.clock.every(30_000, () => void guarded($, 'timer', () => refresh($, python)))
+    // a chat open for hours learns of a lesson saved in another chat or brought by the job's sync
+    $.clock.every(600_000, () => void lessonsOr($, python, lessonList).then(l => void (lessonList = l)))
     // session.end has 1.5 s, too little to index: a closed chat is picked up here, or by the next recall. Never awaited, so session.start is not held.
     $.clock.after(
       3_000,
@@ -515,7 +517,7 @@ export const register: Register = (on, options) => {
       if (!r.new) return T.lessonKnown
       toast($, T.lessonToast(String(input.action)))
       return T.lessonSaved(String(r.text))
-    }),
+    }, T.lessonSaveFailed),
   )
 
   on('command.run', { command: 'cg-job' }, async ($, e) => {
@@ -552,16 +554,19 @@ export const register: Register = (on, options) => {
   // stays whole. Only the owner's own words; nothing when the project has no lessons (no Python then), when none is close enough, or
   // when the chat was shown it already. A failure costs the owner nothing but a line in /cg-health.
   on('prompt.submit', async ($, e, next) => {
-    // an engine older than the origin (2.1.29x) stamps none: there a prompt is the owner's
+    // an engine older than the origin (2.1.29x) stamps none: there a prompt is the owner's; in the desktop Code tab (an SDK host) it is `sdk`, or `unclassified` from a channel the engine cannot attest
     const kind = (e.origin as { kind?: string } | undefined)?.kind
-    const isOwners = kind === undefined || kind === 'composer' || kind === 'bridge'
+    const isOwners = kind === undefined || kind === 'composer' || kind === 'bridge' || kind === 'sdk' || kind === 'unclassified'
     if (!isLessonsOn || lessonList.length === 0 || e.command !== undefined || e.isMeta || !isOwners || e.text.trim().length < 12) return next(e)
     let block: string | undefined
     try {
       const [root, id] = await Promise.all([$.session.root(), $.session.id()])
       const shown = setOf(shownIn, id)
-      const r = await runCg($, python, lessonsMatchArgs(e.text, root, embedModel, lessonsMinScore), 8_000)
-      const fresh = (r.lessons as Found[]).filter(l => !shown.has(l.id))
+      // every lesson shown already: no Python; else ask for the shown ones too, so they do not take the places of the fresh ones
+      const found = lessonList.every(l => shown.has(l.id))
+        ? []
+        : ((await runCg($, python, lessonsMatchArgs(e.text, root, embedModel, lessonsMinScore, 2 + shown.size), 8_000)).lessons as Found[])
+      const fresh = found.filter(l => !shown.has(l.id)).slice(0, 2)
       if (fresh.length) {
         block = lessonContext(fresh)
         for (const l of fresh) shown.add(l.id)
@@ -575,9 +580,9 @@ export const register: Register = (on, options) => {
     return next(block === undefined ? e : { ...e, context: [...(e.context ?? []), block] })
   })
 
-  // A command that holds a lesson's trigger is stopped once in a chat, with the lesson; the same command again passes.
+  // A Bash or PowerShell command that holds a lesson's trigger is stopped once in a chat, with the lesson; the same command again passes.
   // Whatever goes wrong here lets the command run: the lessons must never be what stops the owner's work.
-  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+  on('tool.call', { tool: ['Bash', 'PowerShell'] }, async ($, e, next) => {
     if (!isLessonsOn || lessonList.length === 0) return next(e)
     let lesson: Lesson | undefined
     try {
@@ -590,7 +595,8 @@ export const register: Register = (on, options) => {
     } catch {
       lesson = undefined
     }
-    return lesson === undefined ? next(e) : { deny: T.lessonGate(oneLine(lesson.text)) }
+    // between the marks: a denial the engine records as an error result must not enter the index as the lesson's text a second time (transcripts.py)
+    return lesson === undefined ? next(e) : { deny: [START, T.lessonGate(oneLine(lesson.text)), END].join('\n') }
   })
 
   // last and on the session side: every shared section must precede it, and the text never varies, so the prompt cache is not spent

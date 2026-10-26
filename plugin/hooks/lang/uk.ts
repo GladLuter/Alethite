@@ -164,6 +164,7 @@ export const uk: Partial<Texts> = {
   lessonTrigger: 'Необов\'язково: дослівний шматок команди не коротший за 8 символів (наприклад «gh api /repos»), який зупинить її й нагадає урок перед новим запуском.',
   lessonSaved: (text: string) => `Урок збережено:\n${text}`,
   lessonKnown: 'Цей урок уже збережено.',
+  lessonSaveFailed: (msg: string) => `Урок не збережено: ${msg}`,
   lessonToast: (action: string) => `урок збережено: ${action}`,
   lessonsIntro: 'CacheGuard: уроки цього проєкту, які можуть стосуватися цього повідомлення. Перевір їх, перш ніж діяти; що не стосується справи — пропусти.',
   lessonGate: (lesson: string) =>

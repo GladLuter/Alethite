@@ -163,6 +163,7 @@ export const en = {
   lessonTrigger: "Optional: a literal piece of a command, 8 characters or more (e.g. 'gh api /repos'), that stops and reminds before it runs again.",
   lessonSaved: (text: string) => `Lesson saved:\n${text}`,
   lessonKnown: 'This lesson is saved already.',
+  lessonSaveFailed: (msg: string) => `The lesson was not saved: ${msg}`,
   lessonToast: (action: string) => `lesson saved: ${action}`,
   lessonsIntro: 'CacheGuard: lessons of this project that may concern this message. Check them before acting; ignore what is unrelated.',
   lessonGate: (lesson: string) =>

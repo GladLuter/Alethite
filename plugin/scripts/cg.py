@@ -65,12 +65,12 @@ def _recall(a):
     return {'hits': _squeeze(hits, 'snippet', a.compress), 'errors': upd['errors'], 'vector': vector}
 
 
-EXACT = ('tool', 'error')  # a command and an error message are read as they are: one squeezed word changes what they say
+EXACT = ('tool', 'error', 'lesson')  # a command, an error message and a lesson are read as they are: one squeezed word changes what they say
 
 
 def _squeeze(items, field, level):
     """`items` with `field` compressed at `level` (stage 3): what the model reads of the memory. A tool call is a command, an error is the
-    trace it is found by: as they are."""
+    trace it is found by, a lesson its own words: as they are."""
     return [i if i.get('kind') in EXACT else dict(i, **{field: compress(i[field], level)}) for i in items]
 
 
@@ -125,7 +125,7 @@ def _settings(path):
             s = json.load(f)
     except FileNotFoundError:
         return {}, None
-    except ValueError as e:
+    except (ValueError, OSError) as e:  # a broken file, or one that an editor holds or the owner may not read
         return {}, '%s: %s' % (path, e)
     return (s, None) if isinstance(s, dict) else ({}, path)
 
@@ -143,7 +143,7 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=job.on_battery, digest=sy
             raise
         return {'busy': True}
     s, broken = _settings(a.settings or os.path.join(os.path.dirname(a.db), 'settings.json'))
-    if s.get('language') in texts.TABLES:
+    if isinstance(s.get('language'), str) and s['language'] in texts.TABLES:
         texts.lang = s['language']
     model = s.get('embedModel') if isinstance(s.get('embedModel'), str) and s['embedModel'].strip() else vectors.MODEL
     sync_dir = s.get('syncDir').strip().strip('"') if isinstance(s.get('syncDir'), str) else ''
@@ -325,7 +325,7 @@ def _parser():
     s.add_argument('--cwd', default=os.getcwd())
     s.add_argument('--text', required=True)
     s.add_argument('--model', default=vectors.MODEL)
-    s.add_argument('--min-score', type=float, default=0.6)
+    s.add_argument('--min-score', type=float, default=0.45)
     s.add_argument('--limit', type=int, default=2)
     s.add_argument('--timeout', type=float, default=5)  # the owner waits for this one: a cold Ollama is skipped, not waited for
     s = add('maintain', _maintain)

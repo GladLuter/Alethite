@@ -72,7 +72,7 @@ The file `%USERPROFILE%\.claude\cacheguard\settings.json` is one per computer an
 | `python` | Python command | `"python"` |
 | `embedModel` | Ollama embedding model | `"embeddinggemma"` |
 | `lessons` | bring lessons back to messages and commands | `true` |
-| `lessonsMinScore` | how close a message must be (0–1) | `0.6` |
+| `lessonsMinScore` | how close a message must be (0–1) | `0.45` |
 
 The file may hold only the keys you change. For example:
 

@@ -1,3 +1,4 @@
+import gc
 import json
 import os
 import sqlite3
@@ -77,7 +78,16 @@ class TaskTest(unittest.TestCase):
             job.remove(run=ran(), supported=lambda: False)
         self.assertIsNone(job.installed(run=ran(), supported=lambda: False))
         self.assertEqual(job.installed(run=ran(1), supported=lambda: True), 0)
-        self.assertEqual(job.installed(run=ran(0, '<Task><Interval>PT45M</Interval></Task>'.encode('utf-8')), supported=lambda: True), 45)
+        for interval, minutes in (('PT45M', 45), ('PT1H', 60), ('PT1H30M', 90), ('P1D', 1440)):  # Windows may write the interval in hours or days
+            self.assertEqual(job.installed(run=ran(0, ('<Task><Interval>%s</Interval></Task>' % interval).encode('utf-8')), supported=lambda: True), minutes)
+
+    def test_a_refused_delete_is_not_off_while_the_task_stays(self):
+        def run(args, **kw):  # the delete is refused, the query still finds the task
+            return SimpleNamespace(returncode=0 if '/Query' in args else 1, stdout=b'<Interval>PT30M</Interval>' if '/Query' in args else b'',
+                                   stderr=b'' if '/Query' in args else b'ERROR: Access is denied.\r\n')
+
+        with self.assertRaisesRegex(RuntimeError, 'Access is denied'):
+            job.remove(run=run, supported=lambda: True)
 
 
 class MaintainTest(unittest.TestCase):
@@ -85,6 +95,7 @@ class MaintainTest(unittest.TestCase):
         use_lang(self, 'ru')
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
+        self.addCleanup(gc.collect)  # cg never closes its connection; a collected one releases the file that the temp folder cleanup deletes
         self.dir = d.name
         self.db = os.path.join(d.name, 'cacheguard', 'index.db')
         self.projects = os.path.join(d.name, 'projects')
@@ -137,6 +148,14 @@ class MaintainTest(unittest.TestCase):
         self.assertIsNone(out['sync'])
         self.assertEqual(out['errors'][0]['where'], 'settings')
         self.assertEqual(out['embed']['done'], 2)  # the defaults hold
+
+    def test_a_language_that_is_no_text_and_a_file_that_cannot_be_read_are_survived(self):  # either killed the whole pass, silently under pythonw
+        self.write_settings({'language': ['ru'], 'syncDir': '"%s"' % self.share})
+        out = self.run_job()
+        self.assertEqual((out['errors'], out['embed']['done']), ([], 2))  # the defaults hold
+        os.remove(self.settings)
+        os.mkdir(self.settings)  # a folder cannot be opened: the OSError of every system
+        self.assertEqual(self.run_job()['errors'][0]['where'], 'settings')
 
     def test_a_failed_step_does_not_stop_the_next(self):
         def down(texts, model, timeout=None):

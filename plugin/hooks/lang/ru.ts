@@ -161,6 +161,7 @@ export const ru: Partial<Texts> = {
   lessonTrigger: 'Необязательно: дословный кусок команды не короче 8 символов (например «gh api /repos»), который остановит её и напомнит урок перед новым запуском.',
   lessonSaved: (text: string) => `Урок сохранён:\n${text}`,
   lessonKnown: 'Этот урок уже сохранён.',
+  lessonSaveFailed: (msg: string) => `Урок не сохранён: ${msg}`,
   lessonToast: (action: string) => `урок сохранён: ${action}`,
   lessonsIntro: 'CacheGuard: уроки этого проекта, которые могут касаться этого сообщения. Проверь их, прежде чем действовать; что не относится к делу — пропусти.',
   lessonGate: (lesson: string) =>

@@ -83,7 +83,7 @@ def save(conn, project, fields, now=None):
 
 def listing(conn, project):
     """The lessons of `project` (None: all), newest first: {'id', 'conv', 'pos', 'ts', 'text', 'trigger', 'from'}."""
-    rows = conn.execute(_SELECT + ' ORDER BY ts DESC', {'p': project}).fetchall()
+    rows = conn.execute(_SELECT + ' ORDER BY pos DESC', {'p': project}).fetchall()  # not ts: two lessons of one millisecond tie
     return [{'id': rid, 'conv': conv, 'pos': pos, 'ts': ts, 'text': text, 'trigger': fields_of(text).get('trigger'), 'from': origin}
             for rid, conv, pos, ts, text, origin in rows]
 

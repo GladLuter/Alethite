@@ -1,13 +1,11 @@
 """The background job of stage 4: a scheduled task of this computer that keeps the long memory up to date with no chat open, every N
 minutes: the index, the vectors (on mains power only), the sync with the other computers. It runs `cg.py maintain`, which reads the mod's
 own settings file. Windows first (the Task Scheduler); the other systems later, as Claude_DelayedMessage does them (cron, systemd, launchd)."""
-import ctypes
 import datetime
 import os
 import re
 import subprocess
 import sys
-from xml.sax.saxutils import escape
 
 from texts import t
 
@@ -34,6 +32,7 @@ def task_xml(command, arguments, minutes, start, user=None):
     """The task: every `minutes` from `start`, only while the owner is logged on (no password kept), hidden, one at a time, stopped after
     30 minutes, at the priority below normal. A run missed while the computer slept starts when it wakes. It starts on batteries too:
     `maintain` itself leaves the vectors for the mains, and a sync costs little."""
+    from xml.sax.saxutils import escape  # here, not on top: cg.py imports job on every run and this import alone costs 0.2 s
     user_id = '\n      <UserId>%s</UserId>' % escape(user) if user else ''
     return '''<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -103,7 +102,9 @@ def install(folder, minutes=MINUTES, python=sys.executable, run=subprocess.run, 
 def remove(run=subprocess.run, supported=is_supported):
     if not supported():
         raise ValueError(t('job_windows_only'))
-    _schtasks(['/Delete', '/TN', TASK, '/F'], run)  # no such task is what was asked for
+    code, out = _schtasks(['/Delete', '/TN', TASK, '/F'], run)
+    if code and installed(run, supported):  # no such task is what was asked for, a refusal (Access is denied) is not
+        raise RuntimeError(t('job_schtasks', e=' '.join(out.split())))
     return {'installed': False}
 
 
@@ -112,14 +113,15 @@ def installed(run=subprocess.run, supported=is_supported):
     if not supported():
         return None
     code, out = _schtasks(['/Query', '/TN', TASK, '/XML'], run)  # the XML, not the list: that one speaks the language of Windows
-    m = re.search(r'<Interval>PT(\d+)M</Interval>', out) if code == 0 else None
-    return int(m.group(1)) if m else 0
+    m = re.search(r'<Interval>P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?</Interval>', out) if code == 0 else None  # Windows may write PT1H or P1D
+    return sum(int(n or 0) * k for n, k in zip(m.groups(), (1440, 60, 1))) if m else 0
 
 
 def on_battery():
     """True when a laptop runs on its battery: the vectors wait for the mains. False where it cannot be told."""
     if os.name != 'nt':
         return False
+    import ctypes  # here, not on top: see task_xml
 
     class _Status(ctypes.Structure):
         _fields_ = [('ac', ctypes.c_ubyte), ('flag', ctypes.c_ubyte), ('percent', ctypes.c_ubyte), ('saver', ctypes.c_ubyte),

@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import subprocess
@@ -57,8 +58,9 @@ class LessonsTest(unittest.TestCase):
         self.assertIn('token=[скрыто]', out['text'])
 
     def test_the_list_is_of_the_project_newest_first_with_triggers(self):
-        lessons.save(self.conn, A, RATE)
-        lessons.save(self.conn, A, dict(RATE, action='второй урок', trigger=None))
+        now = datetime.datetime(2026, 10, 20, 9, 0, tzinfo=datetime.timezone.utc)  # one millisecond for both: the order is by pos, not by ts
+        lessons.save(self.conn, A, RATE, now)
+        lessons.save(self.conn, A, dict(RATE, action='второй урок', trigger=None), now)
         lessons.save(self.conn, B, dict(RATE, action='урок другого проекта'))
         mine = lessons.listing(self.conn, A)
         self.assertEqual([(l['text'].split('\n')[0], l['trigger']) for l in mine],

@@ -144,6 +144,10 @@ class TranscriptsTest(unittest.TestCase):
                                       u('вопрос\n[cg-lessons]\nурок\n[/cg-lessons]\nи ещё')])
         self.assertEqual([r['text'] for r in read_records(path)[0]], ['опять 429', 'вопрос\n\nи ещё'])
 
+    def test_a_mention_of_the_lessons_mark_keeps_every_word(self):  # the mod writes both marks: an unclosed one is the owner's text
+        path = self.write('s.jsonl', [u('Что делает [cg-lessons] в сообщении? Поправь README.')])
+        self.assertEqual(self.owner_texts(path), ['Что делает [cg-lessons] в сообщении? Поправь README.'])
+
     def test_a_failed_tool_call_is_an_error_record_a_good_one_none(self):  # stage 4: a past error is found by its trace
         err = lambda content: u([{'type': 'tool_result', 'tool_use_id': 't1', 'content': content, 'is_error': True}])
         path = self.write('s.jsonl', [
@@ -151,13 +155,22 @@ class TranscriptsTest(unittest.TestCase):
             err('HTTP 429:   API rate limit exceeded\n(limit 120 requests per hour)'),
             err([{'type': 'text', 'text': 'Exit code 1'}, {'type': 'image'}, {'type': 'text', 'text': 'ENOENT: ' + 'x' * 900}]),
             err('<system-reminder>шум</system-reminder>'),
+            err('[cg-lessons]\nAction: a\n[/cg-lessons]'),  # the gate's denial: the lesson, not an error
             u([{'type': 'tool_result', 'tool_use_id': 't2', 'content': 'всё хорошо'}]),
             u([{'type': 'tool_result', 'tool_use_id': 't3', 'content': 'не ошибка', 'is_error': False}])])
         errors = [r['text'] for r in read_records(path)[0] if r['kind'] == 'error']
         self.assertEqual(errors[0], 'HTTP 429: API rate limit exceeded (limit 120 requests per hour)')
         self.assertTrue(errors[1].startswith('Exit code 1 ENOENT: x'))
-        self.assertEqual(len(errors[1]), 500)
-        self.assertEqual(len(errors), 2)  # a reminder alone, a good result and is_error false give none
+        self.assertEqual(len(errors[1]), 503)  # 200 + ' … ' + 300
+        self.assertEqual(len(errors), 2)  # a reminder alone, a lessons block alone, a good result and is_error false give none
+
+    def test_a_long_error_keeps_its_head_and_its_last_line(self):  # a traceback ends with the error itself
+        trace = 'Traceback (most recent call last):\n' + '  File "a.py", line 1, in f\n    g()\n' * 40 + 'TypeError: unsupported operand'
+        path = self.write('s.jsonl', [u([{'type': 'tool_result', 'tool_use_id': 't1', 'content': trace, 'is_error': True}])])
+        text = next(r['text'] for r in read_records(path)[0] if r['kind'] == 'error')
+        self.assertTrue(text.startswith('Traceback (most recent call last): File "a.py"'))
+        self.assertTrue(text.endswith('TypeError: unsupported operand'))
+        self.assertIn(' … ', text)
 
     def test_subagent_kinds(self):
         path = self.write('S/subagents/agent-a1.jsonl', [

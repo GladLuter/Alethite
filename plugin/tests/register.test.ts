@@ -980,6 +980,8 @@ const lessonRig = async ($: any, on: any, found: object[] = [{ ...lesson, score:
   return { m, contexts }
 }
 const typed = ($: any, text: string, extra: object = {}) => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' }, ...extra })
+// the gate's denial of the lesson above, between the marks the index cuts out (transcripts.py)
+const gateText = () => ['[cg-lessons]', T.lessonGate('Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos'), '[/cg-lessons]'].join('\n')
 
 test('lesson_save: the fields go to cg.py one item each, the owner gets a toast, the model the lesson', async ($, on) => {
   const { m } = await lessonRig($, on)
@@ -992,17 +994,18 @@ test('lesson_save: the fields go to cg.py one item each, the owner gets a toast,
 test('lessons: one that fits goes beside the owner\'s message once a chat, in the hidden context; nothing else is asked or added', async ($, on) => {
   const contexts: string[][] = []
   const { m } = await lessonRig($, on, undefined, undefined, { context: contexts })
-  await typed($, 'опять 429 на сборке, что делать?')
-  await typed($, 'опять 429 на сборке, что делать?')
-  expect(contexts[0]).toEqual([['[cg-lessons]', T.lessonsIntro, '- Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos', '[/cg-lessons]'].join('\n')])
-  expect(contexts[1]).toEqual([]) // shown once in this chat
-  const [match] = ofCg(m, 'lessons-match')
-  expect(match!.argv).toEqual(['lessons-match', '--cwd', 'C:/w', '--text=опять 429 на сборке, что делать?', '--model', 'embeddinggemma', '--min-score', '0.6', '--limit', '2', '--timeout', '3'])
-  expect(match!.timeoutMs).toBe(8_000)
   await typed($, 'короткий') // too short to be about anything
   await typed($, 'сообщение от другого плагина', { origin: { kind: 'plugin', name: 'x' } })
   await typed($, '/cg-health', { command: { name: 'cg-health', args: '' } })
-  expect(ofCg(m, 'lessons-match')).toHaveLength(2)
+  expect(ofCg(m, 'lessons-match')).toEqual([])
+  await typed($, 'опять 429 на сборке, что делать?')
+  await typed($, 'опять 429 на сборке, что делать?')
+  expect(contexts[3]).toEqual([['[cg-lessons]', T.lessonsIntro, '- Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos', '[/cg-lessons]'].join('\n')])
+  expect(contexts[4]).toEqual([]) // shown once in this chat
+  const [match, ...more] = ofCg(m, 'lessons-match')
+  expect(match!.argv).toEqual(['lessons-match', '--cwd', 'C:/w', '--text=опять 429 на сборке, что делать?', '--model', 'embeddinggemma', '--min-score', '0.45', '--limit', '2', '--timeout', '3'])
+  expect(match!.timeoutMs).toBe(8_000)
+  expect(more).toEqual([]) // every lesson was shown already: no Python for the second
 })
 
 test('lessons: none in the project, none asked for; off in the settings, none either', { options: { lessons: false } }, async ($, on) => {
@@ -1034,10 +1037,17 @@ test('lessons: a failed search costs the owner a line in /cg-health once, and th
 test('lessons: a command with a trigger is stopped once with the lesson, then passes', async ($, on) => {
   const { m } = await lessonRig($, on)
   const stop = await ($ as any).tool.call({ tool: 'Bash', command: 'GH API /repos/owner/x --paginate' })
-  expect(stop).toEqual({ deny: T.lessonGate('Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos') })
+  expect(stop).toEqual({ deny: gateText() })
   expect(await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/owner/x --paginate' })).toEqual({ result: 'ran' })
   expect(await ($ as any).tool.call({ tool: 'Bash', command: 'git status' })).toEqual({ result: 'ran' })
   expect(m.store.get('lessonCounts')).toEqual({ stopped: 1 })
+})
+
+test('lessons: a PowerShell command is stopped once as well', async ($, on) => {
+  on('tool.call', { tool: 'PowerShell' }, () => ({ result: 'ran' }))
+  await lessonRig($, on)
+  expect(await ($ as any).tool.call({ tool: 'PowerShell', command: 'gh api /repos/owner/x' })).toEqual({ deny: gateText() })
+  expect(await ($ as any).tool.call({ tool: 'PowerShell', command: 'gh api /repos/owner/x' })).toEqual({ result: 'ran' })
 })
 
 test('/cg-lessons: the list; forget deletes by pos through cg.py; anything else, how to ask', async ($, on) => {
@@ -1101,4 +1111,50 @@ test('lessons: a message with no origin (an engine older than the origin) is the
   await lessonRig($, on, undefined, undefined, { context: contexts })
   await ($ as any).prompt.submit({ text: 'опять 429 на сборке, что делать?', wait: false })
   expect(contexts[0]!.length).toBe(1)
+})
+
+// the desktop Code tab is an SDK host: the owner's typing comes as sdk, or as unclassified from a channel the engine cannot attest
+for (const kind of ['sdk', 'unclassified']) {
+  test(`lessons: a message of origin ${kind} is the owner's, a task notification is not`, async ($, on) => {
+    const contexts: string[][] = []
+    const { m } = await lessonRig($, on, undefined, undefined, { context: contexts })
+    await typed($, 'опять 429 на сборке, что делать?', { origin: { kind: 'task-notification' } })
+    expect(ofCg(m, 'lessons-match')).toEqual([])
+    await typed($, 'опять 429 на сборке, что делать?', { origin: { kind } })
+    expect(contexts.map(c => c.length)).toEqual([0, 1])
+  })
+}
+
+test('lessons: with three that fit the third comes with the next message, and once all were shown no Python runs', async ($, on) => {
+  const three = [7, 8, 9].map(id => ({ ...lesson, id, pos: id, text: `Action: a${id}` }))
+  const contexts: string[][] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => (contexts.push([...(e.context ?? [])]), { text: e.text, context: e.context }))
+  // cg.py gives the best `--limit` of the three
+  const m = await started($, on, a =>
+    a[0] === 'lessons' ? listed(three) : a[0] === 'lessons-match' ? ran(JSON.stringify({ lessons: three.slice(0, Number(a[a.indexOf('--limit') + 1])).map(l => ({ ...l, score: 0.8 })), vector: 'ok' })) : ran('{}'),
+  )
+  await ($ as any).command.run({ command: 'cg-lessons', args: '' })
+  for (let i = 0; i < 3; i++) await typed($, 'опять 429 на сборке, что делать?')
+  expect(contexts.map(c => c.length)).toEqual([1, 1, 0])
+  expect([/a7.*a8/s.test(contexts[0]![0]!), contexts[1]![0]!.includes('a9'), contexts[1]![0]!.includes('a7')]).toEqual([true, true, false])
+  expect(ofCg(m, 'lessons-match').map(r => r.argv[r.argv.indexOf('--limit') + 1])).toEqual(['2', '4']) // the shown ones are asked for too; the third message asks nothing
+})
+
+test('lessons: a chat open for long learns of a lesson saved elsewhere, every 10 minutes', async ($, on) => {
+  const contexts: string[][] = []
+  const list: object[] = []
+  const { m } = await lessonRig($, on, undefined, list, { context: contexts })
+  await m.clock.advance(3_000) // the catch-up reads the lessons once more
+  await typed($, 'опять 429 на сборке, что делать?')
+  list.push(lesson) // another chat saved it
+  await m.clock.advance(600_000)
+  await typed($, 'опять 429 на сборке, что делать?')
+  expect(contexts.map(c => c.length)).toEqual([0, 1])
+})
+
+test('lesson_save: a refusal is told as a refused save, not as a failed search', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'lesson-save' ? failed('ValueError: the lesson needs: cause') : ran('{}')))
+  const r = await ($ as any).tool.call({ tool: 'mcp__cacheguard__lesson_save', action: 'a', symptom: 's' })
+  expect(r).toEqual({ deny: T.lessonSaveFailed('ValueError: the lesson needs: cause') })
+  expect(m.toasts).toEqual([T.toast(T.failed('lesson_save', 'ValueError: the lesson needs: cause'))])
 })

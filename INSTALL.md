@@ -122,7 +122,7 @@ After `git pull` and `/reload-plugins`:
    - If the task does not run, check that Python is installed from python.org (`pythonw.exe` must lie beside `python.exe`).
 3. **Lessons** work by themselves: the worker saves an understood error with `lesson_save`. `/cg-lessons` lists the project's lessons, `/cg-lessons forget <pos>` deletes one.
    - A lesson comes beside a message close in meaning and stops once a command that holds its trigger.
-   - If lessons come where they do not belong, raise `lessonsMinScore` in `settings.json` to `0.7`; if they never come, lower it to `0.5`. To turn them off: `"lessons": false`.
+   - If lessons come where they do not belong, raise `lessonsMinScore` in `settings.json` to `0.55`; if they never come, lower it to `0.4`. To turn them off: `"lessons": false`.
 
 ## Good to know
 

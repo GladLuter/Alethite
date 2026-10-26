@@ -28,7 +28,7 @@ export const lessonSaveArgs = (input: Record<string, unknown>, cwd: string, mode
 ]
 
 // The owner waits for this one: 3 s for Ollama inside cg.py, a cold model is skipped rather than waited for.
-export const lessonsMatchArgs = (text: string, cwd: string, model: string, minScore: number) => [
+export const lessonsMatchArgs = (text: string, cwd: string, model: string, minScore: number, limit: number) => [
   'lessons-match',
   '--cwd',
   cwd,
@@ -38,7 +38,7 @@ export const lessonsMatchArgs = (text: string, cwd: string, model: string, minSc
   '--min-score',
   String(minScore),
   '--limit',
-  '2',
+  String(limit),
   '--timeout',
   '3',
 ]
