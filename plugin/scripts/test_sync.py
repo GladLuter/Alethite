@@ -210,7 +210,7 @@ class SyncTest(unittest.TestCase):
         self.assertEqual((self.b.rows(), self.b.vecs()), (4, 2))
 
     def break_line(self, c, n, line):
-        path = os.path.join(self.share, c.name, 'batch-%08d.jsonl.gz' % n)
+        path = os.path.join(c.share, c.name, 'batch-%08d.jsonl.gz' % n)
         with gzip.open(path, 'rt', encoding='utf-8') as f:
             lines = f.read().split('\n')
         lines[line] = lines[line][:-7]
@@ -1006,6 +1006,71 @@ class SyncTest(unittest.TestCase):
         self.b.sync()
         self.a.sync()  # records that came from B are not ours to send
         self.assertFalse(pending())
+
+    def sealed_lines(self, c, n, key, cipher='sqlcipher'):
+        out = []
+        for b in sorted(cgsync._batches(self.gen_dir(c, n), crypto.EXT[cipher])):
+            with open(os.path.join(self.gen_dir(c, n), 'batch-%08d%s' % (b, crypto.EXT[cipher])), 'rb') as f:
+                out += [json.loads(l) for l in crypto.unseal(f.read(), cipher, key, '%s/%d/batch-%08d' % (c.name, n, b)) if l]
+        return out
+
+    def reinstalled(self, tag):
+        """B's history is in the share, plain (generation 0); B's index is gone, as after a reinstall."""
+        a, b = self.pair(tag)
+        b.sync()
+        b.close()
+        os.remove(b.db)
+        b.open()
+        return b, os.path.join(b.share, 'MTLAPTOP')
+
+    def test_a_fresh_index_with_a_key_brings_its_own_history_into_the_new_generation(self):
+        b, own = self.reinstalled('fresh-key')
+        key = secrets.token_bytes(32)
+        self.assertEqual(b.rows(), 0)
+        self.assertEqual(b.sync(key=key)['errors'], [])
+        self.assertEqual(b.texts(), sorted(['кэш протух на ноутбуке', 'ответ про кэш']))
+        lines = self.sealed_lines(b, 1, key)
+        self.assertEqual((sum(l['type'] == 'chunk' for l in lines), sum(l['type'] == 'vec' for l in lines)), (2, 2))
+        self.assertEqual(cgsync.generation(own).cipher, 'sqlcipher')
+
+    def test_a_new_generation_waits_for_an_own_batch_that_is_broken(self):
+        b, own = self.reinstalled('fresh-broken')
+        key = secrets.token_bytes(32)
+        self.break_line(b, 1, 3)
+        r = b.sync(key=key)
+        self.assertEqual([(e['where'], e['machine'], e['batch']) for e in r['errors']], [('pull', 'MTLAPTOP', 1)])
+        self.assertEqual(sorted(os.listdir(own)), ['batch-00000001.jsonl.gz'])  # no generation, no batch of the new kind
+        cgsync.skip_batch(b.conn, 'MTLAPTOP', 1)
+        self.assertEqual(b.sync(key=key)['errors'], [])
+        self.assertEqual(cgsync.generation(own).n, 1)
+
+    def test_a_new_generation_waits_for_the_own_history_the_time_cap_left_unread(self):
+        b, own = self.reinstalled('fresh-cap')
+        key = secrets.token_bytes(32)
+        ticks = iter(range(100))
+        r = b.sync(key=key, max_seconds=1, now=lambda: next(ticks))  # the time is over before the first batch is read
+        self.assertEqual((r['errors'], r['pushed'], b.rows(), [n for n in os.listdir(own) if n.startswith('gen-')]), ([], 0, 0, []))
+        self.assertEqual(b.sync(key=key)['errors'], [])
+        self.assertEqual(sum(l['type'] == 'chunk' for l in self.sealed_lines(b, 1, key)), 2)
+
+    def test_a_batch_copied_into_another_computers_folder_is_refused(self):  # same generation, same number: the computer is in what it is tied to
+        key = secrets.token_bytes(32)
+        for cipher in crypto.CIPHERS:
+            with self.subTest(cipher=cipher):
+                a, b = self.pair('copied-' + cipher)
+                a.sync(key=key, cipher=cipher)
+                shutil.copytree(self.gen_dir(a, 1), os.path.join(a.share, 'THIRD', 'gen-0001'))  # the label and batch 1 of A, under THIRD
+                r = b.sync(key=key, cipher=cipher)
+                self.assertEqual([(e['machine'], e['batch'], e['error']) for e in r['errors']],
+                                 [('THIRD', 1, t('batch_broken', n=1, machine='THIRD', e='ValueError: ' + t('seal_broken')))])
+                self.assertEqual(b.rows(), 4)  # A's own are taken, THIRD's copy is not
+
+    def test_a_sealed_batch_is_written_by_its_generation_not_by_what_the_seal_returned(self):  # fail closed
+        gen = cgsync.Gen(1, self.root, 'sqlcipher', 'ab' * 8)
+        with mock.patch.object(crypto, 'seal', return_value=b''):
+            cgsync._write(gen, 1, ['{"x":1}'], 'AIJ-HP', b'k' * 32)
+        with open(os.path.join(self.root, 'batch-00000001.sqlcipher'), 'rb') as f:
+            self.assertEqual(f.read(), b'')
 
     def test_cli_sync_and_forget(self):
         self.a.index()

@@ -136,9 +136,11 @@ def start_generation(conn, machine_dir, machine, cipher, key):
     return gen
 
 
-def _own_generation(conn, own, machine, cipher, key):
+def _own_generation(conn, own, machine, cipher, key, pull):
     """The generation of our folder we write into: the current one when it is of our (cipher, key), else a new one (`cipher` and `key` both
-    None for an open one). With no key we do not leave an encrypted share by ourselves: only `encrypt off` does, by meta.share_plain."""
+    None for an open one). With no key we do not leave an encrypted share by ourselves: only `encrypt off` does, by meta.share_plain.
+    A generation we leave and can read is taken in first with `pull(gen)`: a fresh index holds of our records only what it has read back,
+    and the new generation sends everything of ours again. None: that is not all read yet (a broken batch, the time cap); nothing starts."""
     gen = generation(own)
     if (gen.cipher, gen.fingerprint) == (cipher, crypto.fingerprint(key) if key else None):
         row = conn.execute('SELECT gen FROM peers WHERE machine = ?', (machine,)).fetchone()
@@ -149,6 +151,11 @@ def _own_generation(conn, own, machine, cipher, key):
         return gen
     if not key and gen.cipher and memdb.meta(conn, 'share_plain') != '1':
         raise ValueError(t('share_needs_join', machine=machine))
+    if not _refusal(gen, key, machine, False):  # our own open history is ours to read, key or none
+        pull(gen)
+        last = conn.execute('SELECT last_batch FROM peers WHERE machine = ?', (machine,)).fetchone()
+        if (last or (0,))[0] < max(_batches(gen.path, crypto.EXT[gen.cipher]), default=0):
+            return None
     return start_generation(conn, own, machine, cipher, key)
 
 
@@ -235,7 +242,7 @@ def _write(gen, n, lines, machine, key):
     tmp = final + '.tmp'
     sealed = crypto.seal(lines, gen.cipher, key, _aad(machine, gen, n)) if gen.cipher else None
     with open(tmp, 'wb') as raw:
-        if sealed:
+        if gen.cipher:  # by the generation, never by what came back: no gzip of plain lines under a sealed name
             raw.write(sealed)
         else:
             with gzip.GzipFile(filename='', fileobj=raw, mode='wb', mtime=0) as gz:
@@ -383,11 +390,12 @@ def _refuse(conn, peer, error, report):
     report['errors'].append({'where': 'pull', 'machine': peer, 'error': error})
 
 
-def _refusal(gen, key, peer, has_batches):
-    """Why we do not read the current generation of `peer` at all, in words for the owner, else None: an encrypted computer takes nothing
-    open, and a generation is read only with the key it was written under and the package of its cipher."""
+def _refusal(gen, key, peer, strict):
+    """Why we do not read the current generation of `peer` at all, in words for the owner, else None: with `strict` (another computer's
+    generation that has batches) an encrypted computer takes nothing open, and a generation is read only with the key it was written
+    under and the package of its cipher."""
     if not gen.cipher:
-        return t('peer_plain', machine=peer) if key and has_batches else None
+        return t('peer_plain', machine=peer) if key and strict else None
     if not key:
         return t('peer_needs_key', machine=peer)
     if gen.fingerprint != crypto.fingerprint(key):
@@ -409,7 +417,7 @@ def _pull(conn, machine_dir, peer, own, key, model, digest, deadline, now, repor
     names = _batches(gen.path, crypto.EXT[gen.cipher])
     if not names and not conn.execute('SELECT 1 FROM peers WHERE machine = ?', (peer,)).fetchone():
         return  # a folder of something else, or a computer that has pushed nothing yet: no computer to show
-    error = _refusal(gen, key, peer, bool(names))
+    error = _refusal(gen, key, peer, bool(names) and not own)  # our own open history is ours, whatever the key
     if error:
         return _refuse(conn, peer, error, report)
     # a generation not read yet is read from its first batch, and the marks of the one before mean nothing in it
@@ -589,9 +597,11 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
         os.makedirs(own, exist_ok=True)
         # first our own batches the index here does not know (a new or restored index): our records and their vectors come back,
         # and nothing that is out already goes out again
-        gen = _own_generation(conn, own, machine, cipher if key else None, key)  # the one we write into, looked at once for the pull and the push
-        _pull(conn, own, machine, True, key, model, digest_once, deadline, now, report, gen)
-        _push(conn, gen, machine, key, digest_once, deadline, now, report)
+        pull = lambda g: _pull(conn, own, machine, True, key, model, digest_once, deadline, now, report, g)
+        gen = _own_generation(conn, own, machine, cipher if key else None, key, pull)  # the one we write into, looked at once for pull and push
+        if gen:
+            pull(gen)
+            _push(conn, gen, machine, key, digest_once, deadline, now, report)
         for peer in peers:
             _pull(conn, os.path.join(sync_dir, peer), peer, False, key, model, digest_once, deadline, now, report)
         if memory_dir:

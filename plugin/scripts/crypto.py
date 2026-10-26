@@ -224,7 +224,11 @@ def _db_body(data, key, aad):
                 row = conn.execute('SELECT body FROM c WHERE aad = ?', (aad,)).fetchone()
             finally:
                 conn.close()
-        except (ValueError, sqlcipher3.DatabaseError):  # a wrong key, a torn page or not a container at all
+        except (ValueError, sqlcipher3.DatabaseError) as e:  # a wrong key, a torn page or not a container at all
+            # but busy, locked or an I/O error of the scratch file is no verdict on the batch (a "skip" offered for it would lose records);
+            # SQLITE_ERROR (1) is the one Operational error that is one: a container with no table c. An error code unknown here is passed on
+            if isinstance(e, sqlcipher3.OperationalError) and getattr(e, 'sqlite_errorcode', None) != 1:
+                raise
             return None
     return row and row[0]
 

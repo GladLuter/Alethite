@@ -161,6 +161,30 @@ class SealTest(unittest.TestCase):
                              (data[:mid], cipher, KEY, AAD), (b'', cipher, KEY, AAD), (b'junk', cipher, KEY, AAD)]:
                     bad(self, crypto.unseal, t('seal_broken'), *args)
 
+    def test_a_locked_scratch_file_is_no_verdict_on_the_batch(self):  # a skip offered for it would lose records
+        import sqlcipher3
+        data = crypto.seal(LINES, 'sqlcipher', KEY, AAD)
+        real, holders = crypto.open_db, []
+
+        def locked(path, key, timeout=30):  # another process holds the scratch file for a moment (a scanner)
+            holders.append(real(path, key))
+            holders[-1].execute('BEGIN EXCLUSIVE')
+            return real(path, key, timeout=0.1)
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(tempfile, 'tempdir', d):
+            try:
+                with mock.patch.object(crypto, 'open_db', locked), self.assertRaises(sqlcipher3.OperationalError):
+                    crypto.unseal(data, 'sqlcipher', KEY, AAD)
+            finally:
+                for h in holders:
+                    h.close()
+            other = os.path.join(d, 'other')  # whereas a container with no table c is a damaged one
+            c = crypto.open_db(other, KEY)
+            c.execute('CREATE TABLE d(x)')
+            c.close()
+            with open(other, 'rb') as f:
+                bad(self, crypto.unseal, t('seal_broken'), f.read(), 'sqlcipher', KEY, AAD)
+
     def test_seal_leaves_no_file_behind(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(tempfile, 'tempdir', d):
             data = crypto.seal(LINES, 'sqlcipher', KEY, AAD)
