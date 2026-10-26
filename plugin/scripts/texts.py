@@ -75,6 +75,11 @@ EN = {
     'skip_batch_unknown': 'skip-batch: no computer {machine} in the sync folder (known: {known})',
     'skip_batch_not_next': 'skip-batch: {machine} waits at batch {want}, not {n}; only that one can be skipped',
     'memory_dir_missing': 'the auto-memory folder is not there: {dir}',
+
+    # crypto.py: the encryption key and the recovery code
+    'code_bad': 'the recovery code is not right: check every group of four characters against the one that was shown',
+    'key_unreadable': 'the encryption key in the settings file cannot be read (it opens only for the Windows user who saved it): enter the recovery code with /cg-encrypt join',
+    'settings_broken': 'the settings file is broken, nothing in it was changed: {path}',
 }
 
 RU = {
@@ -146,6 +151,10 @@ RU = {
     'skip_batch_unknown': 'skip-batch: компьютера {machine} в папке синхронизации нет (известны: {known})',
     'skip_batch_not_next': 'skip-batch: {machine} ждёт на пачке {want}, а не {n}; пропустить можно только её',
     'memory_dir_missing': 'папки автопамяти нет: {dir}',
+
+    'code_bad': 'код восстановления неверный: сверьте каждую группу из четырёх символов с показанным',
+    'key_unreadable': 'ключ шифрования в файле настроек не читается (он открывается только для пользователя Windows, который его сохранил): введите код восстановления командой /cg-encrypt join',
+    'settings_broken': 'файл настроек испорчен, в нём ничего не изменено: {path}',
 }
 
 UK = {
@@ -217,6 +226,10 @@ UK = {
     'skip_batch_unknown': 'skip-batch: комп\'ютера {machine} у теці синхронізації немає (відомі: {known})',
     'skip_batch_not_next': 'skip-batch: {machine} чекає на пачці {want}, а не {n}; пропустити можна лише її',
     'memory_dir_missing': "папки автопам'яті немає: {dir}",
+
+    'code_bad': 'код відновлення хибний: звірте кожну групу з чотирьох символів із показаним',
+    'key_unreadable': 'ключ шифрування у файлі налаштувань не читається (він відкривається лише для користувача Windows, який його зберіг): введіть код відновлення командою /cg-encrypt join',
+    'settings_broken': 'файл налаштувань зіпсований, у ньому нічого не змінено: {path}',
 }
 
 TABLES = {'en': EN, 'ru': RU, 'uk': UK}
