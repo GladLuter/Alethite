@@ -83,6 +83,7 @@ EN = {
     'cipher_missing': 'the {pkg} package is not installed: install it from an ordinary PowerShell window with python -m pip install {pkg}',
     'seal_broken': 'a sealed file does not open: it is damaged, it was moved from its place, or it was written under another key',
     'key_wrong': 'this key does not open the encrypted index: enter the recovery code of the right key with /cg-encrypt join',
+    'key_missing': 'the index is encrypted and this computer has no key for it: enter the recovery code with /cg-encrypt join',
 }
 
 RU = {
@@ -161,6 +162,7 @@ RU = {
     'cipher_missing': 'пакет {pkg} не установлен: поставьте его из обычного окна PowerShell командой python -m pip install {pkg}',
     'seal_broken': 'запечатанный файл не открывается: он повреждён, перенесён со своего места или записан под другим ключом',
     'key_wrong': 'этот ключ не открывает зашифрованный индекс: введите код восстановления нужного ключа командой /cg-encrypt join',
+    'key_missing': 'индекс зашифрован, а ключа на этом компьютере нет: введите код восстановления командой /cg-encrypt join',
 }
 
 UK = {
@@ -239,6 +241,7 @@ UK = {
     'cipher_missing': 'пакет {pkg} не встановлено: поставте його зі звичайного вікна PowerShell командою python -m pip install {pkg}',
     'seal_broken': 'запечатаний файл не відкривається: він пошкоджений, перенесений зі свого місця або записаний під іншим ключем',
     'key_wrong': 'цей ключ не відкриває зашифрований індекс: введіть код відновлення потрібного ключа командою /cg-encrypt join',
+    'key_missing': "індекс зашифрований, а ключа на цьому комп'ютері немає: введіть код відновлення командою /cg-encrypt join",
 }
 
 TABLES = {'en': EN, 'ru': RU, 'uk': UK}

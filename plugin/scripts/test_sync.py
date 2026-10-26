@@ -270,9 +270,11 @@ class SyncTest(unittest.TestCase):
         self.assertIn('/cg-sync skip MTLAPTOP 1', r['errors'][0]['error'])
 
     def test_a_hiccup_of_the_share_or_a_locked_index_is_no_broken_batch_and_offers_no_skip(self):  # the next sync simply tries again
+        import sqlcipher3  # an encrypted index raises its own class, once it is loaded
         self.ready(self.b)
         self.b.sync()
-        for e in (OSError(64, 'network name no longer available'), sqlite3.OperationalError('database is locked')):
+        for e in (OSError(64, 'network name no longer available'), sqlite3.OperationalError('database is locked'),
+                  sqlcipher3.OperationalError('database is locked')):
             with self.subTest(type(e).__name__), mock.patch.object(cgsync, '_import', side_effect=e):
                 r = self.a.sync()
                 err = r['errors'][0]

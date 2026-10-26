@@ -26,6 +26,9 @@ _RULES = [(re.compile(p), r) for p, r in [
      r'|shp(?:at|ss)_\w{20,}|hf_[A-Za-z0-9]{20,}|glpat-[\w-]{20,}|npm_[A-Za-z0-9]{20,}|pypi-Ag[\w-]{50,}'
      r'|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}|ya29\.[\w-]{20,}|SG\.[\w-]{22}\.[\w-]{43})', H),
     (r'(?<!\d)\d{8,10}:[A-Za-z0-9_-]{35}', H),  # Telegram bot token
+    # the recovery code of the encryption key (crypto.make_code): written down, it is typed back with hyphens, spaces or neither, so it goes
+    # whole before the rules below can cut it at a space
+    (r'(?i)\bCG1(?:[- ]?[A-Z2-7]{4}){14}\b', H),
     (r'(?i)(\bAuthorization["\']?[ \t]*[:=][ \t]*["\']?(?:\w+[ \t]+)?|\bBearer[ \t]+)[^\s"\',;]{16,}', r'\1' + H),
     (r'(?i)(\bAuthorization["\']?[ \t]*[:=][ \t]*["\']?Basic[ \t]+)[A-Za-z0-9+/=]{8,}', r'\1' + H),  # user:password in base64, short too
     # value: after an opening quote it runs to the closing quote, else to a separator; a value of only digits stays.

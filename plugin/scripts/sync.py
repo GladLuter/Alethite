@@ -9,7 +9,6 @@ import json
 import os
 import re
 import socket
-import sqlite3
 import time
 import urllib.request
 
@@ -266,7 +265,7 @@ def _pull(conn, folder, peer, own, model, digest, deadline, now, report):
                 _import(conn, os.path.join(folder, names[n]), peer, n, own, model, digest, report)
             except Exception as e:
                 # a share that hiccups or an index held by another run is no broken batch: no skip is offered, the next sync tries again
-                passing = isinstance(e, sqlite3.OperationalError) or (isinstance(e, OSError) and not isinstance(e, gzip.BadGzipFile))
+                passing = isinstance(e, memdb.db_errors()) or (isinstance(e, OSError) and not isinstance(e, gzip.BadGzipFile))
                 error = t('batch_unreadable' if passing else 'batch_broken', n=n, machine=peer, e='%s: %s' % (type(e).__name__, e))
                 break
         elif any(k > n for k in names):

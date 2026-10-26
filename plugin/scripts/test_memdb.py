@@ -1,14 +1,20 @@
+import hashlib
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import unittest
 from unittest import mock
+import crypto
 import memdb
 from memdb import connect, expand, owner_count, search, status, update
+from texts import t
 from transcripts import project_key
 
 TS = '2026-10-13T10:00:00.000Z'
+KEY = bytes(range(32))
+dpapi = unittest.skipUnless(os.name == 'nt', 'DPAPI is Windows only')
 
 
 def owner_line(text, ts=TS, cwd='C:\\a'):
@@ -31,6 +37,119 @@ class LockTest(unittest.TestCase):
             conn = connect(os.path.join(d, 'index.db'))
             self.assertEqual(conn.execute('PRAGMA busy_timeout').fetchone()[0], 30000)
             conn.close()
+
+
+class EncryptedIndexTest(unittest.TestCase):
+    def setUp(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.projects = os.path.join(d.name, 'projects')
+        self.db = os.path.join(d.name, 'db', 'index.db')
+        self.settings = crypto.settings_path(self.db)
+        os.makedirs(os.path.dirname(self.db))
+
+    def raw(self):
+        with open(self.db, 'rb') as f:
+            return f.read()
+
+    @dpapi
+    def test_connect_encrypted_new(self):
+        crypto.save_key(self.settings, KEY)
+        os.makedirs(os.path.join(self.projects, 'P'))
+        with open(os.path.join(self.projects, 'P', 'S.jsonl'), 'wb') as f:
+            f.write((json.dumps(owner_line('зашифрованноеслово в тексте'), ensure_ascii=False) + '\n').encode('utf-8'))
+        conn = connect(self.db)
+        try:
+            self.assertEqual(update(conn, self.projects)['rows'], 1)
+            self.assertEqual(len(search(conn, 'зашифрованноеслово')), 1)
+        finally:
+            conn.close()
+        self.assertTrue(crypto.is_encrypted(self.db))
+        self.assertNotIn('зашифрованноеслово'.encode('utf-8'), self.raw())
+        conn = connect(self.db)  # an encrypted file opens again with the key
+        try:
+            self.assertEqual(conn.execute('SELECT count(*) FROM chunks').fetchone(), (1,))
+        finally:
+            conn.close()
+
+    @dpapi
+    def test_connect_missing_key(self):
+        crypto.save_key(self.settings, KEY)
+        connect(self.db).close()
+        crypto.save_key(self.settings, None)
+        before = hashlib.sha1(self.raw()).hexdigest()
+        with self.assertRaises(ValueError) as cm:
+            connect(self.db)
+        self.assertEqual(str(cm.exception), t('key_missing'))
+        self.assertEqual(hashlib.sha1(self.raw()).hexdigest(), before)
+        self.assertEqual(sorted(os.listdir(os.path.dirname(self.db))), ['index.db', 'settings.json'])
+
+    def test_connect_no_key_no_db_is_plain(self):
+        connect(self.db).close()
+        self.assertEqual(self.raw()[:16], b'SQLite format 3\x00')
+
+    def test_a_plain_index_never_reads_the_key(self):  # a broken settings file must not stop whoever has not turned encryption on
+        connect(self.db).close()
+        with open(self.settings, 'w') as f:
+            f.write('{broken')
+        connect(self.db).close()
+        self.assertFalse(crypto.is_encrypted(self.db))
+
+    def test_settings_that_cannot_give_a_key(self):
+        with open(self.settings, 'w') as f:
+            f.write('{broken')
+        connect(self.db).close()  # no index yet and no key to be seen: a plain one, as before stage 5 (the job says the file is broken)
+        self.assertFalse(crypto.is_encrypted(self.db))
+        os.remove(self.db)
+        with open(self.settings, 'w') as f:
+            f.write('{"%s": "not a key"}' % crypto.KEY_FIELD)
+        with self.assertRaises(ValueError) as cm:  # a key is set and unreadable: no plain index beside it
+            connect(self.db)
+        self.assertEqual(str(cm.exception), t('key_unreadable'))
+        self.assertFalse(os.path.exists(self.db))
+        c = crypto.open_db(self.db, KEY)
+        c.execute('CREATE TABLE x(y)')  # the file is there only after a write
+        c.close()
+        with open(self.settings, 'w') as f:
+            f.write('{broken')
+        with self.assertRaises(ValueError) as cm:  # an encrypted index needs the key: the file that may hold it is no reason to guess
+            connect(self.db)
+        self.assertEqual(str(cm.exception), t('settings_broken', path=self.settings))
+
+    @dpapi
+    def test_an_empty_file_is_a_new_index(self):  # sqlite makes the file only on the first write: a crash before it must not leave a plain index
+        crypto.save_key(self.settings, KEY)
+        open(self.db, 'wb').close()
+        connect(self.db).close()
+        self.assertTrue(crypto.is_encrypted(self.db))
+
+    def test_peers_gen_added(self):
+        old = sqlite3.connect(self.db)
+        old.execute("CREATE TABLE peers(machine TEXT PRIMARY KEY, last_batch INTEGER NOT NULL DEFAULT 0, skipped TEXT NOT NULL DEFAULT '[]', "
+                    "model TEXT, digest TEXT, error TEXT)")
+        old.execute("INSERT INTO peers(machine, last_batch) VALUES('M', 3)")
+        old.commit()
+        old.close()
+        for _ in range(2):  # the second connect finds the column there
+            conn = connect(self.db)
+            try:
+                self.assertEqual(conn.execute('SELECT machine, last_batch, gen FROM peers').fetchall(), [('M', 3, 0)])
+            finally:
+                conn.close()
+
+    def test_a_new_index_has_peers_gen(self):
+        conn = connect(self.db)
+        try:
+            self.assertEqual(conn.execute('SELECT gen FROM peers').fetchall(), [])
+        finally:
+            conn.close()
+
+    def test_db_errors(self):
+        with mock.patch.dict(sys.modules):
+            sys.modules.pop('sqlcipher3', None)  # not imported unless an encrypted index was opened
+            self.assertEqual(memdb.db_errors(), (sqlite3.OperationalError,))
+        import sqlcipher3
+        self.assertEqual(memdb.db_errors(), (sqlite3.OperationalError, sqlcipher3.OperationalError))
 
 
 class MemdbTest(unittest.TestCase):

@@ -4,8 +4,11 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import time
+import crypto
 from redact import redact
+from texts import t
 from transcripts import lp, project_key, read_records
 
 DB_PATH = os.path.join(os.path.expanduser('~'), '.claude', 'cacheguard', 'index.db')
@@ -26,9 +29,10 @@ CREATE TABLE IF NOT EXISTS keys(id INTEGER PRIMARY KEY, conv TEXT NOT NULL, cls 
 CREATE TABLE IF NOT EXISTS forgotten(conv TEXT, cls TEXT, hash TEXT, n INTEGER, PRIMARY KEY(conv, cls, hash, n));
 -- forget lines for our next batch
 CREATE TABLE IF NOT EXISTS outbox(seq INTEGER PRIMARY KEY, line TEXT NOT NULL);
--- every computer whose folder we read, ourselves included: the last batch taken in, the ones skipped by hand, what its batches said
+-- every computer whose folder we read, ourselves included: the last batch taken in, the ones skipped by hand, what its batches said;
+-- gen: the generation of its folder those batches belong to (an index from before stage 5 gets the column in connect)
 CREATE TABLE IF NOT EXISTS peers(machine TEXT PRIMARY KEY, last_batch INTEGER NOT NULL DEFAULT 0, skipped TEXT NOT NULL DEFAULT '[]',
-  model TEXT, digest TEXT, error TEXT);
+  model TEXT, digest TEXT, error TEXT, gen INTEGER NOT NULL DEFAULT 0);
 -- memory facts copied in from another computer: under which name here, from whom, and the hash they had when copied
 CREATE TABLE IF NOT EXISTS mem_files(project TEXT, name TEXT, source TEXT NOT NULL, src_name TEXT NOT NULL, hash TEXT NOT NULL,
   PRIMARY KEY(project, name));
@@ -80,12 +84,51 @@ def _migrate(conn, home):
         conn.execute("INSERT OR REPLACE INTO meta VALUES('schema', '2')")
 
 
+def _gen_column(conn):
+    """Stage 5, once: peers.gen on an index made before it."""
+    def missing():
+        return 'gen' not in [r[1] for r in conn.execute('PRAGMA table_info(peers)')]
+    if missing():
+        conn.execute('BEGIN IMMEDIATE')
+        with conn:
+            if missing():  # another process got here first
+                conn.execute('ALTER TABLE peers ADD COLUMN gen INTEGER NOT NULL DEFAULT 0')
+
+
+def db_errors():
+    """What a locked or busy index raises: sqlcipher3 has classes of its own, and is loaded only once an encrypted index was opened."""
+    lib = sys.modules.get('sqlcipher3')
+    return (sqlite3.OperationalError, lib.OperationalError) if lib else (sqlite3.OperationalError,)
+
+
+def _open(path):
+    """No implicit transactions: _file opens its own with BEGIN IMMEDIATE. A sync holds the write lock while it writes a batch to the
+    share, so the others wait up to 30 s for it, not the 5 s by default."""
+    # a plain index never costs a look at the key: a broken settings file must not stop whoever has not turned encryption on. An empty
+    # file is no index yet (sqlite makes the file on the first write), so it is new like no file at all
+    if os.path.exists(path) and os.path.getsize(path) and not crypto.is_encrypted(path):
+        return sqlite3.connect(path, isolation_level=None, timeout=30)
+    settings = crypto.settings_path(path)
+    try:
+        key = crypto.load_key(settings)
+    except ValueError as e:
+        # a broken settings file shows no key: a new index is then what it was before stage 5 (the job reports the file); an encrypted one
+        # needs the key, and a key that is set but unreadable is no reason for a plain index either
+        if crypto.is_encrypted(path) or str(e) != t('settings_broken', path=settings):
+            raise
+        key = None
+    if key:
+        return crypto.open_db(path, key)
+    if crypto.is_encrypted(path):  # never a new index over the one that is there
+        raise ValueError(t('key_missing'))
+    return sqlite3.connect(path, isolation_level=None, timeout=30)
+
+
 def connect(path=DB_PATH, home=None):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    # no implicit transactions: _file opens its own with BEGIN IMMEDIATE. A sync holds the write lock while it writes a batch to the
-    # share, so the others wait up to 30 s for it, not the 5 s by default
-    conn = sqlite3.connect(path, isolation_level=None, timeout=30)
+    conn = _open(path)
     conn.executescript(_SCHEMA)
+    _gen_column(conn)
     if meta(conn, 'schema') != '2':
         _migrate(conn, home)
     return conn

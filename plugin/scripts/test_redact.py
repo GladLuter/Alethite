@@ -1,5 +1,6 @@
 import time
 import unittest
+import crypto
 from redact import redact
 
 H = '[скрыто]'
@@ -114,6 +115,15 @@ class RedactTest(unittest.TestCase):
         for ok in ['ssh -p 22 host', 'docker run -p 8080:80 img', 'git push -u origin main', 'curl -u admin: https://x',
                    'net use Z: \\\\NAS\\share /user:bob', 'a single-pass compiler', 'the -token flag']:
             self.assertEqual(redact(ok), ok)
+
+    def test_recovery_code(self):  # written down, it is typed back in any form: with hyphens, with spaces, in lower case
+        code = crypto.make_code(bytes(32))
+        for form in (code, code.replace('-', ' '), code.lower()):
+            self.assertEqual(redact('код: ' + form), 'код: ' + H)
+            self.assertEqual(redact('the code is ' + form + '.'), 'the code is ' + H + '.')
+            self.assertEqual(redact('encryption key: ' + form), 'encryption key: ' + H)  # the key-value rule must not cut it first
+        self.assertNotIn('CG1-', redact('код: ' + code))
+        self.assertEqual(redact('CG1-ABCD-EFGH is only a prefix'), 'CG1-ABCD-EFGH is only a prefix')
 
 if __name__ == '__main__':
     unittest.main()
