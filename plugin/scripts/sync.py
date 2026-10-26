@@ -97,10 +97,25 @@ def old_generations(machine_dir):
             + [p for n, p in sorted(_gens(machine_dir).items()) if n < cur])
 
 
+def _restart(conn, machine, n):
+    """Inside the caller's transaction: we are at generation `n` of our folder from its first batch, and everything of ours goes out again
+    into it (records, vectors, and every forget, which the new readers never saw)."""
+    conn.execute("INSERT INTO peers(machine, gen) VALUES(?, ?) ON CONFLICT(machine) DO UPDATE SET gen = excluded.gen, last_batch = 0, "
+                 "skipped = '[]', error = NULL", (machine, n))
+    conn.execute('UPDATE keys SET origin = NULL, pushed = 0, vec_pushed = 0 WHERE origin IS NULL OR origin = ?', (machine,))
+    for k in conn.execute('SELECT conv, cls, hash, n FROM forgotten').fetchall():
+        memdb.forget_key(conn, *k)
+    conn.execute("DELETE FROM meta WHERE key = 'share_plain'")
+
+
 def start_generation(conn, machine_dir, machine, cipher, key):
-    """Begin a new generation of our folder: the label, then in one transaction the marks of the old generation are cleared and everything
-    of ours goes out again into the new one (records, vectors, and every forget, which the new readers never saw). The index is locked
-    first: a busy one must not leave a labelled generation whose records were never sent again."""
+    """Begin a new generation of our folder: the label, then in one transaction the marks of the old generation are cleared (`_restart`). The
+    index is locked first: a busy one must not leave a labelled generation whose records were never sent again. A cipher goes with a key
+    and no cipher with no key; anything else is the caller's error. No label goes out for a cipher whose package is missing here."""
+    if bool(cipher) != bool(key) or cipher not in (None, *crypto.CIPHERS):
+        raise ValueError('start_generation: a cipher of %r with %s key' % (cipher, 'a' if key else 'no'))
+    if cipher:
+        crypto.need(cipher)
     conn.execute('BEGIN IMMEDIATE')
     label = None  # set once this call has written one: only that is taken back on a failure
     try:
@@ -110,12 +125,7 @@ def start_generation(conn, machine_dir, machine, cipher, key):
         path = os.path.join(gen.path, 'generation.json')
         _put(path, _dumps({'format': FORMAT, 'gen': n, 'cipher': cipher, 'fingerprint': gen.fingerprint, 'created': _now()}).encode('utf-8'))
         label = path
-        conn.execute("INSERT INTO peers(machine, gen) VALUES(?, ?) ON CONFLICT(machine) DO UPDATE SET gen = excluded.gen, last_batch = 0, "
-                     "skipped = '[]', error = NULL", (machine, n))
-        conn.execute('UPDATE keys SET origin = NULL, pushed = 0, vec_pushed = 0 WHERE origin IS NULL OR origin = ?', (machine,))
-        for k in conn.execute('SELECT conv, cls, hash, n FROM forgotten').fetchall():
-            memdb.forget_key(conn, *k)
-        conn.execute("DELETE FROM meta WHERE key = 'share_plain'")
+        _restart(conn, machine, n)
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -124,6 +134,22 @@ def start_generation(conn, machine_dir, machine, cipher, key):
                 os.remove(label)
         raise
     return gen
+
+
+def _own_generation(conn, own, machine, cipher, key):
+    """The generation of our folder we write into: the current one when it is of our (cipher, key), else a new one (`cipher` and `key` both
+    None for an open one). With no key we do not leave an encrypted share by ourselves: only `encrypt off` does, by meta.share_plain."""
+    gen = generation(own)
+    if (gen.cipher, gen.fingerprint) == (cipher, crypto.fingerprint(key) if key else None):
+        row = conn.execute('SELECT gen FROM peers WHERE machine = ?', (machine,)).fetchone()
+        if row and row[0] != gen.n:  # a start killed after its label, before its reset: what is marked out is not in this generation
+            conn.execute('BEGIN IMMEDIATE')
+            with conn:
+                _restart(conn, machine, gen.n)
+        return gen
+    if not key and gen.cipher and memdb.meta(conn, 'share_plain') != '1':
+        raise ValueError(t('share_needs_join', machine=machine))
+    return start_generation(conn, own, machine, cipher, key)
 
 
 def ollama_digest(model, url=OLLAMA, timeout=5):
@@ -137,6 +163,16 @@ def ollama_digest(model, url=OLLAMA, timeout=5):
 
 
 # ---- push: what this computer's transcripts added since its last batch
+
+# of a record of ours: a vector that is not out yet (of the right length; the empty one of a record that failed to embed is none)
+_VEC_OUT = 'k.vec_pushed = 0 AND EXISTS (SELECT 1 FROM vecs v WHERE v.chunk = k.id AND length(v.vec) = ?)'
+
+
+def pending(conn):
+    """Whether something of ours is not out yet: a forget, a record, or a vector."""
+    return bool(conn.execute('SELECT EXISTS(SELECT 1 FROM outbox) OR EXISTS(SELECT 1 FROM keys k WHERE k.origin IS NULL AND (k.pushed = 0 OR '
+                             + _VEC_OUT + '))', (4 * DIMS,)).fetchone()[0])
+
 
 def _collect(conn):
     """The lines of our next batch, inside the caller's transaction: forgets, then conversations, records and vectors of ours that are not
@@ -172,8 +208,8 @@ def _collect(conn):
     lines += chunks
     conn.executemany('UPDATE keys SET pushed = 1 WHERE id = ?', [(i,) for i in ids])
     vec_ids = []
-    cur = conn.execute('SELECT k.id, k.conv, k.cls, k.hash, k.n FROM keys k WHERE k.origin IS NULL AND k.pushed = 1 AND k.vec_pushed = 0 '
-                       'AND EXISTS (SELECT 1 FROM vecs v WHERE v.chunk = k.id AND length(v.vec) = ?) ORDER BY k.id', (4 * DIMS,))
+    cur = conn.execute('SELECT k.id, k.conv, k.cls, k.hash, k.n FROM keys k WHERE k.origin IS NULL AND k.pushed = 1 AND ' + _VEC_OUT
+                       + ' ORDER BY k.id', (4 * DIMS,))
     for rid, conv, cls, h, n in cur.fetchall():
         if size > BATCH_BYTES:
             break
@@ -187,17 +223,24 @@ def _collect(conn):
     return lines, len(ids), len(vec_ids), len(seqs)
 
 
+def _aad(machine, gen, n):
+    """What ties a sealed batch to its place: a copy under another name, generation or computer does not open."""
+    return '%s/%d/batch-%08d' % (machine, gen.n, n)
+
+
 def _write(gen, n, lines, machine, key):
     """Batch `n` of generation `gen` as a whole or not at all: written to a .tmp beside it (a cut leaves only that, and the next run writes
     it anew), then renamed. A finished batch is never overwritten."""
-    if gen.cipher:
-        raise NotImplementedError('batches of an encrypted generation are not written yet')  # `machine` and `key` are for those
     final = os.path.join(gen.path, 'batch-%08d%s' % (n, crypto.EXT[gen.cipher]))
     tmp = final + '.tmp'
+    sealed = crypto.seal(lines, gen.cipher, key, _aad(machine, gen, n)) if gen.cipher else None
     with open(tmp, 'wb') as raw:
-        with gzip.GzipFile(filename='', fileobj=raw, mode='wb', mtime=0) as gz:
-            for line in lines:
-                gz.write(line.encode('utf-8') + b'\n')
+        if sealed:
+            raw.write(sealed)
+        else:
+            with gzip.GzipFile(filename='', fileobj=raw, mode='wb', mtime=0) as gz:
+                for line in lines:
+                    gz.write(line.encode('utf-8') + b'\n')
         raw.flush()
         os.fsync(raw.fileno())
     if os.path.exists(final):  # os.rename replaces a file on POSIX; on Windows it refuses by itself
@@ -236,10 +279,9 @@ def _push(conn, gen, machine, key, digest, deadline, now, report):
 def _import(conn, path, peer, gen, n, own, key, model, digest, report):
     """Take in one batch of generation `gen` in one transaction: a record, a vector or a forget that is here already changes nothing. Raises
     on anything broken, and then nothing of the batch is kept."""
-    if gen.cipher:
-        raise NotImplementedError('batches of an encrypted generation are not read yet')  # `key` is for those
     with open(path, 'rb') as f:  # read whole before the write lock: a slow share must not hold the index
-        lines = gzip.decompress(f.read()).decode('utf-8').split('\n')
+        data = f.read()
+    lines = crypto.unseal(data, gen.cipher, key, _aad(peer, gen, n)) if gen.cipher else gzip.decompress(data).decode('utf-8').split('\n')
     head = json.loads(lines[0])
     # a batch of before stage 5 has no `gen`: it is generation 0
     if not (isinstance(head, dict) and head.get('type') == 'header' and head.get('machine') == peer and head.get('batch') == n
@@ -336,20 +378,40 @@ def _peer_error(conn, peer, error):
     conn.execute('INSERT INTO peers(machine, error) VALUES(?, ?) ON CONFLICT(machine) DO UPDATE SET error = excluded.error', (peer, error))
 
 
+def _refuse(conn, peer, error, report):
+    _peer_error(conn, peer, error)
+    report['errors'].append({'where': 'pull', 'machine': peer, 'error': error})
+
+
+def _refusal(gen, key, peer, has_batches):
+    """Why we do not read the current generation of `peer` at all, in words for the owner, else None: an encrypted computer takes nothing
+    open, and a generation is read only with the key it was written under and the package of its cipher."""
+    if not gen.cipher:
+        return t('peer_plain', machine=peer) if key and has_batches else None
+    if not key:
+        return t('peer_needs_key', machine=peer)
+    if gen.fingerprint != crypto.fingerprint(key):
+        return t('peer_other_key', machine=peer)
+    try:
+        crypto.need(gen.cipher)
+    except ValueError as e:
+        return str(e)
+
+
 def _pull(conn, machine_dir, peer, own, key, model, digest, deadline, now, report, gen=None):
     """Take in the batches of `peer` (in its current generation, `gen` when the caller has it) that are new here, in number order. A broken
     or missing one stops that computer: its later batches wait, and the error is reported on every sync until it is fixed or skipped by hand
-    (cg.py sync --skip-batch)."""
+    (cg.py sync --skip-batch). A generation we may not read (`_refusal`) is told before anything of it is read or reset."""
     try:
         gen = gen or generation(machine_dir)
     except OSError as e:  # a share that hiccups: nothing is reset, the next sync tries again
-        error = t('generation_unreadable', machine=peer, e='%s: %s' % (type(e).__name__, e))
-        _peer_error(conn, peer, error)
-        report['errors'].append({'where': 'pull', 'machine': peer, 'error': error})
-        return
+        return _refuse(conn, peer, t('generation_unreadable', machine=peer, e='%s: %s' % (type(e).__name__, e)), report)
     names = _batches(gen.path, crypto.EXT[gen.cipher])
     if not names and not conn.execute('SELECT 1 FROM peers WHERE machine = ?', (peer,)).fetchone():
         return  # a folder of something else, or a computer that has pushed nothing yet: no computer to show
+    error = _refusal(gen, key, peer, bool(names))
+    if error:
+        return _refuse(conn, peer, error, report)
     # a generation not read yet is read from its first batch, and the marks of the one before mean nothing in it
     conn.execute("INSERT INTO peers(machine, gen) VALUES(?, ?) ON CONFLICT(machine) DO UPDATE SET gen = excluded.gen, last_batch = 0, "
                  "skipped = '[]', error = NULL WHERE gen != excluded.gen", (peer, gen.n))
@@ -500,9 +562,10 @@ def sync_memory(conn, sync_dir, machine, peers, memory_dir, key):
 # ---- one sync
 
 def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=None, project_cwd=None, home=None, digest=ollama_digest,
-         now=time.monotonic):
+         now=time.monotonic, key=None, cipher='sqlcipher'):
     """Push our batches, take in those of the other computers, then the memory facts of the current project. Nothing here stops the local
-    index: an unavailable folder or a broken batch is an entry in 'errors', and the next sync goes on from where this one stopped."""
+    index: an unavailable folder or a broken batch is an entry in 'errors', and the next sync goes on from where this one stopped. With a
+    `key` the batches are sealed by `cipher`, and a generation of another cipher or key, or an open one, is not read (`_refusal`)."""
     start = now()
     deadline = start + max_seconds
     machine = machine or machine_name()
@@ -526,11 +589,11 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
         os.makedirs(own, exist_ok=True)
         # first our own batches the index here does not know (a new or restored index): our records and their vectors come back,
         # and nothing that is out already goes out again
-        gen = generation(own)  # the one we write into: the current generation of our folder, looked at once for the pull and the push
-        _pull(conn, own, machine, True, None, model, digest_once, deadline, now, report, gen)
-        _push(conn, gen, machine, None, digest_once, deadline, now, report)
+        gen = _own_generation(conn, own, machine, cipher if key else None, key)  # the one we write into, looked at once for the pull and the push
+        _pull(conn, own, machine, True, key, model, digest_once, deadline, now, report, gen)
+        _push(conn, gen, machine, key, digest_once, deadline, now, report)
         for peer in peers:
-            _pull(conn, os.path.join(sync_dir, peer), peer, False, None, model, digest_once, deadline, now, report)
+            _pull(conn, os.path.join(sync_dir, peer), peer, False, key, model, digest_once, deadline, now, report)
         if memory_dir:
             conn.execute('BEGIN IMMEDIATE')
             with conn:

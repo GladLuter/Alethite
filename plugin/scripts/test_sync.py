@@ -3,17 +3,22 @@ Every transcript here is synthetic."""
 import gzip
 import json
 import os
+import re
+import secrets
+import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest import mock
+import crypto
 import memdb
 import sync as cgsync
 from memdb import connect, search, update
 from test_memdb import TS, claude_line, owner_line
 from test_vectors import fake
+from texts import t
 from transcripts import project_key
 from vectors import DOC_PREFIX, MODEL, embed_pending, hybrid_search, pack, search_vectors
 
@@ -583,7 +588,7 @@ class SyncTest(unittest.TestCase):
         return cgsync.start_generation(c.conn, os.path.join(self.share, c.name), c.name, None, None)
 
     def gen_dir(self, c, n):
-        return os.path.join(self.share, c.name, 'gen-%04d' % n)
+        return os.path.join(c.share, c.name, 'gen-%04d' % n)
 
     def gen_lines(self, c, n):
         out = []
@@ -808,6 +813,199 @@ class SyncTest(unittest.TestCase):
         r = self.b.sync()
         self.assertEqual((r['errors'][0]['batch'], self.peer_row(self.b, 'AIJ-HP')[1]), (1, 0))
         self.assertIn('AIJ-HP', r['errors'][0]['error'])
+
+    # 15. encrypted batches (stage 5): one key, one of two ciphers; a computer with the key takes nothing plain, one without it nothing sealed
+    def pair(self, tag):
+        """Two more computers with a share of their own, who said what the ones of setUp did: a test that goes over the ciphers needs one each."""
+        root = os.path.join(self.root, tag)
+        share = os.path.join(root, 'share')
+        os.makedirs(share)
+        a, b = Computer(root, share, 'AIJ-HP'), Computer(root, share, 'MTLAPTOP')
+        for c in (a, b):
+            self.addCleanup(c.close)
+        a.say('conv-of-aij-hp', 'ёжик в тумане на i3', 'ответ про ёжика')
+        b.say('conv-of-mtlaptop', 'кэш протух на ноутбуке', 'ответ про кэш')
+        self.ready(a, b)
+        return a, b
+
+    def swap(self, a, b, key, cipher='sqlcipher'):
+        out = [c.sync(memory=False, key=key, cipher=cipher) for c in (a, b, a)]
+        self.assertEqual([r['errors'] for r in out], [[], [], []])
+
+    def test_encrypted_roundtrip(self):
+        key = secrets.token_bytes(32)
+        for cipher in crypto.CIPHERS:
+            with self.subTest(cipher=cipher):
+                a, b = self.pair(cipher)
+                self.swap(a, b, key, cipher)
+                self.assertEqual(a.texts(), b.texts())
+                self.assertEqual((a.rows(), a.vecs(), b.rows(), b.vecs()), (4, 4, 4, 4))
+                secret = [x.encode('utf-8') for x in a.texts() + ['conv-of-aij-hp', 'conv-of-mtlaptop']]
+                name = re.compile(r'AIJ-HP|MTLAPTOP|gen-0001|generation\.json|batch-[0-9]{8}' + re.escape(crypto.EXT[cipher]))
+                for d, dirs, files in os.walk(a.share):
+                    for n in dirs + files:
+                        self.assertTrue(name.fullmatch(n), n)
+                    for n in files:
+                        with open(os.path.join(d, n), 'rb') as f:
+                            data = f.read()
+                        for s in secret:
+                            self.assertNotIn(s, data, os.path.join(d, n))
+
+    def test_mixed_ciphers(self):
+        a, b = self.pair('mixed')
+        key = secrets.token_bytes(32)
+        for c, cipher in ((a, 'sqlcipher'), (b, 'cryptography'), (a, 'sqlcipher')):
+            self.assertEqual(c.sync(memory=False, key=key, cipher=cipher)['errors'], [])
+        self.assertEqual((a.texts(), len(b.texts())), (b.texts(), 4))
+        self.assertEqual([sorted(os.listdir(self.gen_dir(c, 1))) for c in (a, b)],
+                         [['batch-00000001.sqlcipher', 'generation.json'], ['batch-00000001.aesgcm', 'generation.json']])
+
+    def plain_meets_key(self):
+        """A and B swap their records in the plain way, then A takes a key: A takes nothing of B, and B nothing of what A writes now."""
+        a, b = self.pair('plain-meets-key')
+        key = secrets.token_bytes(32)
+        a.sync(), b.sync()
+        return a, b, key, a.sync(key=key), b.sync()
+
+    def test_plain_peer_refused(self):
+        a, b, key, ra, rb = self.plain_meets_key()
+        self.assertEqual(ra['errors'], [{'where': 'pull', 'machine': 'MTLAPTOP', 'error': t('peer_plain', machine='MTLAPTOP')}])
+        self.assertEqual(rb['errors'], [{'where': 'pull', 'machine': 'AIJ-HP', 'error': t('peer_needs_key', machine='AIJ-HP')}])
+        self.assertEqual((a.rows(), b.rows()), (2, 4))  # A never took B's records; B keeps what came before
+        self.assertEqual(self.peer_row(b, 'AIJ-HP'), (0, 1, '[]', t('peer_needs_key', machine='AIJ-HP')))  # and nothing is reset
+
+    def test_join_converges(self):
+        a, b, key, _, _ = self.plain_meets_key()
+        self.assertEqual(b.sync(key=key)['errors'], [])  # B joins: a sealed generation of its own
+        self.assertEqual(a.sync(key=key)['errors'], [])
+        self.assertEqual((a.texts(), len(b.texts())), (b.texts(), 4))
+        self.assertEqual(cgsync.generation(os.path.join(b.share, 'MTLAPTOP')).cipher, 'sqlcipher')
+
+    def test_other_key(self):
+        a, b = self.pair('other-key')
+        k1, k2 = secrets.token_bytes(32), secrets.token_bytes(32)
+        a.sync(key=k1)
+        self.assertEqual(b.sync(key=k2)['errors'], [{'where': 'pull', 'machine': 'AIJ-HP', 'error': t('peer_other_key', machine='AIJ-HP')}])
+        self.assertEqual(a.sync(key=k1)['errors'], [{'where': 'pull', 'machine': 'MTLAPTOP', 'error': t('peer_other_key', machine='MTLAPTOP')}])
+        self.assertEqual((a.rows(), b.rows()), (2, 2))
+
+    def broken(self, n):
+        return t('batch_broken', n=n, machine='AIJ-HP', e='ValueError: ' + t('seal_broken'))
+
+    def test_tampered_batch(self):
+        key = secrets.token_bytes(32)
+        for cipher in crypto.CIPHERS:
+            with self.subTest(cipher=cipher):
+                a, b = self.pair('tampered-' + cipher)
+                a.sync(key=key, cipher=cipher)
+                path = os.path.join(self.gen_dir(a, 1), 'batch-00000001' + crypto.EXT[cipher])
+                with open(path, 'r+b') as f:
+                    data = bytearray(f.read())
+                    data[len(data) // 2] ^= 1
+                    f.seek(0)
+                    f.write(data)
+                r = b.sync(key=key, cipher=cipher)
+                self.assertEqual([(e['batch'], e['error']) for e in r['errors']], [(1, self.broken(1))])
+                self.assertEqual(b.rows(), 2)
+                cgsync.skip_batch(b.conn, 'AIJ-HP', 1)
+                a.say('conv-of-aij-hp-2', 'третье сообщение', 'ответ на третье')
+                self.ready(a)
+                a.sync(key=key, cipher=cipher)
+                self.assertEqual((b.sync(key=key, cipher=cipher)['errors'], b.rows(), self.peer_row(b, 'AIJ-HP')[1:3]), ([], 4, (2, '[1]')))
+
+    def test_renamed_batch(self):  # a sound batch under another number is no batch there
+        key = secrets.token_bytes(32)
+        for cipher in crypto.CIPHERS:
+            with self.subTest(cipher=cipher):
+                a, b = self.pair('renamed-' + cipher)
+                a.sync(key=key, cipher=cipher)
+                one = os.path.join(self.gen_dir(a, 1), 'batch-00000001' + crypto.EXT[cipher])
+                shutil.copy(one, os.path.join(self.gen_dir(a, 1), 'batch-00000002' + crypto.EXT[cipher]))
+                r = b.sync(key=key, cipher=cipher)
+                self.assertEqual([(e['batch'], e['error']) for e in r['errors']], [(2, self.broken(2))])
+                self.assertEqual((b.rows(), self.peer_row(b, 'AIJ-HP')[1]), (4, 1))
+
+    def test_needs_join_after_reinstall(self):
+        a, b = self.pair('reinstall')
+        a.sync(key=secrets.token_bytes(32))
+        listing = lambda: sorted((d, sorted(fs)) for d, _, fs in os.walk(a.share))
+        before = listing()
+        a.close()
+        os.remove(a.db)
+        a.open()
+        r = a.sync()
+        self.assertEqual(r['errors'], [{'where': 'sync', 'error': t('share_needs_join', machine='AIJ-HP')}])
+        self.assertEqual((listing(), a.rows()), (before, 0))  # nothing written, nothing read
+
+    def test_cipher_change(self):
+        a, b = self.pair('cipher-change')
+        key = secrets.token_bytes(32)
+        self.swap(a, b, key)
+        rows = b.rows()
+        self.assertEqual(a.sync(key=key, cipher='cryptography')['errors'], [])
+        self.assertEqual(sorted(os.listdir(self.gen_dir(a, 2))), ['batch-00000001.aesgcm', 'generation.json'])
+        self.assertEqual((b.sync(key=key)['errors'], b.rows(), self.peer_row(b, 'AIJ-HP')), ([], rows, (2, 1, '[]', None)))
+
+    def test_plain_after_off(self):
+        a, b = self.pair('off')
+        a.sync(key=secrets.token_bytes(32))
+        a.conn.execute("INSERT OR REPLACE INTO meta VALUES('share_plain', '1')")
+        self.assertEqual(a.sync()['errors'], [])
+        self.assertEqual(cgsync.generation(os.path.join(a.share, 'AIJ-HP')), cgsync.Gen(2, self.gen_dir(a, 2), None, None))
+        self.assertEqual(sorted(os.listdir(self.gen_dir(a, 2))), ['batch-00000001.jsonl.gz', 'generation.json'])
+        self.assertEqual(sum(l['type'] == 'chunk' for l in self.gen_lines(a, 2)), 2)
+        self.assertIsNone(memdb.meta(a.conn, 'share_plain'))
+        self.assertEqual((b.sync()['errors'], b.rows()), ([], 4))  # and a computer with no key reads it again
+
+    def test_a_cipher_whose_package_is_missing_is_an_error_of_that_computer_only(self):
+        a, b = self.pair('package')
+        key = secrets.token_bytes(32)
+        self.swap(a, b, key)
+        a.sync(key=key, cipher='cryptography')  # a new generation of A
+        with mock.patch.dict(sys.modules, {'cryptography.hazmat.primitives.ciphers.aead': None}):
+            r, r2 = b.sync(key=key), b.sync(key=key, cipher='cryptography')
+        error = t('cipher_missing', pkg='cryptography')
+        self.assertEqual(r['errors'], [{'where': 'pull', 'machine': 'AIJ-HP', 'error': error}])
+        self.assertEqual((r2['errors'], os.listdir(os.path.join(b.share, 'MTLAPTOP'))), ([{'where': 'sync', 'error': error}], ['gen-0001']))  # no label
+        self.assertEqual(self.peer_row(b, 'AIJ-HP'), (1, 1, '[]', error))  # still at the generation it was, nothing reset
+        self.assertEqual((b.sync(key=key)['errors'], self.peer_row(b, 'AIJ-HP')), ([], (2, 1, '[]', None)))
+
+    def test_a_start_killed_before_its_reset_is_repaired_by_the_next_sync(self):  # the label is out, the marks still say 'out already'
+        self.ready(self.a)
+        self.a.sync()
+        with mock.patch.object(cgsync, '_restart'):
+            self.start(self.a)
+        self.assertEqual((self.peer_row(self.a, 'AIJ-HP')[:2], self.a.q('SELECT count(*) FROM keys WHERE pushed = 1')), ((0, 1), 2))
+        self.assertEqual(self.a.sync()['pushed'], 2)
+        lines = self.gen_lines(self.a, 1)
+        self.assertEqual((sum(l['type'] == 'chunk' for l in lines), sum(l['type'] == 'vec' for l in lines)), (2, 2))
+        self.assertEqual((self.peer_row(self.a, 'AIJ-HP'), self.a.sync()['pushed']), ((1, 1, '[]', None), 0))
+
+    def test_a_start_takes_a_cipher_only_with_a_key(self):
+        for cipher, key in (('sqlcipher', None), (None, b'k' * 32), ('rot13', b'k' * 32)):
+            with self.assertRaises(ValueError):
+                cgsync.start_generation(self.a.conn, os.path.join(self.share, 'AIJ-HP'), 'AIJ-HP', cipher, key)
+        self.assertEqual((os.path.exists(os.path.join(self.share, 'AIJ-HP')), self.a.conn.in_transaction), (False, False))
+
+    def test_pending(self):
+        pending = lambda: cgsync.pending(self.a.conn)
+        self.assertFalse(pending())
+        self.a.index()  # records not out
+        self.assertTrue(pending())
+        self.a.sync()
+        self.assertFalse(pending())
+        self.a.embed()  # vectors not out
+        self.assertTrue(pending())
+        self.a.sync()
+        self.assertFalse(pending())
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))  # a forget not out
+        self.assertTrue(pending())
+        self.a.sync()
+        self.assertFalse(pending())
+        self.b.index()
+        self.b.sync()
+        self.a.sync()  # records that came from B are not ours to send
+        self.assertFalse(pending())
 
     def test_cli_sync_and_forget(self):
         self.a.index()
