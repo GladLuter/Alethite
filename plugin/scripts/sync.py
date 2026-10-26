@@ -406,6 +406,11 @@ def _refusal(gen, key, peer, strict):
         return str(e)
 
 
+def _passing(e):
+    """A share that hiccups or an index held by another run: no verdict on what was being read, so nothing is called broken for it."""
+    return isinstance(e, memdb.db_errors()) or (isinstance(e, OSError) and not isinstance(e, gzip.BadGzipFile))
+
+
 def _pull(conn, machine_dir, peer, own, key, model, digest, deadline, now, report, gen=None):
     """Take in the batches of `peer` (in its current generation, `gen` when the caller has it) that are new here, in number order. A broken
     or missing one stops that computer: its later batches wait, and the error is reported on every sync until it is fixed or skipped by hand
@@ -434,8 +439,7 @@ def _pull(conn, machine_dir, peer, own, key, model, digest, deadline, now, repor
                 _import(conn, os.path.join(gen.path, names[n]), peer, gen, n, own, key, model, digest, report)
             except Exception as e:
                 # a share that hiccups or an index held by another run is no broken batch: no skip is offered, the next sync tries again
-                passing = isinstance(e, memdb.db_errors()) or (isinstance(e, OSError) and not isinstance(e, gzip.BadGzipFile))
-                error = t('batch_unreadable' if passing else 'batch_broken', n=n, machine=peer, e='%s: %s' % (type(e).__name__, e))
+                error = t('batch_unreadable' if _passing(e) else 'batch_broken', n=n, machine=peer, e='%s: %s' % (type(e).__name__, e))
                 break
         elif any(k > n for k in names):
             error = t('batch_missing', n=n, machine=peer)
@@ -493,6 +497,59 @@ def _facts(folder):
         return []
 
 
+def _memory_file(gen, machine, project, secret):
+    """Path and aad of the one sealed memory file of `project` in an encrypted generation: its name says nothing, and the aad ties what is
+    in it to that place, so a file moved under another project's name does not open."""
+    name = crypto.opaque(secret, project)
+    return os.path.join(gen.path, 'memory', name + crypto.EXT[gen.cipher]), '%s/%d/memory/%s' % (machine, gen.n, name)
+
+
+def _read_facts(gen, machine, project, secret):
+    """{name: bytes} of the facts `machine` shares for `project` in generation `gen`: a file per fact in an open one, a single sealed file in
+    an encrypted one. The share is untrusted: a sealed file that is not what it says, or holds a name that is no fact file (one that leads
+    out of the memory folder, MEMORY.md), is a ValueError and none of it is used."""
+    if not gen.cipher:
+        folder = os.path.join(gen.path, 'memory', project_folder(project))
+        return {n: _read(os.path.join(folder, n)) for n in _facts(folder)}
+    path, aad = _memory_file(gen, machine, project, secret)
+    try:
+        data = _read(path)
+    except FileNotFoundError:
+        return {}
+    lines = crypto.unseal(data, gen.cipher, secret, aad)
+    head = json.loads(lines[0])
+    if not (isinstance(head, dict) and head.get('type') == 'memory' and head.get('machine') == machine and head.get('gen') == gen.n):
+        raise ValueError(t('memory_bad', machine=machine))
+    facts = {}
+    for line in lines[1:]:
+        if line:
+            o = json.loads(line)
+            if not (o['name'].endswith('.md') and o['name'].lower() != 'memory.md' and not _BAD_NAME.search(o['name'])):
+                raise ValueError(t('memory_bad', machine=machine))
+            facts[o['name']] = base64.b64decode(o['data'], validate=True)
+    return facts
+
+
+def _write_facts(gen, machine, project, secret, facts):
+    """Add `facts` ({name: bytes}) to those of `machine` for `project` in `gen`; the others stay. An encrypted generation has one file: it is
+    read, extended and put back whole (tmp + replace), and only when that changes it."""
+    if not gen.cipher:
+        folder = os.path.join(gen.path, 'memory', project_folder(project))
+        os.makedirs(folder, exist_ok=True)
+        for name, data in facts.items():
+            _put(os.path.join(folder, name), data)
+        return
+    have = _read_facts(gen, machine, project, secret)
+    merged = {**have, **facts}
+    if merged == have:
+        return
+    path, aad = _memory_file(gen, machine, project, secret)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    head = _dumps({'type': 'memory', 'machine': machine, 'gen': gen.n})
+    _put(path, crypto.seal([head] + [_dumps({'name': n, 'data': base64.b64encode(d).decode('ascii')}) for n, d in sorted(merged.items())],
+                           gen.cipher, secret, aad))
+
+
 def _pointer(name, data):
     """The line of MEMORY.md that points to a fact, in the form of Claude Code's auto-memory: its name and description from the frontmatter."""
     m = re.match(r'---\r?\n(.*?)\r?\n---', data.decode('utf-8', errors='replace'), re.S)
@@ -501,32 +558,46 @@ def _pointer(name, data):
     return '- [%s](%s)' % (title, name) + (' — ' + front['description'] if front.get('description') else '')
 
 
-def sync_memory(conn, sync_dir, machine, peers, memory_dir, key):
+def sync_memory(conn, sync_dir, machine, peers, memory_dir, key, gens, secret, errors=None):
     """Facts made on this computer go into its folder; facts of the other computers come into `memory_dir` when it lacks them. A file here
-    is never overwritten unless it is a copy taken in earlier and left as it was; a fact the owner deleted after it came does not come back."""
+    is never overwritten unless it is a copy taken in earlier and left as it was; a fact the owner deleted after it came does not come back.
+    `key` is the project's; `gens` holds the current generation of this computer and of each of `peers`, `secret` the encryption key or None.
+    A computer whose generation we may not read (`_refusal`) is passed over, its batch pull told why; a memory file that cannot be read is an
+    entry in `errors`, and none of its facts come in (ours is then not written over)."""
     if not os.path.isdir(memory_dir):
         raise FileNotFoundError(t('memory_dir_missing', dir=memory_dir))
-    sub = project_folder(key)
+    errors = [] if errors is None else errors
     out = {'pushed': 0, 'pulled': 0, 'conflicts': 0}
     taken = {name: (src, src_name, h) for name, src, src_name, h in conn.execute(
         'SELECT name, source, src_name, hash FROM mem_files WHERE project = ?', (key,))}
-    mine = os.path.join(sync_dir, machine, 'memory', sub)
-    for name in _facts(memory_dir):
-        # a copy from another computer is not ours to push: it would come back to where it came from
-        if name in taken or any(name[:-3].endswith('--' + p) for p in peers):
-            continue
-        data = _read(os.path.join(memory_dir, name))
-        target = os.path.join(mine, name)
-        if os.path.isfile(target) and _read(target) == data:
-            continue
-        os.makedirs(mine, exist_ok=True)
-        _put(target, data)
-        out['pushed'] += 1
+
+    def read(gen, who):
+        try:
+            return _read_facts(gen, who, key, secret)
+        except Exception as e:
+            if _passing(e):
+                raise
+            errors.append({'where': 'memory', 'machine': who, 'error': t('memory_broken', machine=who, e='%s: %s' % (type(e).__name__, e))})
+
+    mine, new = read(gens[machine], machine), {}
+    if mine is not None:
+        for name in _facts(memory_dir):
+            # a copy from another computer is not ours to push: it would come back to where it came from
+            if name in taken or any(name[:-3].endswith('--' + p) for p in peers):
+                continue
+            data = _read(os.path.join(memory_dir, name))
+            if mine.get(name) != data:
+                new[name] = data
+        if new:
+            _write_facts(gens[machine], machine, key, secret, new)
+    out['pushed'] = len(new)
     added = []
     for peer in peers:
-        theirs = os.path.join(sync_dir, peer, 'memory', sub)
-        for name in _facts(theirs):
-            data = _read(os.path.join(theirs, name))
+        if peer not in gens or _refusal(gens[peer], secret, peer, True):
+            continue
+        theirs = read(gens[peer], peer) or {}
+        for name in sorted(theirs):
+            data = theirs[name]
             h = _hash(data)
             if any(r[0] == peer and r[1] == name and r[2] == h for r in taken.values()):
                 continue  # this version came in already, wherever it went since
@@ -604,10 +675,15 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
             _push(conn, gen, machine, key, digest_once, deadline, now, report)
         for peer in peers:
             _pull(conn, os.path.join(sync_dir, peer), peer, False, key, model, digest_once, deadline, now, report)
-        if memory_dir:
+        if memory_dir and gen:  # none of it while our own new generation is blocked: where our facts would go is not decided yet
+            gens = {machine: gen}
+            for p in peers:
+                with contextlib.suppress(OSError):  # a share that hiccups: the pull told, and that computer's facts wait for the next sync
+                    gens[p] = generation(os.path.join(sync_dir, p))
             conn.execute('BEGIN IMMEDIATE')
             with conn:
-                report['memory'] = sync_memory(conn, sync_dir, machine, peers, memory_dir, project_key(project_cwd or os.getcwd(), home))
+                report['memory'] = sync_memory(conn, sync_dir, machine, peers, memory_dir, project_key(project_cwd or os.getcwd(), home), gens, key,
+                                               report['errors'])
     except Exception as e:
         report['errors'].append({'where': 'sync', 'error': str(e) if isinstance(e, (OSError, ValueError)) and str(e) else '%s: %s' % (type(e).__name__, e)})
     report['peers'] = {m: last for m, last in conn.execute('SELECT machine, last_batch FROM peers WHERE machine != ? ORDER BY machine', (machine,))}

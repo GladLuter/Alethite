@@ -1,5 +1,6 @@
 """Stage 2 acceptance (§9): two computers, each with its own home, transcripts and index, and a temporary folder for the network share.
 Every transcript here is synthetic."""
+import base64
 import gzip
 import json
 import os
@@ -1071,6 +1072,171 @@ class SyncTest(unittest.TestCase):
             cgsync._write(gen, 1, ['{"x":1}'], 'AIJ-HP', b'k' * 32)
         with open(os.path.join(self.root, 'batch-00000001.sqlcipher'), 'rb') as f:
             self.assertEqual(f.read(), b'')
+
+    # 16. the short memory with a key: one sealed file per project, opaque in name
+    def memory_dir(self, c, n=1):
+        return os.path.join(self.gen_dir(c, n), 'memory')
+
+    def sealed_memory(self, c, key, header, entries, cipher='sqlcipher'):
+        """Replace the sealed memory file of C's project by what the test wants in it, sealed to its right place."""
+        name = crypto.opaque(key, project_key(c.cwd, c.home))
+        lines = [json.dumps(header)] + [json.dumps({'name': n, 'data': base64.b64encode(d).decode('ascii')}) for n, d in entries]
+        with open(os.path.join(self.memory_dir(c), name + crypto.EXT[cipher]), 'wb') as f:
+            f.write(crypto.seal(lines, cipher, key, '%s/1/memory/%s' % (c.name, name)))
+
+    def test_memory_encrypted(self):
+        key = secrets.token_bytes(32)
+        for cipher in crypto.CIPHERS:
+            with self.subTest(cipher=cipher):
+                a, b = self.pair('memory-' + cipher)
+                a.fact('fact-one.md', 'памятьмаркер')
+                a.sync(key=key, cipher=cipher)
+                self.assertTrue(re.fullmatch(r'[0-9a-f]{32}' + re.escape(crypto.EXT[cipher]), ''.join(os.listdir(self.memory_dir(a)))))
+                for d, dirs, files in os.walk(a.share):
+                    for n in dirs + files:
+                        self.assertNotIn('fact-one', n)
+                    for n in files:
+                        with open(os.path.join(d, n), 'rb') as f:
+                            data = f.read()
+                        self.assertNotIn('памятьмаркер'.encode('utf-8'), data, os.path.join(d, n))
+                self.assertEqual(b.sync(key=key, cipher=cipher)['memory'], {'pushed': 0, 'pulled': 1, 'conflicts': 0})
+                with open(os.path.join(a.memory, 'fact-one.md'), 'rb') as f, open(os.path.join(b.memory, 'fact-one.md'), 'rb') as g:
+                    self.assertEqual(f.read(), g.read())
+                self.assertEqual(b.read('MEMORY.md'), '- [fact-one](fact-one.md) — d\n')
+
+    def test_memory_plain_refused(self):
+        key = secrets.token_bytes(32)
+        a, b = self.pair('memory-plain')
+        b.fact('open.md', 'открыто')
+        b.sync()
+        r = a.sync(key=key)
+        self.assertEqual([(e['where'], e['error']) for e in r['errors']], [('pull', t('peer_plain', machine='MTLAPTOP'))])
+        self.assertEqual((r['memory'], os.listdir(a.memory)), ({'pushed': 0, 'pulled': 0, 'conflicts': 0}, []))
+        b.fact('open.md', 'открыто снова')
+        self.assertEqual(b.sync()['memory']['pulled'], 0)  # and the other way round: B, with no key, takes nothing sealed
+        self.assertEqual(os.listdir(b.memory), ['open.md'])
+
+    def test_memory_of_another_key_is_not_read(self):
+        a, b = self.pair('memory-other-key')
+        a.fact('f.md', 'v1')
+        a.sync(key=secrets.token_bytes(32))
+        r = b.sync(key=secrets.token_bytes(32))
+        self.assertEqual([(e['where'], e['error']) for e in r['errors']], [('pull', t('peer_other_key', machine='AIJ-HP'))])
+        self.assertEqual((r['memory']['pulled'], os.listdir(b.memory)), (0, []))
+
+    def test_memory_swapped_projects(self):
+        key = secrets.token_bytes(32)
+        a, b = self.pair('memory-swapped')
+        a.fact('one.md', 'первый')
+        a.sync(key=key)
+        other = os.path.join(a.dir, 'other-memory')
+        os.makedirs(other)
+        with open(os.path.join(other, 'two.md'), 'w', encoding='utf-8') as f:
+            f.write('второй')
+        cgsync.sync(a.conn, a.share, a.name, memory_dir=other, project_cwd=a.home + '\\work\\other', home=a.home, digest=lambda m: None, key=key)
+        folder = self.memory_dir(a)
+        x, y = sorted(os.listdir(folder))
+        os.rename(os.path.join(folder, x), os.path.join(folder, 'swap'))
+        os.rename(os.path.join(folder, y), os.path.join(folder, x))
+        os.rename(os.path.join(folder, 'swap'), os.path.join(folder, y))
+        r = b.sync(key=key)
+        self.assertEqual([(e['where'], e['machine'], e['error']) for e in r['errors']],
+                         [('memory', 'AIJ-HP', t('memory_broken', machine='AIJ-HP', e='ValueError: ' + t('seal_broken')))])
+        self.assertEqual((r['memory']['pulled'], os.listdir(b.memory)), (0, []))
+
+    def test_memory_file_that_is_not_what_it_says_writes_no_fact(self):
+        key = secrets.token_bytes(32)
+        good = {'type': 'memory', 'machine': 'AIJ-HP', 'gen': 1}
+        for tag, header, entries in (('machine', {**good, 'machine': 'THIRD'}, [('f.md', b'x')]),
+                                     ('gen', {**good, 'gen': 2}, [('f.md', b'x')]),
+                                     ('type', {**good, 'type': 'batch'}, [('f.md', b'x')]),
+                                     ('up', good, [('ok.md', b'x'), ('..\\evil.md', b'x')]),
+                                     ('slash', good, [('sub/evil.md', b'x')]),
+                                     ('index', good, [('MEMORY.md', b'x')]),
+                                     ('kind', good, [('f.txt', b'x')])):
+            with self.subTest(tag):
+                a, b = self.pair('memory-bad-' + tag)
+                a.fact('f.md', 'v1')
+                a.sync(key=key)
+                self.sealed_memory(a, key, header, entries)
+                r = b.sync(key=key)
+                self.assertEqual([(e['where'], e['machine']) for e in r['errors']], [('memory', 'AIJ-HP')])
+                self.assertEqual((r['memory'], os.listdir(b.memory)), ({'pushed': 0, 'pulled': 0, 'conflicts': 0}, []))
+                self.assertFalse(os.path.exists(os.path.join(os.path.dirname(b.memory), 'evil.md')))  # out of the folder, where '..' leads
+
+    def test_an_own_memory_file_that_cannot_be_read_is_told_and_not_written_over(self):
+        key = secrets.token_bytes(32)
+        a, b = self.pair('memory-own-broken')
+        a.fact('f1.md', 'v1')
+        a.sync(key=key)
+        path = os.path.join(self.memory_dir(a), os.listdir(self.memory_dir(a))[0])
+        with open(path, 'wb') as f:
+            f.write(b'not a sealed file')
+        a.fact('f2.md', 'v2')
+        b.fact('f3.md', 'v3')
+        b.sync(key=key)
+        r = a.sync(key=key)
+        self.assertEqual([(e['where'], e['machine']) for e in r['errors']], [('memory', 'AIJ-HP')])
+        self.assertEqual((r['memory']['pushed'], r['memory']['pulled']), (0, 1))  # the others' facts come all the same
+        with open(path, 'rb') as f:
+            self.assertEqual(f.read(), b'not a sealed file')
+
+    def test_encrypted_memory_is_rewritten_only_on_a_change_and_keeps_its_facts(self):
+        key = secrets.token_bytes(32)
+        for cipher in crypto.CIPHERS:
+            with self.subTest(cipher=cipher):
+                a, b = self.pair('memory-rewrite-' + cipher)
+                a.fact('f1.md', 'v1')
+                a.sync(key=key, cipher=cipher)
+                path = os.path.join(self.memory_dir(a), os.listdir(self.memory_dir(a))[0])
+                with open(path, 'rb') as f:
+                    first = f.read()
+                self.assertEqual(a.sync(key=key, cipher=cipher)['memory'], {'pushed': 0, 'pulled': 0, 'conflicts': 0})
+                with open(path, 'rb') as f:
+                    self.assertEqual(f.read(), first)  # no seal comes out the same twice: the same bytes are no rewrite
+                os.remove(os.path.join(a.memory, 'f1.md'))
+                a.fact('f2.md', 'v2')
+                self.assertEqual(a.sync(key=key, cipher=cipher)['memory']['pushed'], 1)
+                b.sync(key=key, cipher=cipher)
+                self.assertEqual(sorted(os.listdir(b.memory)), ['MEMORY.md', 'f1.md', 'f2.md'])  # a fact deleted here stays in the share
+                a.fact('f2.md', 'v3')
+                a.sync(key=key, cipher=cipher)
+                self.assertEqual(b.sync(key=key, cipher=cipher)['memory']['pulled'], 1)
+                self.assertIn('v3', b.read('f2.md'))
+                self.assertEqual(b.read('MEMORY.md').count('(f2.md)'), 1)
+
+    def test_write_facts_adds_to_a_sealed_file_and_touches_it_only_on_a_change(self):
+        key, gen = secrets.token_bytes(32), cgsync.Gen(1, os.path.join(self.root, 'gen-0001'), 'cryptography', 'ab' * 8)
+        write = lambda facts: cgsync._write_facts(gen, 'AIJ-HP', 'proj', key, facts)
+        read = lambda: cgsync._read_facts(gen, 'AIJ-HP', 'proj', key)
+        write({})
+        self.assertEqual((read(), os.path.exists(gen.path)), ({}, False))  # nothing to say, no file
+        write({'a.md': b'one', 'b.md': 'два'.encode('utf-8')})
+        path = os.path.join(gen.path, 'memory', os.listdir(os.path.join(gen.path, 'memory'))[0])
+        with open(path, 'rb') as f:
+            first = f.read()
+        write({'a.md': b'one'})
+        with open(path, 'rb') as f:
+            self.assertEqual(f.read(), first)
+        write({'a.md': b'uno', 'c.md': b'three'})
+        self.assertEqual(read(), {'a.md': b'uno', 'b.md': 'два'.encode('utf-8'), 'c.md': b'three'})
+        self.assertEqual(os.listdir(os.path.dirname(path)), [os.path.basename(path)])  # no tmp left
+
+    def test_memory_of_an_open_generation_after_the_first_lies_under_it(self):
+        self.start(self.a)
+        self.a.fact('f.md', 'v1')
+        self.a.sync()
+        folder = os.path.join(self.memory_dir(self.a), cgsync.project_folder('~\\work\\proj'))
+        self.assertEqual(os.listdir(folder), ['f.md'])
+        self.assertFalse(os.path.exists(os.path.join(self.share, 'AIJ-HP', 'memory')))
+        self.assertEqual(self.b.sync()['memory'], {'pushed': 0, 'pulled': 1, 'conflicts': 0})
+
+    def test_no_memory_step_while_the_new_generation_waits(self):
+        b, own = self.reinstalled('memory-waits')
+        self.break_line(b, 1, 3)
+        b.fact('f.md', 'v1')
+        r = b.sync(key=secrets.token_bytes(32))
+        self.assertEqual((r['memory'], os.listdir(own)), (None, ['batch-00000001.jsonl.gz']))
 
     def test_cli_sync_and_forget(self):
         self.a.index()

@@ -80,6 +80,8 @@ EN = {
     'skip_batch_unknown': 'skip-batch: no computer {machine} in the sync folder (known: {known})',
     'skip_batch_not_next': 'skip-batch: {machine} waits at batch {want}, not {n}; only that one can be skipped',
     'memory_dir_missing': 'the auto-memory folder is not there: {dir}',
+    'memory_broken': 'the short memory of {machine} in the sync folder cannot be read ({e}); nothing of it is taken or changed',
+    'memory_bad': 'a memory file of {machine} is not what it should be: another computer or generation, or a name that no fact file has',
 
     # crypto.py: the encryption key and the recovery code
     'code_bad': 'the recovery code is not right: check every group of four characters against the one that was shown',
@@ -165,6 +167,8 @@ RU = {
     'skip_batch_unknown': 'skip-batch: компьютера {machine} в папке синхронизации нет (известны: {known})',
     'skip_batch_not_next': 'skip-batch: {machine} ждёт на пачке {want}, а не {n}; пропустить можно только её',
     'memory_dir_missing': 'папки автопамяти нет: {dir}',
+    'memory_broken': 'короткая память {machine} в папке синхронизации не читается ({e}); ничего из неё не берётся и не меняется',
+    'memory_bad': 'файл памяти {machine} не тот, что должен быть: чужой компьютер или поколение, либо имя, какого у файла факта быть не может',
 
     'code_bad': 'код восстановления неверный: сверьте каждую группу из четырёх символов с показанным',
     'key_unreadable': 'ключ шифрования в файле настроек не читается (он открывается только для пользователя Windows, который его сохранил): введите код восстановления командой /cg-encrypt join',
@@ -249,6 +253,8 @@ UK = {
     'skip_batch_unknown': 'skip-batch: комп\'ютера {machine} у теці синхронізації немає (відомі: {known})',
     'skip_batch_not_next': 'skip-batch: {machine} чекає на пачці {want}, а не {n}; пропустити можна лише її',
     'memory_dir_missing': "папки автопам'яті немає: {dir}",
+    'memory_broken': "коротка пам'ять {machine} у папці синхронізації не читається ({e}); нічого з неї не береться і не змінюється",
+    'memory_bad': "файл пам'яті {machine} не той, що має бути: чужий комп'ютер або покоління, чи ім'я, якого файл факту мати не може",
 
     'code_bad': 'код відновлення хибний: звірте кожну групу з чотирьох символів із показаним',
     'key_unreadable': 'ключ шифрування у файлі налаштувань не читається (він відкривається лише для користувача Windows, який його зберіг): введіть код відновлення командою /cg-encrypt join',
