@@ -170,9 +170,9 @@ class SyncTest(unittest.TestCase):
         self.ready(self.a)
         real = cgsync._write
 
-        def cut(folder, n, lines):
-            real(folder, n, lines)
-            os.rename(os.path.join(folder, 'batch-%08d.jsonl.gz' % n), os.path.join(folder, 'batch-%08d.jsonl.gz.tmp' % n))
+        def cut(gen, n, lines, machine, key):
+            real(gen, n, lines, machine, key)
+            os.rename(os.path.join(gen.path, 'batch-%08d.jsonl.gz' % n), os.path.join(gen.path, 'batch-%08d.jsonl.gz.tmp' % n))
             raise OSError('the cable is out')
 
         with mock.patch.object(cgsync, '_write', cut):
@@ -188,8 +188,8 @@ class SyncTest(unittest.TestCase):
         self.ready(self.a)
         real = cgsync._write
 
-        def written_then_lost(folder, n, lines):  # the batch is out, then the run dies before the index marks it
-            real(folder, n, lines)
+        def written_then_lost(gen, n, lines, machine, key):  # the batch is out, then the run dies before the index marks it
+            real(gen, n, lines, machine, key)
             raise OSError('the laptop fell asleep')
 
         with mock.patch.object(cgsync, '_write', written_then_lost):
@@ -577,6 +577,178 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(r['pushed'], 42)
         r = self.b.sync()
         self.assertEqual((r['pulled'], r['vectors']['pulled'], r['errors']), (42, 42, []))
+
+    # 14. generations of a computer's folder (stage 5): the others read a new one again from its first batch
+    def start(self, c):
+        return cgsync.start_generation(c.conn, os.path.join(self.share, c.name), c.name, None, None)
+
+    def gen_dir(self, c, n):
+        return os.path.join(self.share, c.name, 'gen-%04d' % n)
+
+    def gen_lines(self, c, n):
+        out = []
+        for b in sorted(cgsync._batches(self.gen_dir(c, n))):
+            with gzip.open(os.path.join(self.gen_dir(c, n), 'batch-%08d.jsonl.gz' % b), 'rt', encoding='utf-8') as f:
+                out += [json.loads(l) for l in f if l.strip()]
+        return out
+
+    def peer_row(self, c, peer):
+        return tuple(c.conn.execute('SELECT gen, last_batch, skipped, error FROM peers WHERE machine = ?', (peer,)).fetchone())
+
+    def test_new_generation_is_read_again(self):
+        self.exchange()
+        self.assertEqual(self.start(self.a), cgsync.Gen(1, self.gen_dir(self.a, 1), None, None))
+        r = self.a.sync()
+        self.assertEqual(r['errors'], [])
+        lines = self.gen_lines(self.a, 1)
+        self.assertEqual(sum(l['type'] == 'chunk' for l in lines), 2)  # its own two, not the laptop's
+        self.assertEqual({l['gen'] for l in lines if l['type'] == 'header'}, {1})
+        before = (self.b.rows(), self.b.vecs())
+        r = self.b.sync()
+        self.assertEqual((r['errors'], r['pulled'], r['batches']['pulled']), ([], 0, 1))  # read from batch 1; nothing is new in it
+        self.assertEqual((self.b.rows(), self.b.vecs()), before)
+        self.assertEqual(self.peer_row(self.b, 'AIJ-HP'), (1, 1, '[]', None))
+        self.assertEqual(self.b.sync()['batches']['pulled'], 0)  # and once only
+
+    def test_generation_clears_skip(self):
+        self.ready(self.a)
+        self.a.sync()
+        self.break_line(self.a, 1, 3)
+        self.assertEqual(self.b.sync()['errors'][0]['batch'], 1)
+        cgsync.skip_batch(self.b.conn, 'AIJ-HP', 1)
+        self.assertEqual(self.b.sync()['errors'], [])
+        self.assertEqual(self.peer_row(self.b, 'AIJ-HP')[:3], (0, 1, '[1]'))
+        self.start(self.a)
+        self.a.sync()
+        r = self.b.sync()  # the new generation holds what the skipped batch did
+        self.assertEqual((r['errors'], r['pulled']), ([], 2))
+        self.assertEqual(self.peer_row(self.b, 'AIJ-HP'), (1, 1, '[]', None))
+
+    def test_restored_index_reads_own_generation(self):
+        self.ready(self.a)
+        self.start(self.a)
+        self.a.sync()
+        self.a.close()
+        os.remove(self.a.db)
+        self.a.open()
+        r = self.a.sync()
+        self.assertEqual((r['pulled'], r['vectors']['pulled'], r['pushed'], r['errors']), (2, 2, 0, []))
+        self.assertEqual((sorted(cgsync._batches(self.gen_dir(self.a, 1))), os.listdir(os.path.join(self.share, 'AIJ-HP'))), ([1], ['gen-0001']))
+        self.assertEqual(self.peer_row(self.a, 'AIJ-HP'), (1, 1, '[]', None))
+
+    def test_new_generation_carries_forgets(self):
+        self.exchange()
+        pos = self.a.q("SELECT pos FROM chunks WHERE text = 'кэш протух на ноутбуке'")
+        memdb.forget(self.a.conn, 'SB', pos)
+        self.a.sync()  # the forget is in the batch of generation 0, which a new reader never looks at
+        self.start(self.a)
+        self.a.sync()
+        c = self.computer('THIRD')  # the laptop's batch still holds the record
+        r = c.sync()
+        self.assertEqual((r['errors'], r['forgotten']), ([], 1))
+        self.assertEqual(c.texts(), sorted(['ёжик в тумане на i3', 'ответ про ёжика', 'ответ про кэш']))
+
+    def test_old_generations(self):
+        self.a.fact('f.md', 'v1')
+        self.exchange()
+        own = os.path.join(self.share, 'AIJ-HP')
+        self.assertEqual(cgsync.old_generations(own), [])  # generation 0 is the current one
+        self.start(self.a)
+        self.a.sync()
+        names = lambda: sorted(os.path.basename(p) for p in cgsync.old_generations(own))
+        self.assertEqual(names(), ['batch-00000001.jsonl.gz', 'memory'])
+        open(os.path.join(own, 'batch-00000002.jsonl.gz.tmp'), 'w').close()
+        self.start(self.a)
+        self.assertEqual(names(), ['batch-00000001.jsonl.gz', 'batch-00000002.jsonl.gz.tmp', 'gen-0001', 'memory'])
+
+    def test_a_start_that_fails_leaves_no_generation_and_changes_nothing(self):
+        self.exchange()
+        own = os.path.join(self.share, 'AIJ-HP')
+        marks = lambda: (self.peer_row(self.a, 'AIJ-HP'), self.a.q('SELECT count(*) FROM keys WHERE pushed = 1'))
+        other = connect(self.a.db, home=self.a.home)
+        self.addCleanup(other.close)
+        other.execute('BEGIN IMMEDIATE')  # another run holds the index
+        self.a.conn.execute('PRAGMA busy_timeout = 0')
+        with self.assertRaises(memdb.db_errors()):
+            self.start(self.a)
+        self.assertEqual([n for n in os.listdir(own) if n.startswith('gen-')], [])  # the label waits for the lock
+        other.rollback()
+        pos = self.a.q("SELECT pos FROM chunks WHERE text = 'кэш протух на ноутбуке'")
+        memdb.forget(self.a.conn, 'SB', pos)
+        before = marks()
+        with mock.patch.object(memdb, 'forget_key', side_effect=RuntimeError('boom')):  # dies after the label is out
+            with self.assertRaises(RuntimeError):
+                self.start(self.a)
+        self.assertEqual((marks(), cgsync.generation(own).n, [n for n in os.listdir(own) if n.startswith('gen-')]), (before, 0, ['gen-0001']))
+        self.assertEqual(os.listdir(os.path.join(own, 'gen-0001')), [])  # no label, no half-written one
+        self.assertEqual(self.start(self.a).n, 2)  # and the next start goes beyond the empty folder
+
+    def test_a_generation_with_no_readable_label_is_ignored(self):  # the share is untrusted input
+        own, fp = os.path.join(self.root, 'M'), 'ab' * 8
+        self.assertEqual(cgsync.generation(own), cgsync.Gen(0, own, None, None))  # no folder at all
+        good = {'format': 1, 'gen': 2, 'cipher': 'sqlcipher', 'fingerprint': fp}
+
+        def put(n, text):
+            os.makedirs(os.path.join(own, 'gen-%04d' % n), exist_ok=True)
+            with open(os.path.join(own, 'gen-%04d' % n, 'generation.json'), 'w') as f:
+                f.write(text)
+
+        os.makedirs(os.path.join(own, 'gen-0001'))  # no label yet: a start cut short
+        self.assertEqual(cgsync.generation(own).n, 0)
+        put(1, json.dumps({**good, 'gen': 1, 'cipher': None, 'fingerprint': None}))
+        bad = ['', '{', '[]', '"x"', '[' * 5000, '1', json.dumps({**good, 'format': 2}), json.dumps({**good, 'gen': 3}),
+               json.dumps({**good, 'cipher': 'rot13'}), json.dumps({**good, 'cipher': ['sqlcipher']}), json.dumps({**good, 'fingerprint': None}),
+               json.dumps({**good, 'fingerprint': fp.upper()}), json.dumps({**good, 'fingerprint': fp[:-1]}),
+               json.dumps({k: v for k, v in good.items() if k != 'cipher'})]
+        for text in bad:
+            with self.subTest(text=text[:40]):
+                put(2, text)
+                self.assertEqual(cgsync.generation(own), cgsync.Gen(1, os.path.join(own, 'gen-0001'), None, None))
+        put(2, json.dumps(good))
+        self.assertEqual(cgsync.generation(own), cgsync.Gen(2, os.path.join(own, 'gen-0002'), 'sqlcipher', fp))
+        os.makedirs(os.path.join(own, 'gen-0007'))  # unreadable, yet the next number goes beyond it
+        self.assertEqual(cgsync.start_generation(self.a.conn, own, 'AIJ-HP', 'sqlcipher', b'k' * 32).n, 8)
+
+    def test_a_peer_first_seen_in_a_generation_is_read_once_and_can_skip_a_broken_batch(self):
+        self.ready(self.a)
+        self.start(self.a)
+        self.a.sync()
+        self.assertEqual(self.b.sync()['batches']['pulled'], 1)
+        self.assertEqual((self.b.sync()['batches']['pulled'], self.peer_row(self.b, 'AIJ-HP')), (0, (1, 1, '[]', None)))
+        c = self.computer('THIRD')
+        path = os.path.join(self.gen_dir(self.a, 1), 'batch-00000001.jsonl.gz')
+        with gzip.open(path, 'rt', encoding='utf-8') as f:
+            lines = f.read().split('\n')
+        lines[3] = lines[3][:-7]
+        with gzip.open(path, 'wt', encoding='utf-8') as f:
+            f.write('\n'.join(lines))
+        self.assertEqual(c.sync()['errors'][0]['batch'], 1)
+        cgsync.skip_batch(c.conn, 'AIJ-HP', 1)  # the mark of the generation must stay, or the next sync would clear the skip
+        r = c.sync()
+        self.assertEqual((r['errors'], self.peer_row(c, 'AIJ-HP')), ([], (1, 1, '[1]', None)))
+
+    def set_gen(self, path, gen):
+        with gzip.open(path, 'rt', encoding='utf-8') as f:
+            lines = f.read().split('\n')
+        head = json.loads(lines[0])
+        head.pop('gen', None)
+        if gen is not None:
+            head['gen'] = gen
+        with gzip.open(path, 'wt', encoding='utf-8') as f:
+            f.write('\n'.join([json.dumps(head)] + lines[1:]))
+
+    def test_a_batch_names_its_generation(self):
+        self.ready(self.a)
+        self.a.sync()
+        path = os.path.join(self.share, 'AIJ-HP', 'batch-00000001.jsonl.gz')
+        self.set_gen(path, None)  # a batch of before stage 5 has no such field: generation 0
+        self.assertEqual((self.b.sync()['errors'], self.b.rows()), ([], 2))
+        self.start(self.a)
+        self.a.sync()
+        self.set_gen(os.path.join(self.gen_dir(self.a, 1), 'batch-00000001.jsonl.gz'), 0)  # a copy from another generation
+        r = self.b.sync()
+        self.assertEqual((r['errors'][0]['batch'], self.peer_row(self.b, 'AIJ-HP')[1]), (1, 0))
+        self.assertIn('AIJ-HP', r['errors'][0]['error'])
 
     def test_cli_sync_and_forget(self):
         self.a.index()

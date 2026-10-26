@@ -1,7 +1,10 @@
 """Shared memory of the owner's computers through one folder (a network share), stage 2 design §5. Every computer writes only into its
 own subfolder, in batches that never change once they have their name; the others only read them. No database file is ever shared:
-SQLite locks do not hold on network file systems, and two writers would break the file."""
+SQLite locks do not hold on network file systems, and two writers would break the file. A computer that has to publish everything again
+(in another format) starts a new generation of its folder, gen-NNNN/; the others read it from its first batch."""
 import base64
+import collections
+import contextlib
 import datetime
 import gzip
 import hashlib
@@ -12,6 +15,7 @@ import socket
 import time
 import urllib.request
 
+import crypto
 import memdb
 from texts import t
 from transcripts import project_key
@@ -19,8 +23,10 @@ from vectors import DIMS, MODEL, OLLAMA
 
 FORMAT = 1
 BATCH_BYTES = 8 * 2 ** 20  # of lines in one batch, about; the first push of a whole history is a few dozen batches
-_BATCH = re.compile(r'batch-(\d{8})\.jsonl\.gz$')
+_GEN = re.compile(r'gen-(?!0+$)(\d{4,9})$')  # not gen-0000: generation 0 is the computer's folder itself
 _BAD_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f]|^\.{1,2}$|[. ]$')
+# a generation of a computer's folder: n 0 is the folder itself (plain, as before stage 5), else its gen-NNNN subfolder; `path` holds the batches
+Gen = collections.namedtuple('Gen', 'n path cipher fingerprint')
 
 
 def machine_name():
@@ -35,13 +41,84 @@ def _dumps(o):
     return json.dumps(o, ensure_ascii=False, separators=(',', ':'))
 
 
-def _batches(folder):
-    """{number: file name} of the finished batches in `folder`; a .tmp is a batch cut short and is no batch."""
+def _batches(folder, ext=crypto.EXT[None]):
+    """{number: file name} of the finished batches in `folder` (`ext` is that of the cipher); a .tmp is a batch cut short and is no batch."""
     try:
         names = os.listdir(folder)
     except FileNotFoundError:
         return {}
-    return {int(m.group(1)): n for n in names for m in [_BATCH.match(n)] if m}
+    pat = re.compile(r'batch-(\d{8})%s$' % re.escape(ext))
+    return {int(m.group(1)): n for n in names for m in [pat.match(n)] if m}
+
+
+# ---- generations: a computer publishes everything again in a new format by starting a new one, which the others read from batch 1
+
+def _gens(machine_dir):
+    """{number: path} of the gen-NNNN folders of a computer, with a readable label or not."""
+    try:
+        names = os.listdir(machine_dir)
+    except FileNotFoundError:
+        return {}
+    return {int(m.group(1)): os.path.join(machine_dir, n) for n in names for m in [_GEN.match(n)] if m}
+
+
+def _label(path, n):
+    """The generation in folder `path` numbered `n`, None unless its label is a readable one. The share is untrusted input: with anything
+    off in the label the folder is ignored whole, and an older generation is the current one."""
+    try:
+        with open(os.path.join(path, 'generation.json'), encoding='utf-8') as f:
+            o = json.loads(f.read(4096))
+        cipher, fp = o['cipher'], o['fingerprint']
+        ok = (o['format'] == FORMAT and o['gen'] == n and cipher in (None, *crypto.CIPHERS)
+              and (cipher is None and fp is None or isinstance(fp, str) and re.fullmatch(r'[0-9a-f]{16}', fp)))
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):
+        return None
+    return Gen(n, path, cipher, fp) if ok else None
+
+
+def generation(machine_dir):
+    """The current generation of a computer's folder: the highest gen-NNNN with a readable label, else generation 0, the folder itself."""
+    for n, path in sorted(_gens(machine_dir).items(), reverse=True):
+        gen = _label(path, n)
+        if gen:
+            return gen
+    return Gen(0, machine_dir, None, None)
+
+
+def old_generations(machine_dir):
+    """Paths of what in a computer's folder is not of its current generation, for a cleanup once the others have read the new one: the
+    batches and memory of generation 0 that lie in the folder itself, and the folders of the generations before the current one."""
+    cur = generation(machine_dir).n
+    if not cur:
+        return []  # generation 0 is the current one: nothing is old
+    return ([os.path.join(machine_dir, n) for n in sorted(os.listdir(machine_dir)) if n.startswith('batch-') or n == 'memory']
+            + [p for n, p in sorted(_gens(machine_dir).items()) if n < cur])
+
+
+def start_generation(conn, machine_dir, machine, cipher, key):
+    """Begin a new generation of our folder: the label, then in one transaction the marks of the old generation are cleared and everything
+    of ours goes out again into the new one (records, vectors, and every forget, which the new readers never saw). The index is locked
+    first: a busy one must not leave a labelled generation whose records were never sent again."""
+    n = max(_gens(machine_dir), default=0) + 1  # beyond every gen-NNNN folder there is, a readable one or not
+    gen = Gen(n, os.path.join(machine_dir, 'gen-%04d' % n), cipher, crypto.fingerprint(key) if key else None)
+    label = os.path.join(gen.path, 'generation.json')
+    conn.execute('BEGIN IMMEDIATE')
+    try:
+        os.makedirs(gen.path)
+        _put(label, _dumps({'format': FORMAT, 'gen': n, 'cipher': cipher, 'fingerprint': gen.fingerprint, 'created': _now()}).encode('utf-8'))
+        conn.execute("INSERT INTO peers(machine, gen) VALUES(?, ?) ON CONFLICT(machine) DO UPDATE SET gen = excluded.gen, last_batch = 0, "
+                     "skipped = '[]', error = NULL", (machine, n))
+        conn.execute('UPDATE keys SET origin = NULL, pushed = 0, vec_pushed = 0 WHERE origin IS NULL OR origin = ?', (machine,))
+        for k in conn.execute('SELECT conv, cls, hash, n FROM forgotten').fetchall():
+            memdb.forget_key(conn, *k)
+        conn.execute("DELETE FROM meta WHERE key = 'share_plain'")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        with contextlib.suppress(OSError):  # without its label the folder is no generation, and the next start goes beyond it
+            os.remove(label)
+        raise
+    return gen
 
 
 def ollama_digest(model, url=OLLAMA, timeout=5):
@@ -105,10 +182,12 @@ def _collect(conn):
     return lines, len(ids), len(vec_ids), len(seqs)
 
 
-def _write(folder, n, lines):
-    """Batch `n` as a whole or not at all: written to a .tmp beside it (a cut leaves only that, and the next run writes it anew), then
-    renamed. A finished batch is never overwritten."""
-    final = os.path.join(folder, 'batch-%08d.jsonl.gz' % n)
+def _write(gen, n, lines, machine, key):
+    """Batch `n` of generation `gen` as a whole or not at all: written to a .tmp beside it (a cut leaves only that, and the next run writes
+    it anew), then renamed. A finished batch is never overwritten."""
+    if gen.cipher:
+        raise NotImplementedError('batches of an encrypted generation are not written yet')  # `machine` and `key` are for those
+    final = os.path.join(gen.path, 'batch-%08d%s' % (n, crypto.EXT[gen.cipher]))
     tmp = final + '.tmp'
     with open(tmp, 'wb') as raw:
         with gzip.GzipFile(filename='', fileobj=raw, mode='wb', mtime=0) as gz:
@@ -121,7 +200,7 @@ def _write(folder, n, lines):
     os.rename(tmp, final)
 
 
-def _push(conn, folder, machine, digest, deadline, now, report):
+def _push(conn, gen, machine, key, digest, deadline, now, report):
     while now() < deadline:
         conn.execute('BEGIN IMMEDIATE')  # also keeps a second sync of this computer from taking the same batch number
         try:
@@ -129,15 +208,15 @@ def _push(conn, folder, machine, digest, deadline, now, report):
             if not lines:
                 conn.rollback()
                 return
-            n = max(_batches(folder), default=0) + 1
+            n = max(_batches(gen.path, crypto.EXT[gen.cipher]), default=0) + 1
             model = memdb.meta(conn, 'embed_model')
-            header = {'type': 'header', 'format': FORMAT, 'machine': machine, 'batch': n, 'model': model, 'dims': DIMS,
+            header = {'type': 'header', 'format': FORMAT, 'machine': machine, 'gen': gen.n, 'batch': n, 'model': model, 'dims': DIMS,
                       'digest': digest(model) if vecs and model else None, 'created': _now()}
-            _write(folder, n, [_dumps(header)] + lines)
+            _write(gen, n, [_dumps(header)] + lines, machine, key)
             # our mark moves on only from the batch before: when our own folder stopped at a broken batch, the batches after it
             # must still be read once it is skipped
-            conn.execute('INSERT INTO peers(machine, last_batch) VALUES(?, ?) ON CONFLICT(machine) DO UPDATE SET last_batch = excluded.last_batch '
-                         'WHERE last_batch = excluded.last_batch - 1', (machine, n))
+            conn.execute('INSERT INTO peers(machine, last_batch, gen) VALUES(?, ?, ?) ON CONFLICT(machine) DO UPDATE SET last_batch = excluded.last_batch '
+                         'WHERE last_batch = excluded.last_batch - 1', (machine, n, gen.n))
             conn.commit()  # if this fails the batch is out and its records go out again next time: a repeat changes nothing anywhere
         except BaseException:
             conn.rollback()
@@ -149,13 +228,17 @@ def _push(conn, folder, machine, digest, deadline, now, report):
 
 # ---- pull: what the other computers pushed, and our own batches when the index here is new
 
-def _import(conn, path, peer, n, own, model, digest, report):
-    """Take in one batch in one transaction: a record, a vector or a forget that is here already changes nothing. Raises on anything broken,
-    and then nothing of the batch is kept."""
+def _import(conn, path, peer, gen, n, own, key, model, digest, report):
+    """Take in one batch of generation `gen` in one transaction: a record, a vector or a forget that is here already changes nothing. Raises
+    on anything broken, and then nothing of the batch is kept."""
+    if gen.cipher:
+        raise NotImplementedError('batches of an encrypted generation are not read yet')  # `key` is for those
     with open(path, 'rb') as f:  # read whole before the write lock: a slow share must not hold the index
         lines = gzip.decompress(f.read()).decode('utf-8').split('\n')
     head = json.loads(lines[0])
-    if not (isinstance(head, dict) and head.get('type') == 'header' and head.get('machine') == peer and head.get('batch') == n):
+    # a batch of before stage 5 has no `gen`: it is generation 0
+    if not (isinstance(head, dict) and head.get('type') == 'header' and head.get('machine') == peer and head.get('batch') == n
+            and head.get('gen', 0) == gen.n):
         raise ValueError(t('batch_header', machine=peer, n=n))
     counts = {'chunks': 0, 'forgets': 0}
     skipped = set()
@@ -248,21 +331,25 @@ def _peer_error(conn, peer, error):
     conn.execute('INSERT INTO peers(machine, error) VALUES(?, ?) ON CONFLICT(machine) DO UPDATE SET error = excluded.error', (peer, error))
 
 
-def _pull(conn, folder, peer, own, model, digest, deadline, now, report):
-    """Take in the batches of `peer` that are new here, in number order. A broken or missing one stops that computer: its later batches
-    wait, and the error is reported on every sync until it is fixed or skipped by hand (cg.py sync --skip-batch)."""
-    row = conn.execute('SELECT last_batch, skipped FROM peers WHERE machine = ?', (peer,)).fetchone()
-    last, skipped = (row[0], set(json.loads(row[1]))) if row else (0, set())
-    names = _batches(folder)
-    if not names and not row:
+def _pull(conn, machine_dir, peer, own, key, model, digest, deadline, now, report):
+    """Take in the batches of `peer` (in its current generation) that are new here, in number order. A broken or missing one stops that
+    computer: its later batches wait, and the error is reported on every sync until it is fixed or skipped by hand (cg.py sync --skip-batch)."""
+    gen = generation(machine_dir)
+    names = _batches(gen.path, crypto.EXT[gen.cipher])
+    if not names and not conn.execute('SELECT 1 FROM peers WHERE machine = ?', (peer,)).fetchone():
         return  # a folder of something else, or a computer that has pushed nothing yet: no computer to show
+    # a generation not read yet is read from its first batch, and the marks of the one before mean nothing in it
+    conn.execute("INSERT INTO peers(machine, gen) VALUES(?, ?) ON CONFLICT(machine) DO UPDATE SET gen = excluded.gen, last_batch = 0, "
+                 "skipped = '[]', error = NULL WHERE gen != excluded.gen", (peer, gen.n))
+    last, skipped = conn.execute('SELECT last_batch, skipped FROM peers WHERE machine = ?', (peer,)).fetchone()
+    skipped = set(json.loads(skipped))
     error, n = None, last + 1
     while now() < deadline:
         if n in skipped:
             conn.execute('UPDATE peers SET last_batch = ? WHERE machine = ?', (n, peer))
         elif n in names:
             try:
-                _import(conn, os.path.join(folder, names[n]), peer, n, own, model, digest, report)
+                _import(conn, os.path.join(gen.path, names[n]), peer, gen, n, own, key, model, digest, report)
             except Exception as e:
                 # a share that hiccups or an index held by another run is no broken batch: no skip is offered, the next sync tries again
                 passing = isinstance(e, memdb.db_errors()) or (isinstance(e, OSError) and not isinstance(e, gzip.BadGzipFile))
@@ -427,10 +514,11 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
         os.makedirs(own, exist_ok=True)
         # first our own batches the index here does not know (a new or restored index): our records and their vectors come back,
         # and nothing that is out already goes out again
-        _pull(conn, own, machine, True, model, digest_once, deadline, now, report)
-        _push(conn, own, machine, digest_once, deadline, now, report)
+        gen = generation(own)  # the one we write into: the current generation of our folder
+        _pull(conn, own, machine, True, None, model, digest_once, deadline, now, report)
+        _push(conn, gen, machine, None, digest_once, deadline, now, report)
         for peer in peers:
-            _pull(conn, os.path.join(sync_dir, peer), peer, False, model, digest_once, deadline, now, report)
+            _pull(conn, os.path.join(sync_dir, peer), peer, False, None, model, digest_once, deadline, now, report)
         if memory_dir:
             conn.execute('BEGIN IMMEDIATE')
             with conn:
