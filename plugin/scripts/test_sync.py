@@ -683,6 +683,65 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(os.listdir(os.path.join(own, 'gen-0001')), [])  # no label, no half-written one
         self.assertEqual(self.start(self.a).n, 2)  # and the next start goes beyond the empty folder
 
+    def test_a_failed_start_leaves_the_label_that_another_start_wrote(self):
+        winner = self.start(self.a)
+        with mock.patch.object(cgsync, '_gens', return_value={}):  # a start that did not see the folder of the other one
+            with self.assertRaises(FileExistsError):
+                self.start(self.a)
+        self.assertEqual(cgsync.generation(os.path.join(self.share, 'AIJ-HP')), winner)
+
+    def test_restored_own_records_go_out_again_in_the_next_generation(self):
+        self.ready(self.a)
+        self.start(self.a)
+        self.a.sync()
+        self.a.close()
+        os.remove(self.a.db)
+        self.a.open()
+        self.a.sync()  # the records are back from gen-0001, taken in from our own folder: origin is ours, and they are marked pushed
+        self.assertEqual(self.a.q("SELECT count(*) FROM keys WHERE origin = 'AIJ-HP' AND pushed = 1"), 2)
+        self.start(self.a)
+        self.assertEqual(self.a.sync()['errors'], [])
+        lines = self.gen_lines(self.a, 2)
+        self.assertEqual((sum(l['type'] == 'chunk' for l in lines), sum(l['type'] == 'vec' for l in lines)), (2, 2))
+
+    def test_a_label_that_cannot_be_read_now_is_no_missing_label(self):  # a hiccup of the share must not demote the generation
+        self.ready(self.a)
+        self.start(self.a)
+        self.a.sync()
+        self.start(self.a)
+        self.a.sync()
+        self.b.sync()
+        self.assertEqual(self.peer_row(self.b, 'AIJ-HP'), (2, 1, '[]', None))
+        self.a.say('SA', 'третье сообщение', mode='ab')
+        self.ready(self.a)
+        real = open
+
+        def denied(path, *args, **kw):
+            if os.path.basename(str(path)) == 'generation.json':
+                raise PermissionError(13, 'sharing violation')
+            return real(path, *args, **kw)
+
+        with mock.patch('builtins.open', denied):
+            ra, rb = self.a.sync(), self.b.sync()
+        # we write nothing into the generation before the current one, and the laptop keeps its place in the current one
+        self.assertEqual(([e['where'] for e in ra['errors']], ra['pushed'], sorted(cgsync._batches(self.gen_dir(self.a, 2)))), (['sync'], 0, [1]))
+        self.assertEqual([(e['where'], e['machine'], 'batch' in e) for e in rb['errors']], [('pull', 'AIJ-HP', False)])
+        self.assertEqual(self.peer_row(self.b, 'AIJ-HP')[:3], (2, 1, '[]'))
+        self.assertIn('PermissionError', self.peer_row(self.b, 'AIJ-HP')[3])
+        self.assertEqual((self.a.sync()['pushed'], sorted(cgsync._batches(self.gen_dir(self.a, 2)))), (1, [1, 2]))
+        self.assertEqual((self.b.sync()['errors'], self.peer_row(self.b, 'AIJ-HP')), ([], (2, 2, '[]', None)))
+
+    def test_only_the_one_spelling_of_a_number_names_a_generation_or_a_batch(self):  # else two names are one number
+        own = os.path.join(self.root, 'M')
+        arabic = lambda s: s.translate({ord(c): 0x660 + int(c) for c in '0123456789'})  # digits that \d matches and int() reads
+        for name in ('gen-0000', 'gen-00001', 'gen-0003', 'gen-10000', arabic('gen-0002'), 'gen-1'):
+            os.makedirs(os.path.join(own, name))
+        for name in ('batch-00000002.jsonl.gz', arabic('batch-00000001.jsonl.gz'), 'batch-00000003.jsonl.gz.tmp', 'batch-1.jsonl.gz'):
+            open(os.path.join(own, name), 'w').close()
+        self.assertEqual(sorted(cgsync._gens(own)), [3, 10000])
+        self.assertEqual(cgsync._batches(own), {2: 'batch-00000002.jsonl.gz'})
+        self.assertIsNone(cgsync._GEN.fullmatch('gen-0001\n'))
+
     def test_a_generation_with_no_readable_label_is_ignored(self):  # the share is untrusted input
         own, fp = os.path.join(self.root, 'M'), 'ab' * 8
         self.assertEqual(cgsync.generation(own), cgsync.Gen(0, own, None, None))  # no folder at all

@@ -23,7 +23,8 @@ from vectors import DIMS, MODEL, OLLAMA
 
 FORMAT = 1
 BATCH_BYTES = 8 * 2 ** 20  # of lines in one batch, about; the first push of a whole history is a few dozen batches
-_GEN = re.compile(r'gen-(?!0+$)(\d{4,9})$')  # not gen-0000: generation 0 is the computer's folder itself
+# the one spelling of a number, `%04d`: gen-00001 or a Unicode digit cannot alias another folder; not gen-0000, generation 0 is the folder itself
+_GEN = re.compile(r'gen-(?!0000)([0-9]{4}|[1-9][0-9]{4,8})')
 _BAD_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f]|^\.{1,2}$|[. ]$')
 # a generation of a computer's folder: n 0 is the folder itself (plain, as before stage 5), else its gen-NNNN subfolder; `path` holds the batches
 Gen = collections.namedtuple('Gen', 'n path cipher fingerprint')
@@ -47,8 +48,8 @@ def _batches(folder, ext=crypto.EXT[None]):
         names = os.listdir(folder)
     except FileNotFoundError:
         return {}
-    pat = re.compile(r'batch-(\d{8})%s$' % re.escape(ext))
-    return {int(m.group(1)): n for n in names for m in [pat.match(n)] if m}
+    pat = re.compile(r'batch-([0-9]{8})' + re.escape(ext))
+    return {int(m.group(1)): n for n in names for m in [pat.fullmatch(n)] if m}
 
 
 # ---- generations: a computer publishes everything again in a new format by starting a new one, which the others read from batch 1
@@ -59,19 +60,20 @@ def _gens(machine_dir):
         names = os.listdir(machine_dir)
     except FileNotFoundError:
         return {}
-    return {int(m.group(1)): os.path.join(machine_dir, n) for n in names for m in [_GEN.match(n)] if m}
+    return {int(m.group(1)): os.path.join(machine_dir, n) for n in names for m in [_GEN.fullmatch(n)] if m}
 
 
 def _label(path, n):
-    """The generation in folder `path` numbered `n`, None unless its label is a readable one. The share is untrusted input: with anything
-    off in the label the folder is ignored whole, and an older generation is the current one."""
+    """The generation in folder `path` numbered `n`, None unless its label is a readable one. The share is untrusted input: with no label or
+    anything off in it the folder is ignored whole, and an older generation is the current one. Any other OSError is a share that hiccups,
+    not a missing label, and is raised: taking it for one would send our new records into a superseded generation."""
     try:
         with open(os.path.join(path, 'generation.json'), encoding='utf-8') as f:
             o = json.loads(f.read(4096))
         cipher, fp = o['cipher'], o['fingerprint']
         ok = (o['format'] == FORMAT and o['gen'] == n and cipher in (None, *crypto.CIPHERS)
               and (cipher is None and fp is None or isinstance(fp, str) and re.fullmatch(r'[0-9a-f]{16}', fp)))
-    except (OSError, ValueError, KeyError, TypeError, RecursionError):
+    except (FileNotFoundError, NotADirectoryError, ValueError, KeyError, TypeError, RecursionError):
         return None
     return Gen(n, path, cipher, fp) if ok else None
 
@@ -99,13 +101,15 @@ def start_generation(conn, machine_dir, machine, cipher, key):
     """Begin a new generation of our folder: the label, then in one transaction the marks of the old generation are cleared and everything
     of ours goes out again into the new one (records, vectors, and every forget, which the new readers never saw). The index is locked
     first: a busy one must not leave a labelled generation whose records were never sent again."""
-    n = max(_gens(machine_dir), default=0) + 1  # beyond every gen-NNNN folder there is, a readable one or not
-    gen = Gen(n, os.path.join(machine_dir, 'gen-%04d' % n), cipher, crypto.fingerprint(key) if key else None)
-    label = os.path.join(gen.path, 'generation.json')
     conn.execute('BEGIN IMMEDIATE')
+    label = None  # set once this call has written one: only that is taken back on a failure
     try:
+        n = max(_gens(machine_dir), default=0) + 1  # beyond every gen-NNNN folder there is, a readable one or not; under the lock
+        gen = Gen(n, os.path.join(machine_dir, 'gen-%04d' % n), cipher, crypto.fingerprint(key) if key else None)
         os.makedirs(gen.path)
-        _put(label, _dumps({'format': FORMAT, 'gen': n, 'cipher': cipher, 'fingerprint': gen.fingerprint, 'created': _now()}).encode('utf-8'))
+        path = os.path.join(gen.path, 'generation.json')
+        _put(path, _dumps({'format': FORMAT, 'gen': n, 'cipher': cipher, 'fingerprint': gen.fingerprint, 'created': _now()}).encode('utf-8'))
+        label = path
         conn.execute("INSERT INTO peers(machine, gen) VALUES(?, ?) ON CONFLICT(machine) DO UPDATE SET gen = excluded.gen, last_batch = 0, "
                      "skipped = '[]', error = NULL", (machine, n))
         conn.execute('UPDATE keys SET origin = NULL, pushed = 0, vec_pushed = 0 WHERE origin IS NULL OR origin = ?', (machine,))
@@ -115,8 +119,9 @@ def start_generation(conn, machine_dir, machine, cipher, key):
         conn.commit()
     except BaseException:
         conn.rollback()
-        with contextlib.suppress(OSError):  # without its label the folder is no generation, and the next start goes beyond it
-            os.remove(label)
+        if label:
+            with contextlib.suppress(OSError):  # without its label the folder is no generation, and the next start goes beyond it
+                os.remove(label)
         raise
     return gen
 
@@ -331,10 +336,17 @@ def _peer_error(conn, peer, error):
     conn.execute('INSERT INTO peers(machine, error) VALUES(?, ?) ON CONFLICT(machine) DO UPDATE SET error = excluded.error', (peer, error))
 
 
-def _pull(conn, machine_dir, peer, own, key, model, digest, deadline, now, report):
-    """Take in the batches of `peer` (in its current generation) that are new here, in number order. A broken or missing one stops that
-    computer: its later batches wait, and the error is reported on every sync until it is fixed or skipped by hand (cg.py sync --skip-batch)."""
-    gen = generation(machine_dir)
+def _pull(conn, machine_dir, peer, own, key, model, digest, deadline, now, report, gen=None):
+    """Take in the batches of `peer` (in its current generation, `gen` when the caller has it) that are new here, in number order. A broken
+    or missing one stops that computer: its later batches wait, and the error is reported on every sync until it is fixed or skipped by hand
+    (cg.py sync --skip-batch)."""
+    try:
+        gen = gen or generation(machine_dir)
+    except OSError as e:  # a share that hiccups: nothing is reset, the next sync tries again
+        error = t('generation_unreadable', machine=peer, e='%s: %s' % (type(e).__name__, e))
+        _peer_error(conn, peer, error)
+        report['errors'].append({'where': 'pull', 'machine': peer, 'error': error})
+        return
     names = _batches(gen.path, crypto.EXT[gen.cipher])
     if not names and not conn.execute('SELECT 1 FROM peers WHERE machine = ?', (peer,)).fetchone():
         return  # a folder of something else, or a computer that has pushed nothing yet: no computer to show
@@ -514,8 +526,8 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
         os.makedirs(own, exist_ok=True)
         # first our own batches the index here does not know (a new or restored index): our records and their vectors come back,
         # and nothing that is out already goes out again
-        gen = generation(own)  # the one we write into: the current generation of our folder
-        _pull(conn, own, machine, True, None, model, digest_once, deadline, now, report)
+        gen = generation(own)  # the one we write into: the current generation of our folder, looked at once for the pull and the push
+        _pull(conn, own, machine, True, None, model, digest_once, deadline, now, report, gen)
         _push(conn, gen, machine, None, digest_once, deadline, now, report)
         for peer in peers:
             _pull(conn, os.path.join(sync_dir, peer), peer, False, None, model, digest_once, deadline, now, report)
