@@ -80,6 +80,9 @@ EN = {
     'code_bad': 'the recovery code is not right: check every group of four characters against the one that was shown',
     'key_unreadable': 'the encryption key in the settings file cannot be read (it opens only for the Windows user who saved it): enter the recovery code with /cg-encrypt join',
     'settings_broken': 'the settings file is broken, nothing in it was changed: {path}',
+    'cipher_missing': 'the {pkg} package is not installed: install it from an ordinary PowerShell window with python -m pip install {pkg}',
+    'seal_broken': 'a sealed file does not open: it is damaged, it was moved from its place, or it was written under another key',
+    'key_wrong': 'this key does not open the encrypted index: enter the recovery code of the right key with /cg-encrypt join',
 }
 
 RU = {
@@ -155,6 +158,9 @@ RU = {
     'code_bad': 'код восстановления неверный: сверьте каждую группу из четырёх символов с показанным',
     'key_unreadable': 'ключ шифрования в файле настроек не читается (он открывается только для пользователя Windows, который его сохранил): введите код восстановления командой /cg-encrypt join',
     'settings_broken': 'файл настроек испорчен, в нём ничего не изменено: {path}',
+    'cipher_missing': 'пакет {pkg} не установлен: поставьте его из обычного окна PowerShell командой python -m pip install {pkg}',
+    'seal_broken': 'запечатанный файл не открывается: он повреждён, перенесён со своего места или записан под другим ключом',
+    'key_wrong': 'этот ключ не открывает зашифрованный индекс: введите код восстановления нужного ключа командой /cg-encrypt join',
 }
 
 UK = {
@@ -230,6 +236,9 @@ UK = {
     'code_bad': 'код відновлення хибний: звірте кожну групу з чотирьох символів із показаним',
     'key_unreadable': 'ключ шифрування у файлі налаштувань не читається (він відкривається лише для користувача Windows, який його зберіг): введіть код відновлення командою /cg-encrypt join',
     'settings_broken': 'файл налаштувань зіпсований, у ньому нічого не змінено: {path}',
+    'cipher_missing': 'пакет {pkg} не встановлено: поставте його зі звичайного вікна PowerShell командою python -m pip install {pkg}',
+    'seal_broken': 'запечатаний файл не відкривається: він пошкоджений, перенесений зі свого місця або записаний під іншим ключем',
+    'key_wrong': 'цей ключ не відкриває зашифрований індекс: введіть код відновлення потрібного ключа командою /cg-encrypt join',
 }
 
 TABLES = {'en': EN, 'ru': RU, 'uk': UK}

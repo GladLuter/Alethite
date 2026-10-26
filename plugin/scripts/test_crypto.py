@@ -2,8 +2,12 @@ import base64
 import json
 import os
 import re
+import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import crypto
 from texts import t
@@ -116,6 +120,111 @@ class SettingsTest(unittest.TestCase):
         self.assertIsNone(crypto.load_key(self.path))
         self.write('{}')
         self.assertIsNone(crypto.load_key(self.path))
+
+
+LINES = ['{"a":"секрет-маркер"}', 'x' * 10000]
+AAD = 'A/1/batch-00000001'
+MODULES = {'sqlcipher': ['sqlcipher3'], 'cryptography': ['cryptography', 'cryptography.hazmat', 'cryptography.hazmat.primitives',
+                                                         'cryptography.hazmat.primitives.ciphers', 'cryptography.hazmat.primitives.ciphers.aead']}
+
+
+class SealTest(unittest.TestCase):
+    def test_need(self):
+        for cipher, mods in MODULES.items():
+            with self.subTest(cipher):
+                crypto.need(cipher)
+                with mock.patch.dict(sys.modules, dict.fromkeys(mods)):  # None: the import of the package fails
+                    bad(self, crypto.need, t('cipher_missing', pkg=mods[0]), cipher)
+                    bad(self, crypto.seal, t('cipher_missing', pkg=mods[0]), LINES, cipher, KEY, AAD)
+                    bad(self, crypto.unseal, t('cipher_missing', pkg=mods[0]), b'', cipher, KEY, AAD)
+                self.assertIn('python -m pip install ' + mods[0], t('cipher_missing', pkg=mods[0]))
+
+    def test_seal_roundtrip(self):
+        self.assertEqual(crypto.CIPHERS, ('sqlcipher', 'cryptography'))
+        self.assertEqual(crypto.EXT, {None: '.jsonl.gz', 'sqlcipher': '.sqlcipher', 'cryptography': '.aesgcm'})
+        for cipher in crypto.CIPHERS:
+            with self.subTest(cipher):
+                data = crypto.seal(LINES, cipher, KEY, AAD)
+                self.assertEqual(crypto.unseal(data, cipher, KEY, AAD), LINES)
+                self.assertNotIn('секрет'.encode('utf-8'), data)
+
+    def test_seal_refuses(self):
+        for cipher in crypto.CIPHERS:
+            with self.subTest(cipher):
+                data = crypto.seal(LINES, cipher, KEY, AAD)
+                mid = len(data) // 2
+                torn = data[:mid] + bytes([data[mid] ^ 1]) + data[mid + 1:]
+                for args in [(data, cipher, bytes(32), AAD), (data, cipher, KEY, 'A/1/batch-00000002'), (torn, cipher, KEY, AAD),
+                             (data[:mid], cipher, KEY, AAD), (b'', cipher, KEY, AAD), (b'junk', cipher, KEY, AAD)]:
+                    bad(self, crypto.unseal, t('seal_broken'), *args)
+
+    def test_seal_leaves_no_file_behind(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(tempfile, 'tempdir', d):
+            data = crypto.seal(LINES, 'sqlcipher', KEY, AAD)
+            crypto.unseal(data, 'sqlcipher', KEY, AAD)
+            bad(self, crypto.unseal, t('seal_broken'), data, 'sqlcipher', bytes(32), AAD)
+            bad(self, crypto.unseal, t('seal_broken'), data, 'sqlcipher', KEY, 'other')
+            self.assertEqual(os.listdir(d), [])
+
+
+class DbTest(unittest.TestCase):
+    def setUp(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.path = os.path.join(d.name, 'index.db')
+
+    def test_open_db(self):
+        c = crypto.open_db(self.path, KEY)
+        try:
+            c.execute('CREATE VIRTUAL TABLE t USING fts5(x)')
+            c.execute('INSERT INTO t VALUES(?)', ('привет мир',))
+            self.assertEqual(c.execute("SELECT x FROM t WHERE t MATCH 'мир'").fetchall(), [('привет мир',)])
+        finally:
+            c.close()
+        self.assertTrue(crypto.is_encrypted(self.path))
+        with open(self.path, 'rb') as f:
+            raw = f.read()
+        self.assertNotIn(b'SQLite format 3', raw)
+        self.assertNotIn('привет'.encode('utf-8'), raw)
+        bad(self, crypto.open_db, t('key_wrong'), self.path, bytes(32))
+        c = crypto.open_db(self.path, KEY)  # the failed attempt left it as it was
+        self.assertEqual(c.execute('SELECT count(*) FROM t').fetchone(), (1,))
+        c.close()
+
+    def test_wrong_key_is_quiet(self):
+        crypto.open_db(self.path, KEY).close()
+        c = crypto.open_db(self.path, KEY)
+        c.execute('CREATE TABLE t(x)')
+        c.close()
+        # SQLCipher reports a failed key on stderr from C, below Python: only another process shows it
+        code = 'import sys, crypto\ntry:\n    crypto.open_db(sys.argv[1], bytes(32))\nexcept ValueError:\n    pass'
+        r = subprocess.run([sys.executable, '-c', code, self.path], cwd=os.path.dirname(os.path.abspath(__file__)), capture_output=True)
+        self.assertEqual((r.returncode, r.stderr), (0, b''))
+
+    def test_busy_is_not_a_wrong_key(self):
+        import sqlcipher3
+        holder = crypto.open_db(self.path, KEY)
+        try:
+            holder.execute('CREATE TABLE t(x)')
+            holder.execute('BEGIN EXCLUSIVE')
+            with self.assertRaises(sqlcipher3.OperationalError):
+                crypto.open_db(self.path, KEY, timeout=0.1)
+        finally:
+            holder.close()
+
+    def test_is_encrypted(self):
+        self.assertFalse(crypto.is_encrypted(self.path))  # no file
+        open(self.path, 'wb').close()
+        self.assertFalse(crypto.is_encrypted(self.path))  # empty
+        c = sqlite3.connect(self.path)
+        c.execute('CREATE TABLE t(x)')
+        c.commit()
+        c.close()
+        self.assertFalse(crypto.is_encrypted(self.path))  # open
+        c = crypto.open_db(self.path + '.enc', KEY)
+        c.execute('CREATE TABLE t(x)')
+        c.close()
+        self.assertTrue(crypto.is_encrypted(self.path + '.enc'))
 
 
 if __name__ == '__main__':
