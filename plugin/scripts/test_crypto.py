@@ -105,6 +105,9 @@ class SettingsTest(unittest.TestCase):
             self.write(text)
             bad(self, crypto.save_key, t('settings_broken', path=self.path), self.path, KEY)
             bad(self, crypto.load_key, t('settings_broken', path=self.path), self.path)
+            for fn, args in ((crypto.save_key, (self.path, KEY)), (crypto.load_key, (self.path,))):  # told apart by class, not by text
+                with self.assertRaises(crypto.SettingsBroken):
+                    fn(*args)
             self.assertEqual(self.raw(), text.encode('utf-8'))
             self.assertFalse(os.path.exists(self.path + '.cg-tmp'))
 

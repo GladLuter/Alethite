@@ -90,6 +90,10 @@ def unprotect(blob):
     return _dpapi(False, blob)
 
 
+class SettingsBroken(ValueError):
+    """The settings file is no readable object: what it holds, a key too, is unknown."""
+
+
 def _read(settings):
     """The settings object, {} when there is no file. A file that cannot be read is never taken for one without a key, nor written over."""
     try:
@@ -100,7 +104,7 @@ def _read(settings):
     except ValueError:
         s = None
     if not isinstance(s, dict):
-        raise ValueError(t('settings_broken', path=settings))
+        raise SettingsBroken(t('settings_broken', path=settings))
     return s
 
 

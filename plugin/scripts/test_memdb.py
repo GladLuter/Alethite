@@ -92,7 +92,8 @@ class EncryptedIndexTest(unittest.TestCase):
         connect(self.db).close()
         with open(self.settings, 'w') as f:
             f.write('{broken')
-        connect(self.db).close()
+        with mock.patch.object(crypto, 'load_key', side_effect=AssertionError('the key was read')):
+            connect(self.db).close()
         self.assertFalse(crypto.is_encrypted(self.db))
 
     def test_settings_that_cannot_give_a_key(self):

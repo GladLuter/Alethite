@@ -108,13 +108,12 @@ def _open(path):
     # file is no index yet (sqlite makes the file on the first write), so it is new like no file at all
     if os.path.exists(path) and os.path.getsize(path) and not crypto.is_encrypted(path):
         return sqlite3.connect(path, isolation_level=None, timeout=30)
-    settings = crypto.settings_path(path)
     try:
-        key = crypto.load_key(settings)
-    except ValueError as e:
+        key = crypto.load_key(crypto.settings_path(path))
+    except crypto.SettingsBroken:
         # a broken settings file shows no key: a new index is then what it was before stage 5 (the job reports the file); an encrypted one
-        # needs the key, and a key that is set but unreadable is no reason for a plain index either
-        if crypto.is_encrypted(path) or str(e) != t('settings_broken', path=settings):
+        # needs the key. A key that is set but unreadable (key_unreadable) is no reason for a plain index either: it is not caught
+        if crypto.is_encrypted(path):
             raise
         key = None
     if key:
