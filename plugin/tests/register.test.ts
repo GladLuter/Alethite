@@ -285,9 +285,16 @@ const started = async ($: any, on: any, answer: (a: string[]) => unknown, status
 const recall = ($: any, input: object = { query: 'кэш' }) => $.tool.call({ tool: 'mcp__cacheguard__recall', ...input })
 const ofCg = <R extends { argv: string[] }>(m: { runs: R[] }, cmd: string) => m.runs.filter(r => r.argv[0] === cmd)
 
-test('memory tools: both in the prompt, not behind ToolSearch', async ($, on) => {
+test('memory tools: all in the prompt, not behind ToolSearch', async ($, on) => {
   const m = await started($, on, () => ran('{}'))
-  expect(m.specs.map(s => [s.name, s.isDeferred, s.description])).toEqual([['recall', false, T.recallDescription], ['recall_more', false, T.recallMoreDescription]])
+  expect(m.specs.map(s => [s.name, s.isDeferred, s.description])).toEqual([
+    ['recall', false, T.recallDescription],
+    ['recall_more', false, T.recallMoreDescription],
+    ['lesson_save', false, T.lessonSaveDescription],
+  ])
+  // stage 4: how to search for an error is told by the parameters, the description stays short
+  expect(m.specs[0].inputSchema.properties.query.description).toBe(T.recallQuery)
+  expect(m.specs[0].inputSchema.properties.also).toEqual({ type: 'array', items: { type: 'string' }, maxItems: 3, description: T.recallAlso })
 })
 
 test('recall: project by default, scope=all and the limit when asked; the model reads the hits', async ($, on) => {
@@ -449,7 +456,7 @@ test('session.start: a refused registration leaves the status line, the timers a
   expect(statuses.at(-1)!.startsWith(T.statusError(''))).toBe(true) // ...and the refusal is the last word
   expect(statuses.at(-1)).toContain('schema refused')
   expect(store.get('lastError')).toMatchObject({ where: 'register', msg: expect.stringContaining('schema refused') })
-  expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats', 'cg-sync'], tools: ['recall', 'recall_more'] }) // both tools were tried, the commands went through
+  expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats', 'cg-sync', 'cg-lessons', 'cg-job'], tools: ['recall', 'recall_more', 'lesson_save'] }) // every tool was tried, the commands went through
   await clock.advance(30_000) // the timers run
   expect(statuses.at(-1)).toMatch(/^ctx /)
 })
@@ -730,7 +737,7 @@ test('language ru: the mod speaks Russian to the owner and to the model, and so 
   await m.clock.advance(3_000)
   for (const lang of m.langs) expect(lang).toEqual(['--lang', 'ru'])
   expect((await ($ as any).command.run({ command: 'cg-band', args: '' })).text).toBe(ru.cgBandOn)
-  expect(m.specs.map(s => s.description)).toEqual([ru.recallDescription, ru.recallMoreDescription])
+  expect(m.specs.map(s => s.description)).toEqual([ru.recallDescription, ru.recallMoreDescription, ru.lessonSaveDescription])
   expect((await ($ as any).prompt.compose(facts)).sections).toEqual([{ id: 'cacheguard:memory-rule', text: ru.memoryRule, scope: 'session' }])
 })
 
@@ -739,7 +746,7 @@ test('language uk: Ukrainian to the owner and to the model, and to cg.py', { opt
   await m.clock.advance(3_000)
   for (const lang of m.langs) expect(lang).toEqual(['--lang', 'uk'])
   expect((await ($ as any).command.run({ command: 'cg-band', args: '' })).text).toBe(uk.cgBandOn)
-  expect(m.specs.map(s => s.description)).toEqual([uk.recallDescription, uk.recallMoreDescription])
+  expect(m.specs.map(s => s.description)).toEqual([uk.recallDescription, uk.recallMoreDescription, uk.lessonSaveDescription])
 })
 
 test('a language the mod does not know is English', { options: { language: 'xx' } }, async ($, on) => {
@@ -752,11 +759,13 @@ test('a language the mod does not know is English', { options: { language: 'xx' 
 // ---- the mod's own settings file ----
 const SETTINGS = 'C:\\h\\.claude\\cacheguard\\settings.json'
 const home = { USERPROFILE: 'C:\\h' }
-// the file system holds `file` at SETTINGS (undefined: no file there); what the mod writes is collected
+// the file system holds `file` at SETTINGS (undefined: no file there); what the mod writes is collected. A Windows path reaches the
+// hooks resolved against the folder of the run on Linux, so the path is known by its end
+const isSettings = (path: string) => path.endsWith(SETTINGS)
 const settingsRig = (on: any, file: string | undefined) => {
   const written: [string, string][] = []
-  on('fs.exists', (_: unknown, e: { path: string }) => ({ value: e.path === SETTINGS && file !== undefined }))
-  on('fs.read', (_: unknown, e: { path: string }) => (e.path === SETTINGS && file !== undefined ? { value: file } : { deny: 'ENOENT' }))
+  on('fs.exists', (_: unknown, e: { path: string }) => ({ value: isSettings(e.path) && file !== undefined }))
+  on('fs.read', (_: unknown, e: { path: string }) => (isSettings(e.path) && file !== undefined ? { value: file } : { deny: 'ENOENT' }))
   on('fs.write', (_: unknown, e: { path: string; text: string }) => (written.push([e.path, e.text]), { value: undefined }))
   return written
 }
@@ -767,14 +776,14 @@ test('settings file: its values win over /config, a key that is no setting is na
   await ($ as any).command.run({ command: 'cg-sync', args: '' })
   expect(ofCg(m, 'sync')[0]!.argv[1]).toBe('--sync-dir=Z:\\cg')
   expect(m.langs.at(-1)).toEqual(['--lang', 'ru'])
-  expect(m.toasts).toEqual([T.toast(T.failed('settings', ru.settingsBad(SETTINGS, ['colour'])))])
-  expect((await ($ as any).command.run({ command: 'cg-health', args: '' })).text).toContain(ru.healthSettings(SETTINGS))
+  expect(m.toasts).toEqual([T.toast(T.failed('settings', ru.settingsBad!(SETTINGS, ['colour'])))])
+  expect((await ($ as any).command.run({ command: 'cg-health', args: '' })).text).toContain(ru.healthSettings!(SETTINGS))
 })
 
 test('settings file: missing, it is written with the values of /config and nothing is said', { options: { language: 'uk' } }, async ($, on) => {
   const written = settingsRig(on, undefined)
   const m = await started($, on, () => ran('{}'), [], undefined, home)
-  expect(written.map(([path]) => path)).toEqual([SETTINGS])
+  expect(written.map(([path]) => isSettings(path))).toEqual([true])
   expect(JSON.parse(written[0]![1])).toMatchObject({ language: 'uk', syncDir: '', compression: 'ultra', python: 'python' })
   expect(m.toasts).toEqual([])
 })
@@ -854,7 +863,9 @@ test('/cg-sync: cg.py fails: a toast and a short reply', { options: { syncDir: S
 test('background: the sync follows the index and the vectors, 60 s in cg.py, 120 s for the process', { options: { syncDir: SHARE } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'sync' ? synced() : a[0] === 'embed' ? embedded() : indexed()))
   await m.clock.advance(3_000)
-  expect(m.runs.filter(r => r.argv[0] !== 'last-turn').map(r => [r.argv[0], r.timeoutMs])).toEqual([['index', 600_000], ['embed', 180_000], ['sync', 120_000]])
+  const steps = m.runs.filter(r => r.argv[0] !== 'last-turn').map(r => [r.argv[0], r.timeoutMs])
+  // the lessons are read at the start and again after the sync, which may have brought the other computer's (stage 4)
+  expect(steps).toEqual([['lessons', 120_000], ['index', 600_000], ['embed', 180_000], ['sync', 120_000], ['lessons', 120_000]])
   expect(ofCg(m, 'sync')[0]!.argv).toContain('--max-seconds')
   expect(m.toasts).toEqual([])
 })
@@ -944,4 +955,206 @@ test('/cg-stats: cg.py gets what MEMORY.md takes and the compression level', asy
   await stats()
   const { argv } = ofCg(m, 'stats')[0]!
   expect([flag(argv, '--memory-tokens'), flag(argv, '--compression')]).toEqual(['0', 'ultra'])
+})
+
+// ---- lessons (stage 4) ----
+const lesson = {
+  id: 7,
+  conv: 'lessons-abc',
+  pos: 1792000000000,
+  ts: '2026-10-20T10:00:00.000Z',
+  text: 'Action: gh api in a loop\nSymptom: HTTP 429\nCause: 120 requests an hour\nTrigger: gh api /repos',
+  trigger: 'gh api /repos',
+  from: null,
+}
+const listed = (list: object[] = [lesson]) => ran(JSON.stringify({ lessons: list }))
+// cg.py answers the lesson commands; `found` is what lessons-match finds for any message
+const lessonRig = async ($: any, on: any, found: object[] = [{ ...lesson, score: 0.81 }], list: object[] = [lesson], options: { context?: string[][] } = {}) => {
+  const contexts = options.context ?? []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => (contexts.push([...(e.context ?? [])]), { text: e.text, context: e.context }))
+  on('tool.call', { tool: 'Bash' }, () => ({ result: 'ran' }))
+  const m = await started($, on, a =>
+    a[0] === 'lessons' ? listed(list) : a[0] === 'lessons-match' ? ran(JSON.stringify({ lessons: found, vector: 'ok' })) : a[0] === 'lesson-save' ? ran(JSON.stringify({ id: 9, conv: 'lessons-abc', pos: 1, text: 'Action: x\nSymptom: y\nCause: z', new: true, vector: 'ok' })) : a[0] === 'forget' ? ran('{"forgotten":1}') : ran('{}'),
+  )
+  await ($ as any).command.run({ command: 'cg-lessons', args: '' }) // the list, awaited: the start reads it in the background
+  return { m, contexts }
+}
+const typed = ($: any, text: string, extra: object = {}) => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' }, ...extra })
+// the gate's denial of the lesson above, between the marks the index cuts out (transcripts.py)
+const gateText = () => ['[cg-lessons]', T.lessonGate('Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos'), '[/cg-lessons]'].join('\n')
+
+test('lesson_save: the fields go to cg.py one item each, the owner gets a toast, the model the lesson', async ($, on) => {
+  const { m } = await lessonRig($, on)
+  const r = await ($ as any).tool.call({ tool: 'mcp__cacheguard__lesson_save', action: '-x', symptom: 'HTTP 429', cause: 'limit', fix: '', trigger: 7 })
+  expect(ofCg(m, 'lesson-save')[0]!.argv).toEqual(['lesson-save', '--cwd', 'C:/w', '--model', 'embeddinggemma', '--action=-x', '--symptom=HTTP 429', '--cause=limit'])
+  expect(r).toEqual({ result: T.lessonSaved('Action: x\nSymptom: y\nCause: z') })
+  expect(m.toasts).toEqual([T.toast(T.lessonToast('-x'))])
+})
+
+test('lessons: one that fits goes beside the owner\'s message once a chat, in the hidden context; nothing else is asked or added', async ($, on) => {
+  const contexts: string[][] = []
+  const { m } = await lessonRig($, on, undefined, undefined, { context: contexts })
+  await typed($, 'короткий') // too short to be about anything
+  await typed($, 'сообщение от другого плагина', { origin: { kind: 'plugin', name: 'x' } })
+  await typed($, '/cg-health', { command: { name: 'cg-health', args: '' } })
+  expect(ofCg(m, 'lessons-match')).toEqual([])
+  await typed($, 'опять 429 на сборке, что делать?')
+  await typed($, 'опять 429 на сборке, что делать?')
+  expect(contexts[3]).toEqual([['[cg-lessons]', T.lessonsIntro, '- Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos', '[/cg-lessons]'].join('\n')])
+  expect(contexts[4]).toEqual([]) // shown once in this chat
+  const [match, ...more] = ofCg(m, 'lessons-match')
+  expect(match!.argv).toEqual(['lessons-match', '--cwd', 'C:/w', '--text=опять 429 на сборке, что делать?', '--model', 'embeddinggemma', '--min-score', '0.45', '--limit', '2', '--timeout', '3'])
+  expect(match!.timeoutMs).toBe(8_000)
+  expect(more).toEqual([]) // every lesson was shown already: no Python for the second
+})
+
+test('lessons: none in the project, none asked for; off in the settings, none either', { options: { lessons: false } }, async ($, on) => {
+  const { m } = await lessonRig($, on)
+  await typed($, 'опять 429 на сборке, что делать?')
+  expect(ofCg(m, 'lessons-match')).toEqual([])
+  expect(await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })).toEqual({ result: 'ran' })
+})
+
+test('lessons: a project without lessons runs no Python on a message', async ($, on) => {
+  const { m } = await lessonRig($, on, [], [])
+  await typed($, 'опять 429 на сборке, что делать?')
+  expect(ofCg(m, 'lessons-match')).toEqual([])
+})
+
+test('lessons: a failed search costs the owner a line in /cg-health once, and the message goes on as typed', async ($, on) => {
+  const contexts: string[][] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => (contexts.push([...(e.context ?? [])]), { text: e.text }))
+  const m = await started($, on, a => (a[0] === 'lessons' ? listed() : a[0] === 'lessons-match' ? failed('OperationalError: database is locked') : ran('{}')))
+  await ($ as any).command.run({ command: 'cg-lessons', args: '' })
+  await typed($, 'опять 429 на сборке, что делать?')
+  m.store.set('lastError', { at: 1, where: 'sync', msg: 'later' })
+  await typed($, 'опять 429 на сборке, что делать?')
+  expect(contexts).toEqual([[], []])
+  expect(m.toasts).toEqual([])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'sync' })
+})
+
+test('lessons: a command with a trigger is stopped once with the lesson, then passes', async ($, on) => {
+  const { m } = await lessonRig($, on)
+  const stop = await ($ as any).tool.call({ tool: 'Bash', command: 'GH API /repos/owner/x --paginate' })
+  expect(stop).toEqual({ deny: gateText() })
+  expect(await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/owner/x --paginate' })).toEqual({ result: 'ran' })
+  expect(await ($ as any).tool.call({ tool: 'Bash', command: 'git status' })).toEqual({ result: 'ran' })
+  expect(m.store.get('lessonCounts')).toEqual({ stopped: 1 })
+})
+
+test('lessons: a PowerShell command is stopped once as well', async ($, on) => {
+  on('tool.call', { tool: 'PowerShell' }, () => ({ result: 'ran' }))
+  await lessonRig($, on)
+  expect(await ($ as any).tool.call({ tool: 'PowerShell', command: 'gh api /repos/owner/x' })).toEqual({ deny: gateText() })
+  expect(await ($ as any).tool.call({ tool: 'PowerShell', command: 'gh api /repos/owner/x' })).toEqual({ result: 'ran' })
+})
+
+test('/cg-lessons: the list; forget deletes by pos through cg.py; anything else, how to ask', async ($, on) => {
+  const { m } = await lessonRig($, on)
+  expect((await ($ as any).command.run({ command: 'cg-lessons', args: '' })).text).toBe(
+    'pos=1792000000000 [2026-10-20] Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos',
+  )
+  expect((await ($ as any).command.run({ command: 'cg-lessons', args: 'forget 1792000000000' })).text).toBe(T.cgLessonsForgotten(1))
+  expect(ofCg(m, 'forget')[0]!.argv).toEqual(['forget', '--conv=lessons-abc', '--pos=1792000000000'])
+  expect((await ($ as any).command.run({ command: 'cg-lessons', args: 'forget 5' })).text).toBe(T.cgLessonsForgotten(0))
+  expect((await ($ as any).command.run({ command: 'cg-lessons', args: 'drop all' })).text).toBe(T.cgLessonsUsage)
+})
+
+test('/cg-health: how many lessons, how often they came back and what that cost', async ($, on) => {
+  const { m } = await lessonRig($, on)
+  await typed($, 'опять 429 на сборке, что делать?')
+  await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })
+  const counts = m.store.get('lessonCounts') as Record<string, number>
+  const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
+  expect(text).toContain(T.healthLessons(1, 1, counts.chars!, 1, true))
+})
+
+// ---- the background job (stage 4) ----
+const lastRun = { at: '2026-10-20T10:00:00Z', index: { rows: 3, errors: 0 }, embed: { skipped: 'battery' }, sync: { pushed: 2, pulled: 5, errors: 1 }, errors: [{ where: 'sync', error: 'batch 4 is broken' }] }
+
+test('/cg-job: on and off go to cg.py with the minutes; the state shows the last run; anything else, how to ask', async ($, on) => {
+  const m = await started($, on, a =>
+    a[0] !== 'job' ? ran('{}') : a[1] === 'install' ? ran(JSON.stringify({ installed: true, minutes: Number(a[3]) })) : a[1] === 'remove' ? ran('{"installed":false}') : ran(JSON.stringify({ supported: true, minutes: 30, last: lastRun })),
+  )
+  const run = async (args: string) => (await ($ as any).command.run({ command: 'cg-job', args })).text
+  expect(await run('on')).toBe(T.cgJobOn(30))
+  expect(await run('on 15')).toBe(T.cgJobOn(15))
+  expect(await run('off')).toBe(T.cgJobOff)
+  expect((await run('')).split('\n')).toEqual([
+    T.cgJobState(30),
+    T.jobLast(new Date(lastRun.at).toLocaleString(T.locale), [T.jobIndex(3), T.jobOnBattery, T.jobSync(2, 5)].join(', '), 1),
+    T.jobError('sync', 'batch 4 is broken'),
+  ])
+  expect(await run('on soon')).toBe(T.cgJobUsage)
+  expect(ofCg(m, 'job').map(r => r.argv)).toEqual([['job', 'install', '--minutes', '30'], ['job', 'install', '--minutes', '15'], ['job', 'remove'], ['job', 'status']])
+})
+
+test('/cg-job: not on this system, said plainly; a failure is a toast', async ($, on) => {
+  const m = await started($, on, a => (a[0] !== 'job' ? ran('{}') : a[1] === 'status' ? ran(JSON.stringify({ supported: false, minutes: null, last: null })) : failed('ValueError: the background job is for Windows for now')))
+  expect((await ($ as any).command.run({ command: 'cg-job', args: '' })).text).toBe([T.cgJobState(null), T.jobNever].join('\n'))
+  expect((await ($ as any).command.run({ command: 'cg-job', args: 'on' })).text).toBe(T.cgJobFailed)
+  expect(m.toasts).toEqual([T.toast(T.failed('cg-job', 'ValueError: the background job is for Windows for now'))])
+})
+
+test('/cg-health: the background job\'s last run', async ($, on) => {
+  wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) =>
+    e.argv.includes('status') ? ran(JSON.stringify({ db: 'd', convs: 0, rows: 0, size_mb: 0, job: lastRun })) : noTurn(),
+  )
+  on('session.root', () => ({ value: 'C:/w' }))
+  const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
+  expect(text).toContain(T.jobError('sync', 'batch 4 is broken'))
+})
+
+test('lessons: a message with no origin (an engine older than the origin) is the owner\'s', async ($, on) => {
+  const contexts: string[][] = []
+  await lessonRig($, on, undefined, undefined, { context: contexts })
+  await ($ as any).prompt.submit({ text: 'опять 429 на сборке, что делать?', wait: false })
+  expect(contexts[0]!.length).toBe(1)
+})
+
+// the desktop Code tab is an SDK host: the owner's typing comes as sdk, or as unclassified from a channel the engine cannot attest
+for (const kind of ['sdk', 'unclassified']) {
+  test(`lessons: a message of origin ${kind} is the owner's, a task notification is not`, async ($, on) => {
+    const contexts: string[][] = []
+    const { m } = await lessonRig($, on, undefined, undefined, { context: contexts })
+    await typed($, 'опять 429 на сборке, что делать?', { origin: { kind: 'task-notification' } })
+    expect(ofCg(m, 'lessons-match')).toEqual([])
+    await typed($, 'опять 429 на сборке, что делать?', { origin: { kind } })
+    expect(contexts.map(c => c.length)).toEqual([0, 1])
+  })
+}
+
+test('lessons: with three that fit the third comes with the next message, and once all were shown no Python runs', async ($, on) => {
+  const three = [7, 8, 9].map(id => ({ ...lesson, id, pos: id, text: `Action: a${id}` }))
+  const contexts: string[][] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => (contexts.push([...(e.context ?? [])]), { text: e.text, context: e.context }))
+  // cg.py gives the best `--limit` of the three
+  const m = await started($, on, a =>
+    a[0] === 'lessons' ? listed(three) : a[0] === 'lessons-match' ? ran(JSON.stringify({ lessons: three.slice(0, Number(a[a.indexOf('--limit') + 1])).map(l => ({ ...l, score: 0.8 })), vector: 'ok' })) : ran('{}'),
+  )
+  await ($ as any).command.run({ command: 'cg-lessons', args: '' })
+  for (let i = 0; i < 3; i++) await typed($, 'опять 429 на сборке, что делать?')
+  expect(contexts.map(c => c.length)).toEqual([1, 1, 0])
+  expect([/a7.*a8/s.test(contexts[0]![0]!), contexts[1]![0]!.includes('a9'), contexts[1]![0]!.includes('a7')]).toEqual([true, true, false])
+  expect(ofCg(m, 'lessons-match').map(r => r.argv[r.argv.indexOf('--limit') + 1])).toEqual(['2', '4']) // the shown ones are asked for too; the third message asks nothing
+})
+
+test('lessons: a chat open for long learns of a lesson saved elsewhere, every 10 minutes', async ($, on) => {
+  const contexts: string[][] = []
+  const list: object[] = []
+  const { m } = await lessonRig($, on, undefined, list, { context: contexts })
+  await m.clock.advance(3_000) // the catch-up reads the lessons once more
+  await typed($, 'опять 429 на сборке, что делать?')
+  list.push(lesson) // another chat saved it
+  await m.clock.advance(600_000)
+  await typed($, 'опять 429 на сборке, что делать?')
+  expect(contexts.map(c => c.length)).toEqual([0, 1])
+})
+
+test('lesson_save: a refusal is told as a refused save, not as a failed search', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'lesson-save' ? failed('ValueError: the lesson needs: cause') : ran('{}')))
+  const r = await ($ as any).tool.call({ tool: 'mcp__cacheguard__lesson_save', action: 'a', symptom: 's' })
+  expect(r).toEqual({ deny: T.lessonSaveFailed('ValueError: the lesson needs: cause') })
+  expect(m.toasts).toEqual([T.toast(T.failed('lesson_save', 'ValueError: the lesson needs: cause'))])
 })

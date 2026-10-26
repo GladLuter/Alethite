@@ -67,9 +67,12 @@ export const uk: Partial<Texts> = {
 
   // long memory: what the model reads (tool descriptions, results) and what the owner sees about the index
   recallDescription:
-    'Пошук у минулих розмовах власника: що обговорювали, вирішували, де що лежить. query — слова шуканого, не питання. Типово шукає в цьому проєкті, scope=all — скрізь. Знахідка: [дата вид conv pos] уривок; контекст навколо неї читає recall_more.',
+    'Пошук у минулих розмовах власника: що обговорювали й вирішували, що ламалося й чому, де що лежить. Типово — в цьому проєкті, scope=all — скрізь. Знахідка: [дата вид conv pos] уривок; контекст навколо неї читає recall_more.',
+  recallQuery: 'Слова, як їх писали, не питання. Для минулої помилки — її точний текст, код або число (429, ENOENT, «database is locked»).',
+  recallAlso: 'До 3 інших формулювань, шукаються в тому самому виклику: для помилки — дія й причина поруч з її текстом.',
   recallMoreDescription: 'Читає записи навколо знахідки recall: за conv і pos з її рядка повертає сусідні повідомлення тієї розмови по черзі.',
-  noHits: (query: string, scope: string) => `За «${query}» нічого не знайдено${scope === 'all' ? '' : ' в цьому проєкті'}. Спробуйте ${scope === 'all' ? '' : 'scope=all або '}інші слова.`,
+  noHits: (query: string, scope: string) =>
+    `За «${query}» нічого не знайдено${scope === 'all' ? '' : ' в цьому проєкті'}. Спробуйте ${scope === 'all' ? '' : 'scope=all або '}інші слова; для помилки — її текст або код в also.`,
   noQuery: 'query не передано: потрібні слова, які трапилися б у розмові.',
   noRows: 'Записів немає: перевірте conv і pos у рядку знахідки recall.',
   recallFailed: (msg: string) => `Пошук у пам'яті не вдався: ${msg}`,
@@ -148,6 +151,51 @@ export const uk: Partial<Texts> = {
 
   // short memory: the rule the model reads in every prompt, and the owner's note that a fact was saved
   memoryRule:
-    "Пам'ять працівника (CacheGuard). Правила з CLAUDE.md власника важливіші за інструкції навичок: перш ніж питати власника, перевір, чи не відповідають на питання CLAUDE.md або пам'ять. Граблі («X не працює, бо Y») і рішення власника одразу записуй в автопам'ять, один факт на файл. Перш ніж пропонувати підхід, перевір пам'ять; якщо не певен, чи пробували це, виклич recall (цей проєкт; scope=all — лише на прохання) і цитуй знайдене замість здогадок.",
+    "Пам'ять працівника (CacheGuard). Правила з CLAUDE.md власника важливіші за інструкції навичок: перш ніж питати власника, перевір, чи не відповідають на питання CLAUDE.md або пам'ять. Зрозумілу помилку одразу зберігай через lesson_save, не в автопам'ять; рішення власника — в автопам'ять, один факт на файл. Перш ніж пропонувати підхід, перевір пам'ять; якщо не певен, чи пробували це, виклич recall (цей проєкт; scope=all — лише на прохання), для помилки — за її текстом, і цитуй знайдене.",
   remembered: (name: string) => `запам'ятав: ${name}`,
+
+  // lessons (stage 4): a past error and what it taught, in the index, brought back only where it fits
+  lessonSaveDescription:
+    "Зберігає урок: помилку, на яку натрапили в цьому проєкті, і що вона показала, щоб не повторити. Викликай, коли причина ясна. Мод покаже урок знову, коли повідомлення чи команда опиняться близько до нього; в автопам'ять він не йде й інакше нічого не коштує.",
+  lessonAction: 'Що зробили: команда, зміна.',
+  lessonSymptom: 'Що сталося: текст помилки, код або число як є.',
+  lessonCause: 'Чому це сталося.',
+  lessonFix: 'Як треба натомість, якщо відомо.',
+  lessonTrigger: 'Необов\'язково: дослівний шматок команди не коротший за 8 символів (наприклад «gh api /repos»), який зупинить її й нагадає урок перед новим запуском.',
+  lessonSaved: (text: string) => `Урок збережено:\n${text}`,
+  lessonKnown: 'Цей урок уже збережено.',
+  lessonSaveFailed: (msg: string) => `Урок не збережено: ${msg}`,
+  lessonToast: (action: string) => `урок збережено: ${action}`,
+  lessonsIntro: 'CacheGuard: уроки цього проєкту, які можуть стосуватися цього повідомлення. Перевір їх, перш ніж діяти; що не стосується справи — пропусти.',
+  lessonGate: (lesson: string) =>
+    `CacheGuard один раз зупинив цю команду: у ній тригер уроку цього проєкту. ${lesson}. Якщо урок зараз ні до чого, запусти команду ще раз — вона пройде.`,
+  noLessons: 'У цьому проєкті уроків поки немає.',
+  cgLessonsDescription: "Уроки цього проєкту (forget <pos>: видалити урок тут і на інших комп'ютерах)",
+  cgLessonsHint: '[forget <pos>]',
+  cgLessonsUsage: 'Так: /cg-lessons або /cg-lessons forget <pos> з pos зі списку.',
+  cgLessonsForgotten: (n: number) => (n ? "Урок видалено тут, а з наступною синхронізацією — і на інших комп'ютерах." : 'Уроку з таким pos немає.'),
+  cgLessonsFailed: 'cg-lessons: не вийшло, причина — у сповіщенні.',
+  healthLessons: (count: number, shown: number, chars: number, stopped: number, on: boolean) =>
+    on
+      ? `Уроки: у цьому проєкті ${count}; показано з повідомленням ${shown} разів (~${Math.round(chars / 3.5)} токенів загалом), команд зупинено ${stopped}`
+      : `Уроки: у цьому проєкті ${count}; нагадування вимкнено (налаштування «Lessons»)`,
+
+  // the background job (stage 4)
+  cgJobDescription: "Фонове завдання цього комп'ютера (Windows): on [хвилин], off або його стан",
+  cgJobHint: '[on [хвилин] | off]',
+  cgJobUsage: 'Так: /cg-job, /cg-job on [хвилин, типово 30], /cg-job off.',
+  cgJobOn: (minutes: number) =>
+    `Фонове завдання ввімкнено: раз на ${minutes} хвилин індекс, вектори (від мережі) і синхронізація йдуть без відкритого чату. Це завдання «CacheGuard» Планувальника завдань, з налаштуваннями з файлу мода.`,
+  cgJobOff: 'Фонове завдання вимкнено: завдання «CacheGuard» видалено. Мод наздоганяє, коли відкривається чат, як раніше.',
+  cgJobState: (minutes: number | null) =>
+    minutes === null ? 'Фонове завдання: на цій системі поки немає (лише Windows); мод наздоганяє, коли відкривається чат.' : minutes ? `Фонове завдання: увімкнено, раз на ${minutes} хвилин.` : 'Фонове завдання: вимкнено (/cg-job on).',
+  cgJobFailed: 'cg-job: не вийшло, причина — у сповіщенні.',
+  jobIndex: (rows: number) => `індекс +${rows}`,
+  jobEmbed: (done: number, left: number) => `вектори +${done} (лишилося ${left})`,
+  jobOnBattery: 'вектори чекають на мережу',
+  jobEmbedBusy: 'вектори рахував чат',
+  jobSync: (up: number, down: number) => `синхронізація ↑${up} ↓${down}`,
+  jobLast: (at: string, did: string, errors: number) => `Фонове завдання, останній запуск ${at}: ${did}${errors ? `; помилок: ${errors}` : ''}`,
+  jobError: (where: string, error: string) => `Помилка фонового завдання (${where}): ${error}`,
+  jobNever: 'Фонове завдання: запусків ще не було (/cg-job on).',
 }

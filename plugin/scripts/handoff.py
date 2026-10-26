@@ -1,4 +1,4 @@
-"""Mechanical handoff for a new worker chat: the owner's last words, Claude's last reply, git state, touched files. No model calls."""
+"""Mechanical handoff for a new worker chat: the owner's last words, Claude's last reply, git state. No model calls."""
 import glob
 import os
 import subprocess
@@ -87,6 +87,8 @@ def build_handoff(projects, session_id, today, memory_dir=None, level='off'):
             break
         early.append(item)
 
+    # the edited files only lead to their repositories: a list of them is no task for the next chat, which may well be about something
+    # else (the owner, stage 4); recall finds them when it is not
     edits = sorted((r for r in recs + [x for p in subs for x in read_records(p)[0]] if 'edit' in r), key=lambda r: r['ts'])
     files = list(dict.fromkeys(r['edit'] for r in reversed(edits)))[:30]  # newest first
     cwd = next((r['cwd'] for r in reversed(recs) if r['cwd']), '')
@@ -100,15 +102,14 @@ def build_handoff(projects, session_id, today, memory_dir=None, level='off'):
              t('handoff_resume', cwd=next((r['cwd'] for r in recs if r['cwd']), ''), id=session_id)]
 
     def render():
-        state = git + (['\n'.join([t('handoff_files')] + ['- ' + f for f in files])] if files else [])
-        parts = ['\n'.join(head), stopped(fixed + early)] + ([t('handoff_state') + '\n' + '\n\n'.join(state)] if state else [])
+        parts = ['\n'.join(head), stopped(fixed + early)] + ([t('handoff_state') + '\n' + '\n\n'.join(git)] if git else [])
         # a marker quoted inside the text would end the block early for strip_handoff
         body = '\n\n'.join(parts).replace(HANDOFF_START, '[cg-handoff ]').replace(HANDOFF_END, '[/cg-handoff ]')
         return HANDOFF_START + '\n' + body + '\n' + HANDOFF_END
 
     out = render()
-    while len(out) > _CAP and (early or files):
-        (early or files).pop()  # the oldest early reply first, then the oldest files
+    while len(out) > _CAP and early:
+        early.pop()  # the oldest early reply first
         out = render()
     # shortcut: if the owner's messages, the last reply and git alone exceed the cap, the end of the text is cut; the state is last, so it goes first
     return out if len(out) <= _CAP else out[:_CAP - len(HANDOFF_END) - 2] + '…\n' + HANDOFF_END

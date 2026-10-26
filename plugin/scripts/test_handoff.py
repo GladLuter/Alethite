@@ -91,12 +91,13 @@ class HandoffTest(unittest.TestCase):
         self.assertIn('черновик', t)
         self.assertEqual(strip_handoff(t).strip(), '')  # a reply that quotes the end marker must not cut the handoff short
 
-    def test_edits_of_chat_and_subagents_listed_newest_first(self):
+    def test_edited_files_are_not_listed(self):
         self.write('P/S.jsonl', [u('сделай'), a([tool('Edit', file_path='C:\\r\\main.py'), tool('Edit', file_path='C:\\r\\main.py')], ts=LATER)])
         self.write('P/S/subagents/agent-a1.jsonl', [u('сделай Y'), a([tool('Write', file_path='C:\\r\\only_sub.py')])])
         t = self.build()
-        self.assertEqual(t.count('- C:\\r\\main.py'), 1)
-        self.assertLess(t.index('- C:\\r\\main.py'), t.index('- C:\\r\\only_sub.py'))  # by time, not by file
+        self.assertNotIn('main.py', t)  # no list of files: the next chat may be about something else (the owner, stage 4)
+        self.assertNotIn('only_sub.py', t)
+        self.assertIn('файлы, которые он менял, тоже находятся там', t)  # recall finds them when it is not
 
     def test_git_of_touched_repo_not_cwd(self):
         repo = self.make_repo()
@@ -146,8 +147,10 @@ class HandoffTest(unittest.TestCase):
         self.write('P/S.jsonl', objs)
         t = self.build()
         self.check_cap(t)
-        self.assertEqual([p in t for p in paths], [True] * 30)  # the early replies go first, the file list stays whole
-        self.assertEqual([i for i in range(9) if 'РАННИЙ-%d ' % i in t], [6, 7, 8])  # four fit, the oldest went, the newest stay
+        self.assertEqual([p in t for p in paths], [False] * 30)  # no file list any more
+        kept = [i for i in range(9) if 'РАННИЙ-%d ' % i in t]
+        self.assertEqual(kept, list(range(9 - len(kept), 9)))  # the oldest went, the newest stay
+        self.assertGreater(len(kept), 0)
 
     def test_cap_cuts_the_end_when_nothing_else_is_left(self):
         repo = self.make_repo(untracked=35)  # `git status` alone is ~3 000 characters

@@ -1,5 +1,7 @@
 // Pure side of the bridge to scripts/cg.py: one JSON object on stdout, {"error": "..."} and exit 1 on failure.
 // Everything that touches `$` (runCg, fail, memoryDir) lives in register.tsx: the loader follows `$` only inside its own file.
+import { jobHealth } from './job'
+import type { JobRun } from './job'
 import { syncHealth } from './sync'
 import type { SyncStatus } from './sync'
 import { T } from './text'
@@ -32,7 +34,9 @@ export const healthLines = (h: {
   syncDir?: string
   compression?: string
   settingsFile?: string
+  lessons?: { count: number; shown: number; chars: number; stopped: number; on: boolean }
 }) => {
+  const job = typeof h.index === 'string' ? undefined : (h.index.job as JobRun | null | undefined)
   const v = typeof h.index === 'string' ? undefined : (h.index.vectors as Vectors | undefined)
   const p = typeof h.index === 'string' ? undefined : (h.index.project as Project | undefined)
   return [
@@ -45,7 +49,9 @@ export const healthLines = (h: {
     ...(h.memory ? [T.healthMemory(h.memory.dir, h.memory.facts), ...(h.memory.tokens ? [T.memoryIndexTokens(h.memory.tokens)] : [])] : [T.memoryNotLoaded]),
     ...(h.settingsFile === undefined ? [] : [T.healthSettings(h.settingsFile)]),
     ...(h.compression === undefined ? [] : [T.compressionLine(h.compression)]),
+    ...(h.lessons === undefined ? [] : [T.healthLessons(h.lessons.count, h.lessons.shown, h.lessons.chars, h.lessons.stopped, h.lessons.on)]),
     ...(h.syncDir === undefined ? [] : syncHealth(h.syncDir, typeof h.index === 'string' ? undefined : (h.index.sync as SyncStatus | undefined))),
+    ...(typeof h.index === 'string' || !('job' in h.index) ? [] : jobHealth(job)),
     h.lastError ? T.healthLastError(new Date(h.lastError.at).toLocaleString(T.locale), h.lastError.where, h.lastError.msg) : T.healthNoError,
   ]
 }

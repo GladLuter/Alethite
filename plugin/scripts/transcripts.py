@@ -11,6 +11,9 @@ _HANDOFF = re.compile(r'\A\s*%s.*?(?:%s|\Z)|%s.*?%s' % ((re.escape(HANDOFF_START
 # user text Claude Code injects without isMeta: cc_token_audit.INJECTED plus the echo of a typed slash command
 INJECTED = re.compile(r'\s*<(task-notification|local-command-|system-reminder|command-(?:name|message)>)')
 _REMINDER = re.compile(r'<system-reminder>.*?</system-reminder>', re.S)
+# the lessons the mod put beside the owner's message (stage 4), wherever the engine keeps that context: not the owner's words;
+# a closed block only (the mod writes both marks): a mention of the mark in the owner's text must not cut the rest of it
+_LESSONS = re.compile(r'\[cg-lessons\].*?\[/cg-lessons\]', re.S)
 _WORKTREE = re.compile(r'[\\/]\.claude[\\/]worktrees(?:[\\/].*)?$')
 _ARGS = ('command', 'file_path', 'notebook_path', 'path', 'pattern', 'skill', 'url', 'query', 'description')
 _USAGE = ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'output_tokens')
@@ -68,7 +71,7 @@ def _typed(text, kind):
     """What a person (or, in a subagent, the parent agent) wrote, without injected parts."""
     if not isinstance(text, str):
         return []
-    text = _REMINDER.sub('', strip_handoff(text)).strip()
+    text = _LESSONS.sub('', _REMINDER.sub('', strip_handoff(text))).strip()
     text = '' if INJECTED.match(text) or text.startswith('[Request interrupted by user') else text  # what is left still starts like injected text: an unclosed reminder, a slash command, an Esc interrupt
     return [(kind, text, None)] if text else []
 
@@ -82,15 +85,30 @@ def _tool(b):
     return 'tool', name + ': ' + ' '.join(arg.split())[:300] if arg else name, edit
 
 
+ERROR_CHARS = 500
+
+
+def _error(b):
+    """A failed tool call's result, its head and tail: the trace a past error is found by again (429, ENOENT, 'database is locked')."""
+    c = b.get('content')
+    text = c if isinstance(c, str) else '\n'.join(x['text'] for x in _blocks(c) if x.get('type') == 'text' and isinstance(x.get('text'), str))
+    text = ' '.join(_LESSONS.sub('', _REMINDER.sub('', text)).split())  # the gate's denial is the lesson's text, not an error to find again
+    if len(text) > ERROR_CHARS:
+        text = text[:200] + ' … ' + text[-(ERROR_CHARS - 200):]  # a traceback ends with the error itself
+    return [('error', text, None)] if text else []
+
+
 def _items(o, sub):
     """(kind, text, edit) for each indexable piece of one transcript line."""
     t, m = o.get('type'), o.get('message')
     m = m if isinstance(m, dict) else {}
     out = []
     if t == 'user' and not (o.get('isMeta') or o.get('isCompactSummary')):
-        for b in _blocks(m.get('content')):  # tool_result and image blocks are not indexed
+        for b in _blocks(m.get('content')):  # a successful tool_result and image blocks are not indexed
             if b.get('type') == 'text':
                 out += _typed(b.get('text'), 'task' if sub else 'owner')
+            elif b.get('type') == 'tool_result' and b.get('is_error') is True:
+                out += _error(b)
     elif t == 'attachment' and isinstance(o.get('attachment'), dict):
         a = o['attachment']  # a message typed while Claude was busy
         if a.get('type') == 'queued_command' and not a.get('isMeta') and a.get('commandMode') != 'task-notification':

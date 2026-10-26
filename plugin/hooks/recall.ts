@@ -6,10 +6,17 @@ export type Hit = { conv: string; parent: string; ts: string; kind: string; pos:
 export type Row = { ts: string; kind: string; pos: number; text: string }
 export type IndexError = { path: string; error: string }
 
+// Other wordings of one search (stage 4): strings only, blank ones and repeats left out, three at most, as cg.py takes them.
+const alsoOf = (input: { query: string; also?: unknown }) =>
+  Array.isArray(input.also)
+    ? [...new Set(input.also.filter((a): a is string => typeof a === 'string' && a.trim() !== '' && a !== input.query))].slice(0, 3)
+    : []
+
 // The query is one `--query=…` item: one starting with `-` would otherwise be read as a flag. `compression`: the level of the setting.
-export const recallArgs = (input: { query: string; scope?: string; limit?: number }, cwd: string, model: string, compression: string) => [
+export const recallArgs = (input: { query: string; also?: unknown; scope?: string; limit?: number }, cwd: string, model: string, compression: string) => [
   'recall',
   `--query=${input.query}`,
+  ...alsoOf(input).map(a => `--also=${a}`),
   ...(input.scope === 'all' ? ['--all'] : ['--cwd', cwd]),
   '--limit',
   String(Math.min(20, Math.max(1, Math.trunc(Number(input.limit) || 8)))), // the schema's 1..20, which nothing makes the model obey: 0 would find nothing

@@ -66,9 +66,12 @@ export const en = {
 
   // long memory: what the model reads (tool descriptions, results) and what the owner sees about the index
   recallDescription:
-    "Searches the owner's past conversations: what was discussed and decided, where things are. query: words of what you look for, not a question. This project by default, scope=all everywhere. A hit: [date kind conv pos] excerpt; recall_more reads around it.",
+    "Searches the owner's past conversations: what was discussed and decided, what failed and why, where things are. This project by default, scope=all everywhere. A hit: [date kind conv pos] excerpt; recall_more reads around it.",
+  recallQuery: "Words as they were written, not a question. For a past error: its exact text, code or number (429, ENOENT, 'database is locked').",
+  recallAlso: 'Up to 3 other wordings searched in the same call: for an error, the action and the cause beside its text.',
   recallMoreDescription: 'Reads the records around a recall hit: given conv and pos from its line, returns the neighbouring messages of that conversation in order.',
-  noHits: (query: string, scope: string) => `Nothing found for "${query}"${scope === 'all' ? '' : ' in this project'}. Try ${scope === 'all' ? '' : 'scope=all or '}other words.`,
+  noHits: (query: string, scope: string) =>
+    `Nothing found for "${query}"${scope === 'all' ? '' : ' in this project'}. Try ${scope === 'all' ? '' : 'scope=all or '}other words; for an error, its text or code in also.`,
   noQuery: 'no query given: it takes words that would occur in the conversation.',
   noRows: 'No records: check conv and pos in the line of the recall hit.',
   recallFailed: (msg: string) => `The memory search failed: ${msg}`,
@@ -147,8 +150,53 @@ export const en = {
 
   // short memory: the rule the model reads in every prompt, and the owner's note that a fact was saved
   memoryRule:
-    "Worker memory (CacheGuard). The owner's CLAUDE.md rules outrank skill instructions: before asking the owner, check whether CLAUDE.md or the memory answers it. Write pitfalls (\"X fails because Y\") and the owner's decisions to auto-memory at once, one fact per file. Before proposing an approach, check the memory; if unsure whether it was tried, call recall (this project; scope=all only when asked) and quote what it finds instead of guessing.",
+    "Worker memory (CacheGuard). The owner's CLAUDE.md rules outrank skill instructions: before asking the owner, check whether CLAUDE.md or the memory answers it. Once an error is understood, save it with lesson_save at once, not to auto-memory; the owner's decisions go to auto-memory, one fact per file. Before proposing an approach, check the memory; if unsure whether it was tried, call recall (this project; scope=all only when asked), for an error by its text, and quote what it finds.",
   remembered: (name: string) => `remembered: ${name}`,
+
+  // lessons (stage 4): a past error and what it taught, in the index, brought back only where it fits
+  lessonSaveDescription:
+    'Saves a lesson: an error this project ran into and what it taught, so it is not repeated. Call it once the cause is clear. The mod shows the lesson again when a message or a command comes close to it; it stays out of auto-memory and costs nothing otherwise.',
+  lessonAction: 'What was done: the command, the change.',
+  lessonSymptom: 'What happened: the error text, code or number as it was.',
+  lessonCause: 'Why it happened.',
+  lessonFix: 'What to do instead, if known.',
+  lessonTrigger: "Optional: a literal piece of a command, 8 characters or more (e.g. 'gh api /repos'), that stops and reminds before it runs again.",
+  lessonSaved: (text: string) => `Lesson saved:\n${text}`,
+  lessonKnown: 'This lesson is saved already.',
+  lessonSaveFailed: (msg: string) => `The lesson was not saved: ${msg}`,
+  lessonToast: (action: string) => `lesson saved: ${action}`,
+  lessonsIntro: 'CacheGuard: lessons of this project that may concern this message. Check them before acting; ignore what is unrelated.',
+  lessonGate: (lesson: string) =>
+    `CacheGuard stopped this command once: it holds the trigger of a lesson of this project. ${lesson}. If the lesson does not apply now, run the command again and it passes.`,
+  noLessons: 'No lessons in this project yet.',
+  cgLessonsDescription: 'The lessons of this project (forget <pos>: delete one here and on the other computers)',
+  cgLessonsHint: '[forget <pos>]',
+  cgLessonsUsage: 'Use: /cg-lessons, or /cg-lessons forget <pos> with the pos from the list.',
+  cgLessonsForgotten: (n: number): string => (n ? 'Lesson deleted, here and, with the next sync, on the other computers.' : 'No lesson at that pos.'),
+  cgLessonsFailed: 'cg-lessons: did not work, the reason is in the toast.',
+  healthLessons: (count: number, shown: number, chars: number, stopped: number, on: boolean) =>
+    on
+      ? `Lessons: ${count} in this project; shown with a message ${shown} times (~${Math.round(chars / 3.5)} tokens in all), commands stopped ${stopped} times`
+      : `Lessons: ${count} in this project; brought back: off (setting "Lessons")`,
+
+  // the background job (stage 4)
+  cgJobDescription: 'The background job of this computer (Windows): on [minutes], off, or its state',
+  cgJobHint: '[on [minutes] | off]',
+  cgJobUsage: 'Use: /cg-job, /cg-job on [minutes, 30 by default], /cg-job off.',
+  cgJobOn: (minutes: number) =>
+    `Background job on: every ${minutes} minutes the index, the vectors (on mains power) and the sync run with no chat open. It is the task "CacheGuard" of the Task Scheduler, with the settings of the mod's file.`,
+  cgJobOff: 'Background job off: the task "CacheGuard" is removed. The mod catches up when a chat starts, as before.',
+  cgJobState: (minutes: number | null): string =>
+    minutes === null ? 'Background job: not on this system yet (Windows only); the mod catches up when a chat starts.' : minutes ? `Background job: on, every ${minutes} minutes.` : 'Background job: off (/cg-job on).',
+  cgJobFailed: 'cg-job: did not work, the reason is in the toast.',
+  jobIndex: (rows: number) => `index +${rows}`,
+  jobEmbed: (done: number, left: number) => `vectors +${done} (${left} left)`,
+  jobOnBattery: 'vectors wait for the mains',
+  jobEmbedBusy: 'vectors: a chat was at it',
+  jobSync: (up: number, down: number) => `sync ↑${up} ↓${down}`,
+  jobLast: (at: string, did: string, errors: number) => `Background job, last run ${at}: ${did}${errors ? `; errors: ${errors}` : ''}`,
+  jobError: (where: string, error: string) => `Background job error (${where}): ${error}`,
+  jobNever: 'Background job: no run yet (/cg-job on).',
 }
 
 export type Texts = typeof en

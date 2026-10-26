@@ -106,6 +106,24 @@ The mod compresses what it puts into the model's context itself: the results of 
 - **How much memory is in the context:** `/cg-stats` writes a "Memory in context" section into its note: the memory rule, `MEMORY.md`, the results of `recall` and their cost, the handoffs. `/cg-health` shows the compression level and the size of `MEMORY.md`.
 - If the worker understands the compressed excerpts worse, set `full` or `lite`.
 
+## Lessons, the background job, searching for errors (stage 4)
+
+After `git pull` and `/reload-plugins`:
+
+1. **Rebuild the index once**, so the tool errors of old conversations get into it:
+   ```powershell
+   python C:\_git\Claude-CacheGuard\plugin\scripts\cg.py index --rebuild
+   ```
+   A rebuild only adds what is missing. The vectors of the new records are computed by the background job or the next chat start.
+2. **Turn the background job on** on each computer: in a chat, `/cg-job on` (or `/cg-job on 15` — every 15 minutes).
+   - The task "CacheGuard" appears in the Task Scheduler: no window, only while you are logged on, on a battery the vectors wait for the mains.
+   - It takes its settings from the same `settings.json` file as the mod.
+   - `/cg-job` shows the state and the last run, `/cg-job off` removes the task.
+   - If the task does not run, check that Python is installed from python.org (`pythonw.exe` must lie beside `python.exe`).
+3. **Lessons** work by themselves: the worker saves an understood error with `lesson_save`. `/cg-lessons` lists the project's lessons, `/cg-lessons forget <pos>` deletes one.
+   - A lesson comes beside a message close in meaning and stops once a command that holds its trigger.
+   - If lessons come where they do not belong, raise `lessonsMinScore` in `settings.json` to `0.55`; if they never come, lower it to `0.4`. To turn them off: `"lessons": false`.
+
 ## Good to know
 
 - **The mod is read straight from the repository folder.**
@@ -113,7 +131,7 @@ The mod compresses what it puts into the model's context itself: the results of 
   - After a `git pull`, type `/reload-plugins` in Claude Code: no need to reinstall.
 - **The index and the vectors** live in `%USERPROFILE%\.claude\cacheguard\index.db` and never get into the repository. Each computer keeps its own index; the shared sync folder only carries batches between them.
 - **`/cg-index rebuild`** re-reads every transcript and adds only what is missing: the vectors stay and nothing is deleted.
-- **Settings:** a file of its own, `%USERPROFILE%\.claude\cacheguard\settings.json`, one per computer, beside the index. The keys: `language`, `compression`, `syncDir`, `bandMinTokens` and `bandIdleMinutes` (the band thresholds), `showLimits` (the limits line), `python` (the Python command, if it is `py`, not `python`) and `embedModel`. The table with the defaults is in [README.md](README.md).
+- **Settings:** a file of its own, `%USERPROFILE%\.claude\cacheguard\settings.json`, one per computer, beside the index. The keys: `language`, `compression`, `syncDir`, `bandMinTokens` and `bandIdleMinutes` (the band thresholds), `showLimits` (the limits line), `python` (the Python command, if it is `py`, not `python`), `embedModel`, `lessons` and `lessonsMinScore` (the lessons). The table with the defaults is in [README.md](README.md).
   - The mod creates the file at the first start with all the current values, so you only open it and edit. A file may hold just the keys you change.
   - The mod reads it at every load: the start of a chat and `/reload-plugins`. After an edit, type `/reload-plugins`.
   - Its values win over `/config`. The desktop app has no settings window for mods, so the settings live in a file. `/config` in a terminal `claude` still works, but where they differ, the file wins.

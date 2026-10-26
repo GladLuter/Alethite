@@ -374,6 +374,34 @@ class VectorsTest(unittest.TestCase):
         hits, _ = hybrid_search(self.conn, 'истёк', embed_fn=synonym)
         self.assertEqual(hits[0]['snippet'], chunks_of(text)[3][:300])  # not the first piece
 
+    def test_other_wordings_find_an_error_by_its_trace(self):  # stage 4: the action missed, the error text found it
+        self.add('P1/S3.jsonl', [owner_line('запускаю сборку'),
+                                 {'type': 'user', 'timestamp': TS, 'cwd': 'C:\\a', 'message': {'role': 'user', 'content': [
+                                     {'type': 'tool_result', 'tool_use_id': 't1', 'content': 'HTTP 429: лимит 120 запросов в час', 'is_error': True}]}}])
+        calls = []
+
+        def counted(texts, model, timeout=None):
+            calls.append(len(texts))
+            return fake(texts)
+
+        embed_pending(self.conn, embed_fn=fake)
+        self.assertEqual(search(self.conn, 'повторный запуск лишние вызовы'), [])
+        hits, state = hybrid_search(self.conn, 'повторный запуск лишние вызовы', also=['429 лимит запросов'], embed_fn=counted)
+        self.assertEqual(state, 'ok')
+        self.assertEqual((hits[0]['kind'], hits[0]['conv']), ('error', 'S3'))
+        self.assertEqual(calls, [2])  # one call to Ollama for every wording
+
+        def down(texts, model, timeout):
+            calls.append(len(texts))
+            raise RuntimeError('Ollama не отвечает: тест')
+
+        calls.clear()
+        hits, state = hybrid_search(self.conn, 'повторный запуск', also=['429', '', 'повторный запуск'], embed_fn=down)
+        self.assertEqual((hits[0]['kind'], state, calls), ('error', 'Ollama не отвечает: тест', [2]))  # words for both, one wait, no blanks or repeats
+        many = hybrid_search(self.conn, 'кэш', also=['a', 'b', 'c', 'd', 'e'], embed_fn=counted)
+        self.assertEqual(calls[-1], 4)  # the query and three other wordings at most
+        self.assertLessEqual(len(many[0]), 8)
+
     def test_vector_leg_down_falls_back_to_words_with_reason(self):
         embed_pending(self.conn, embed_fn=fake)
         words = search(self.conn, 'кэш')

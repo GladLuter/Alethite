@@ -12,6 +12,7 @@ import time
 import unittest
 from unittest import mock
 import cg
+import lessons
 import memdb
 import vectors
 from test_texts import use_lang
@@ -168,6 +169,21 @@ class CgTest(unittest.TestCase):
         self.assertIn('git add . && git commit -m "fix the bug in «Parser»"', hit['snippet'])
         rows = self.run_cg('expand', '--conv', hit['conv'], '--pos', str(hit['pos']), '--compress', 'ultra')[1]['rows']
         self.assertIn('Bash: ' + command, [r['text'] for r in rows])
+
+    def test_recall_takes_other_wordings_and_reads_an_error_as_it_is(self):  # stage 4
+        err = {'type': 'tool_result', 'tool_use_id': 't1', 'content': 'HTTP 429: the limit of 120 requests per hour', 'is_error': True}
+        self.write('P/S1.jsonl', [owner_line('запусти ещё раз'), dict(type='user', timestamp=TS, cwd='C:\\a', message={'role': 'user', 'content': [err]})])
+        out = self.run_cg('recall', '--query=повторный запуск', '--also=429 limit', '--all', '--compress', 'ultra')[1]
+        self.assertEqual(out['hits'][0]['kind'], 'error')
+        self.assertIn('HTTP «429»: the «limit» of 120 requests per hour', out['hits'][0]['snippet'])  # an error is not compressed
+
+    def test_a_lesson_is_read_as_it_is(self):  # stage 4: its wording is the lesson
+        conn = memdb.connect(self.db)
+        lessons.save(conn, project_key('C:\\a'), {'action': 'запустил сборку', 'symptom': 'HTTP 429 от GitHub', 'cause': 'это очень частые вызовы API'})
+        conn.close()
+        hit = self.run_cg('recall', '--query', '429', '--all', '--compress', 'ultra')[1]['hits'][0]
+        self.assertEqual(hit['kind'], 'lesson')
+        self.assertIn('это очень частые вызовы API', hit['snippet'])
 
     def test_compress_previews_a_level(self):
         env = {k: v for k, v in os.environ.items() if k not in ('PYTHONIOENCODING', 'PYTHONUTF8')}
