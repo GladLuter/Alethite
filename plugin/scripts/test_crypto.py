@@ -167,6 +167,15 @@ class SealTest(unittest.TestCase):
             self.assertEqual(os.listdir(d), [])
 
 
+    def test_failed_cleanup_does_not_break_a_seal(self):
+        # a scanner may hold the temp file for a moment: what is left is only ciphertext, and must not turn a result into an error
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(tempfile, 'tempdir', d):
+            with mock.patch.object(os, 'remove', side_effect=PermissionError):
+                data = crypto.seal(LINES, 'sqlcipher', KEY, AAD)
+                self.assertEqual(crypto.unseal(data, 'sqlcipher', KEY, AAD), LINES)
+                bad(self, crypto.unseal, t('seal_broken'), b'junk', 'sqlcipher', KEY, AAD)
+
+
 class DbTest(unittest.TestCase):
     def setUp(self):
         d = tempfile.TemporaryDirectory()

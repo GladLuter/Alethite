@@ -176,7 +176,7 @@ def _scratch():
         yield path
     finally:
         for p in (path, path + '-journal'):
-            with contextlib.suppress(FileNotFoundError):
+            with contextlib.suppress(OSError):  # a scanner may hold the file for a moment: a leftover is only ciphertext, a result is not lost for it
                 os.remove(p)
 
 
