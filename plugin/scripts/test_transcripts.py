@@ -164,6 +164,14 @@ class TranscriptsTest(unittest.TestCase):
         self.assertEqual(len(errors[1]), 503)  # 200 + ' … ' + 300
         self.assertEqual(len(errors), 2)  # a reminder alone, a lessons block alone, a good result and is_error false give none
 
+    def test_a_bare_exit_code_and_a_bare_refusal_are_no_error_records(self):  # no trace to find again; a refusal with the owner's words stays
+        bare = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file)"
+        err = lambda content: u([{'type': 'tool_result', 'tool_use_id': 't1', 'content': content, 'is_error': True}])
+        path = self.write('s.jsonl', [err('Exit code 1'), err(bare), err(bare + '.'), err(bare + '. To tell you how to proceed, the user said:\nне надо'),
+                                      err('Exit code 2\nENOENT')])
+        self.assertEqual([r['text'] for r in read_records(path)[0] if r['kind'] == 'error'],
+                         [bare + '. To tell you how to proceed, the user said: не надо', 'Exit code 2 ENOENT'])
+
     def test_a_long_error_keeps_its_head_and_its_last_line(self):  # a traceback ends with the error itself
         trace = 'Traceback (most recent call last):\n' + '  File "a.py", line 1, in f\n    g()\n' * 40 + 'TypeError: unsupported operand'
         path = self.write('s.jsonl', [u([{'type': 'tool_result', 'tool_use_id': 't1', 'content': trace, 'is_error': True}])])

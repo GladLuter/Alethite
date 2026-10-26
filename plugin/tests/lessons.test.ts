@@ -12,6 +12,10 @@ test('gate: the first lesson whose trigger the command holds, in any case, not o
   expect(gateFor(undefined, all, new Set())).toBeUndefined()
 })
 
+test('gate: a trigger shorter than 8 characters stops nothing (lessons.py refuses it, another computer or an older build may not)', () => {
+  expect(gateFor('git status', [lesson(1, ''), lesson(2, 'git')], new Set())).toBeUndefined()
+})
+
 test('context: between the marks, each lesson on one line and at most 600 characters', () => {
   const block = lessonContext([{ id: 1, conv: 'c', pos: 1, text: 'Action: x\nSymptom: ' + 'я'.repeat(900), score: 0.7 }])
   const lines = block.split('\n')

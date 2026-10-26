@@ -86,6 +86,8 @@ def _tool(b):
 
 
 ERROR_CHARS = 500
+# no trace to find again: a bare exit code, a refusal without the owner's words (with them it has a colon: "... the user said: ...")
+_BARE_ERROR = re.compile(r"Exit code \d+|The user doesn't want to proceed with this tool use\.[^:]*")
 
 
 def _error(b):
@@ -93,6 +95,8 @@ def _error(b):
     c = b.get('content')
     text = c if isinstance(c, str) else '\n'.join(x['text'] for x in _blocks(c) if x.get('type') == 'text' and isinstance(x.get('text'), str))
     text = ' '.join(_LESSONS.sub('', _REMINDER.sub('', text)).split())  # the gate's denial is the lesson's text, not an error to find again
+    if _BARE_ERROR.fullmatch(text):
+        return []
     if len(text) > ERROR_CHARS:
         text = text[:200] + ' … ' + text[-(ERROR_CHARS - 200):]  # a traceback ends with the error itself
     return [('error', text, None)] if text else []

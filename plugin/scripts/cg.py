@@ -150,6 +150,8 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=job.on_battery, digest=sy
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     out = {'at': stamp, 'index': None, 'embed': None, 'sync': None, 'errors': []}
     fault = lambda where, e: out['errors'].append({'where': where, 'error': '%s: %s' % (type(e).__name__, e)})
+    # a run cut off (the task's 30-minute limit) never gets to the end: /cg-health must not show the run before it as all well
+    conn.execute("INSERT OR REPLACE INTO meta VALUES('job_last', ?)", (json.dumps(dict(out, errors=[{'where': 'job', 'error': texts.t('job_unfinished')}]), ensure_ascii=False),))
     if broken:
         out['errors'].append({'where': 'settings', 'error': broken})
     try:
@@ -162,8 +164,11 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=job.on_battery, digest=sy
     else:
         try:
             held = _alone(a, 'embed', 0)
-        except sqlite3.OperationalError:
-            out['embed'] = {'skipped': 'busy'}  # a chat embeds right now
+        except sqlite3.OperationalError as e:
+            if 'locked' in str(e):
+                out['embed'] = {'skipped': 'busy'}  # a chat embeds right now
+            else:
+                fault('embed', e)
         else:
             try:
                 r = vectors.embed_pending(conn, model, embed_fn, a.embed_seconds)

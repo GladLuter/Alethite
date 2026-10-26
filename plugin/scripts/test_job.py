@@ -167,6 +167,36 @@ class MaintainTest(unittest.TestCase):
         self.assertIn('Ollama не отвечает: тест', out['errors'][0]['error'])
         self.assertEqual(out['sync']['pushed'], 2)  # the sync ran all the same
 
+    def test_a_run_marks_itself_at_its_start_so_a_cut_off_one_shows_unfinished(self):  # the 30-minute limit kills the task before the end is written
+        seen = []
+
+        def peek(texts, model, timeout=None):
+            conn = memdb.connect(self.db)
+            self.addCleanup(conn.close)
+            seen.append(json.loads(memdb.meta(conn, 'job_last')))
+            return fake(texts, model, timeout)
+
+        with mock.patch.dict(os.environ, {'COMPUTERNAME': 'AIJ-HP'}):
+            out = cg.maintain(self.args(), embed_fn=peek, battery=lambda: False, digest=lambda m: None)
+        self.assertEqual(seen[0]['errors'], [{'where': 'job', 'error': 'запуск не завершився (зупинено, наприклад, за межею в 30 хвилин)'}])
+        self.assertEqual(out['errors'], [])
+        conn = memdb.connect(self.db)
+        self.addCleanup(conn.close)
+        self.assertEqual(json.loads(memdb.meta(conn, 'job_last'))['errors'], [])  # the end of the run overwrites the mark
+
+    def test_only_a_locked_embed_lock_is_a_chat_embedding_any_other_error_is_said(self):
+        def alone(a, name, wait):
+            if name == 'embed':
+                raise sqlite3.OperationalError('unable to open database file')
+            return real(a, name, wait)
+
+        real = cg._alone
+        with mock.patch.object(cg, '_alone', alone):
+            out = self.run_job()
+        self.assertEqual((out['embed'], [e['where'] for e in out['errors']]), (None, ['embed']))
+        self.assertIn('unable to open database file', out['errors'][0]['error'])
+        self.assertEqual(out['sync']['pushed'], 2)  # the next step ran all the same
+
     def test_the_status_carries_the_last_run(self):
         self.run_job()
         st = cg._status(SimpleNamespace(db=self.db, machine='AIJ-HP', cwd=None))

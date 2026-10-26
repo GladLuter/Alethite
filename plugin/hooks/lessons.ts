@@ -49,11 +49,13 @@ const clip = (s: string) => (s.length <= LESSON_CHARS ? s : `${s.slice(0, LESSON
 // What the model reads beside the owner's message: the lessons that fit, between the marks.
 export const lessonContext = (found: Found[]) => [START, T.lessonsIntro, ...found.map(l => `- ${clip(oneLine(l.text))}`), END].join('\n')
 
+const TRIGGER_MIN = 8 // as in lessons.py: a lesson from another computer or an older build may hold a shorter one, which would stop every command
+
 // The lesson whose trigger the command holds (any case), if one does and it has not stopped a command in this chat yet.
 export const gateFor = (command: unknown, lessons: readonly Lesson[], stopped: ReadonlySet<number>) => {
   if (typeof command !== 'string') return undefined
   const c = command.toLowerCase()
-  return lessons.find(l => l.trigger !== null && !stopped.has(l.id) && c.includes(l.trigger.toLowerCase()))
+  return lessons.find(l => l.trigger !== null && l.trigger.length >= TRIGGER_MIN && !stopped.has(l.id) && c.includes(l.trigger.toLowerCase()))
 }
 
 // /cg-lessons: one line each, newest first, with the pos `forget` takes and the computer it came from.

@@ -599,6 +599,21 @@ export const register: Register = (on, options) => {
     return lesson === undefined ? next(e) : { deny: [START, T.lessonGate(oneLine(lesson.text)), END].join('\n') }
   })
 
+  // After a compaction the model no longer has what it was shown: this chat's lessons may be shown and may stop a command once more.
+  // Only the main conversation's own, finished compaction (a subagent's, a precompute and a skipped one leave the chat as it was); the
+  // result goes back whatever happens here.
+  on('session.compact', async ($, e, next) => {
+    const r = await next(e)
+    try {
+      if (e.trigger !== 'precompute' && e.agentId === undefined && r.skip === undefined) {
+        const id = await $.session.id()
+        shownIn.delete(id)
+        stoppedIn.delete(id)
+      }
+    } catch {}
+    return r
+  })
+
   // last and on the session side: every shared section must precede it, and the text never varies, so the prompt cache is not spent
   on('prompt.compose', async (_, e, next) => ({ sections: [...(await next(e)).sections, { id: 'cacheguard:memory-rule', text: T.memoryRule, scope: 'session' }] }))
 

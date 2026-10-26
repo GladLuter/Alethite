@@ -20,7 +20,7 @@ REQUIRED = ('action', 'symptom', 'cause')
 FIELD_CHARS = 300
 TRIGGER_MIN = 8  # a shorter one ("git", "rm") would stop every other command
 _SELECT = ("SELECT rowid, conv, pos, ts, text, (SELECT origin FROM keys WHERE id = chunks.rowid) FROM chunks "
-           "WHERE kind = 'lesson' AND " + memdb.IN_PROJECT)
+           "WHERE rowid IN (SELECT id FROM keys WHERE cls = 'lesson') AND " + memdb.IN_PROJECT)  # kind is UNINDEXED: it scans the whole FTS table
 
 
 def conv_of(project):

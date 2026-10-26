@@ -1050,6 +1050,30 @@ test('lessons: a PowerShell command is stopped once as well', async ($, on) => {
   expect(await ($ as any).tool.call({ tool: 'PowerShell', command: 'gh api /repos/owner/x' })).toEqual({ result: 'ran' })
 })
 
+test('lessons: after a compaction of the chat a lesson is shown and stops a command once more; a precompute, a skipped one and a subagent\'s change nothing', async ($, on) => {
+  const kept = [{ role: 'user', text: 'summary', toolUses: [] }] // a compaction leaves at least one message
+  let result: object = { messages: kept }
+  on('session.compact', () => result)
+  const contexts: string[][] = []
+  await lessonRig($, on, undefined, undefined, { context: contexts })
+  // [lessons beside the message, whether the command was stopped]
+  const round = async () => {
+    await typed($, 'опять 429 на сборке, что делать?')
+    return [contexts.at(-1)!.length, 'deny' in (await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' }))]
+  }
+  const compact = (input: object = {}) => ($ as any).session.compact({ messages: kept, ...input })
+  expect(await round()).toEqual([1, true])
+  expect(await round()).toEqual([0, false])
+  await compact({ trigger: 'precompute' })
+  await compact({ agentId: 'sub' })
+  result = { skip: 'no' }
+  await compact()
+  expect(await round()).toEqual([0, false])
+  result = { messages: kept }
+  await compact()
+  expect(await round()).toEqual([1, true])
+})
+
 test('/cg-lessons: the list; forget deletes by pos through cg.py; anything else, how to ask', async ($, on) => {
   const { m } = await lessonRig($, on)
   expect((await ($ as any).command.run({ command: 'cg-lessons', args: '' })).text).toBe(
