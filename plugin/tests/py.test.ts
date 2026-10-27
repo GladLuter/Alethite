@@ -63,3 +63,13 @@ test('health: the encryption line comes after the settings file, when cg.py repo
   expect(healthLines({ version: '2.1.295', index: {}, memory: null, root: 'C:/w', embedCmd: cmd }).join(' ')).not.toContain(T.healthEncryptionOff)
   expect(healthLines({ version: '2.1.295', index: 'OperationalError: x', memory: null, root: 'C:/w', embedCmd: cmd }).join(' ')).not.toContain(T.healthEncryptionOff)
 })
+test('health: the notes of the index folder come right after the index line, when cg.py reports them; none otherwise', () => {
+  const index = { db: 'C:/h/index.db', convs: 1, rows: 2, size_mb: 3, index_dir: { configured: 'D:/cg', fallback: true, notes: ['n1', 'n2'] } }
+  const lines = healthLines({ version: '2.1.295', index, memory: null, root: 'C:/w', embedCmd: cmd })
+  const at = lines.indexOf(T.healthIndex(index))
+  expect(at).toBeGreaterThan(-1)
+  expect(lines.slice(at + 1, at + 3)).toEqual(['n1', 'n2'])
+  const quiet = healthLines({ version: '2.1.295', index: { ...index, index_dir: { configured: null, fallback: false, notes: [] } }, memory: null, root: 'C:/w', embedCmd: cmd })
+  expect(quiet).toEqual(healthLines({ version: '2.1.295', index: { ...index, index_dir: undefined }, memory: null, root: 'C:/w', embedCmd: cmd }))
+  expect(healthLines({ version: '2.1.295', index: 'OperationalError: x', memory: null, root: 'C:/w', embedCmd: cmd }).join(' ')).not.toContain('n1')
+})

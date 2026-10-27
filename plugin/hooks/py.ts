@@ -2,6 +2,7 @@
 // Everything that touches `$` (runCg, fail, memoryDir) lives in register.tsx: the loader follows `$` only inside its own file.
 import { encryptHealth } from './encrypt'
 import type { EncryptStatus } from './encrypt'
+import type { IndexDirStatus } from './indexdir'
 import { jobHealth } from './job'
 import type { JobRun } from './job'
 import { syncHealth } from './sync'
@@ -44,9 +45,11 @@ export const healthLines = (h: {
   const v = typeof h.index === 'string' ? undefined : (h.index.vectors as Vectors | undefined)
   const p = typeof h.index === 'string' ? undefined : (h.index.project as Project | undefined)
   const enc = typeof h.index === 'string' ? undefined : (h.index.encryption as EncryptStatus | undefined)
+  const dir = typeof h.index === 'string' ? undefined : (h.index.index_dir as IndexDirStatus | undefined)
   return [
     T.healthVersion(h.version),
     typeof h.index === 'string' ? T.healthIndexError(h.index) : T.healthIndex(h.index),
+    ...(dir?.notes ?? []), // where the index is, when it is not where indexDir says: cg.py words it
     ...(p ? [T.projectLine(h.root, p.convs), ...(p.convs === 0 ? [T.projectEmpty] : [])] : []),
     ...(v
       ? [T.vectorsLine(v.model, v.with_vectors, v.total, v.updated), ...(v.failed ? [T.vectorsFailed(v.failed)] : []), ...(v.with_vectors < v.total ? [T.vectorsHint(h.embedCmd)] : [])]

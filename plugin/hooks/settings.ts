@@ -4,8 +4,8 @@ import { T } from './text'
 
 export const settingsPath = (home: string) => [home, '.claude', 'cacheguard', 'settings.json'].join(home.includes('/') ? '/' : '\\')
 
-// Keys cg.py writes into the file itself (the encryption key under DPAPI): no option, never reported, never shown.
-const SILENT = ['encryptionKey']
+// Keys cg.py writes into the file itself (the encryption key under DPAPI, the index folder): no option, never reported, never shown.
+const SILENT = ['encryptionKey', 'indexDir']
 
 // The options with the file's values over them, and the file's keys that are not a field or not of the field's type, left out.
 export const withFile = (options: Record<string, unknown>, text: string) => {

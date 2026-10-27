@@ -15,8 +15,8 @@ test('settings file: its values over the options; a key that is no field or of a
   expect(r.bad).toEqual(['bandMinTokens', 'colour'])
 })
 
-test('settings file: the key cg.py keeps there is no option and is not reported as a bad key', () => {
-  const r = withFile(options, '{"language": "ru", "encryptionKey": "dpapi:AAAA"}')
+test('settings file: the keys cg.py keeps there are no options and are not reported as bad keys', () => {
+  const r = withFile(options, '{"language": "ru", "encryptionKey": "dpapi:AAAA", "indexDir": "D:\\\\CacheGuard"}')
   expect(r.options).toEqual({ ...options, language: 'ru' })
   expect(r.bad).toEqual([])
 })

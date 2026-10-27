@@ -9,6 +9,8 @@ import { FOLDER, flush, notePath, SUMMARY_PATH, summaryNote } from './notes'
 import type { Note } from './notes'
 import { encryptArgs, encryptHealth, encryptReply, isTimeout } from './encrypt'
 import type { EncryptResult, EncryptStatus } from './encrypt'
+import { indexDirArgs, indexDirRefusal, indexDirReply } from './indexdir'
+import type { IndexDirResult } from './indexdir'
 import { healthLines, message, parseCg } from './py'
 import type { LastError } from './py'
 import { jobArgs, jobHealth } from './job'
@@ -32,12 +34,21 @@ const isBusy = atom({ plugin: 'cacheguard', key: 'isBusy' } as const, false)
 
 // The helpers below take `$` and so stay in this file: the loader follows `$` only into functions declared here, never across an import.
 
+// The notices of cg.py about where the index is (not in its folder, a merge done): a toast once per text, /cg-health keeps saying it.
+const noticed = new Set<string>()
+
 const runCg = async ($: EngineInterface, python: string, args: string[], timeoutMs = 120_000) => {
   // run() rejects only when the child cannot start or times out; cg.py speaks the language of the mod
   const r = await $.process.run([python, `${$.plugin.root}/scripts/cg.py`, '--lang', language(), ...args], { timeoutMs }).catch((err: unknown) => {
     throw new Error(`${T.pythonMissing(python)} (${message(err)})`)
   })
-  return parseCg(r)
+  const out = parseCg(r)
+  const notice = out.index_notice
+  if (typeof notice === 'string' && !noticed.has(notice)) {
+    noticed.add(notice)
+    toast($, notice)
+  }
+  return out
 }
 
 // The one door for toasts: everything this mod puts in one starts with its name (the texts in text.ts do not). The status line needs no mark: the engine labels it with the plugin name.
@@ -342,6 +353,7 @@ export const register: Register = (on, options) => {
       () => $.command.register({ name: 'cg-lessons', description: T.cgLessonsDescription, argumentHint: T.cgLessonsHint }),
       () => $.command.register({ name: 'cg-job', description: T.cgJobDescription, argumentHint: T.cgJobHint }),
       () => $.command.register({ name: 'cg-encrypt', description: T.cgEncryptDescription, argumentHint: T.cgEncryptHint }),
+      () => $.command.register({ name: 'cg-index-dir', description: T.cgIndexDirDescription, argumentHint: T.cgIndexDirHint }),
       () =>
         $.tool.register({
           name: 'recall',
@@ -489,6 +501,19 @@ export const register: Register = (on, options) => {
       const cut = !isState && isTimeout(message(err)) ? T.encryptTimeout(args[1]!) : undefined
       await fail($, 'cg-encrypt', cut ?? err)
       return { text: cut === undefined ? T.cgEncryptFailed : `cg-encrypt ${args[1]}: ${cut}` }
+    }
+  })
+
+  // Without a path a window asks for the folder (and a Yes/No box about the old copy), so the owner's time counts: the same 10 minutes as encrypt.
+  // A refusal (not a local disk, no space, a merge not done yet, busy) is what the owner must act on, so it is in the reply, not in a toast alone.
+  on('command.run', { command: 'cg-index-dir' }, async ($, e) => {
+    try {
+      toast($, T.encryptWindow)
+      return { text: indexDirReply((await runCg($, python, indexDirArgs(e.args), 600_000)) as unknown as IndexDirResult) }
+    } catch (err) {
+      const cut = isTimeout(message(err)) ? T.indexDirTimeout : undefined
+      await fail($, 'cg-index-dir', cut ?? err)
+      return { text: indexDirRefusal(cut ?? message(err)) }
     }
   })
 

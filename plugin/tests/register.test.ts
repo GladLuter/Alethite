@@ -456,7 +456,7 @@ test('session.start: a refused registration leaves the status line, the timers a
   expect(statuses.at(-1)!.startsWith(T.statusError(''))).toBe(true) // ...and the refusal is the last word
   expect(statuses.at(-1)).toContain('schema refused')
   expect(store.get('lastError')).toMatchObject({ where: 'register', msg: expect.stringContaining('schema refused') })
-  expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats', 'cg-sync', 'cg-lessons', 'cg-job', 'cg-encrypt'], tools: ['recall', 'recall_more', 'lesson_save'] }) // every tool was tried, the commands went through
+  expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats', 'cg-sync', 'cg-lessons', 'cg-job', 'cg-encrypt', 'cg-index-dir'], tools: ['recall', 'recall_more', 'lesson_save'] }) // every tool was tried, the commands went through
   await clock.advance(30_000) // the timers run
   expect(statuses.at(-1)).toMatch(/^ctx /)
 })
@@ -1242,4 +1242,58 @@ test('/cg-health: the encryption line, from what cg.py status reports', async ($
   on('session.root', () => ({ value: 'C:/w' }))
   const lines = (await ($ as any).command.run({ command: 'cg-health', args: '' })).text.split('\n')
   expect(lines[lines.indexOf(T.healthEncryptionOn('sqlcipher')) + 1]).toBe('n1')
+})
+
+// ---- the index folder (/cg-index-dir) ----
+const moved = { action: 'index-dir', done: true, dir: 'D:/cg', notes: ['n1'] }
+
+test('/cg-index-dir: with no path the window opens, with a path it is given; both wait as long as the host allows and tell how it ended', async ($, on) => {
+  const seen: number[] = [] // the toasts there were when cg.py was started
+  const m = await started($, on, a => (a[0] === 'index-dir' ? (seen.push(m.toasts.length), ran(JSON.stringify(a.length === 1 ? { ...moved, done: false, dir: '' } : moved))) : ran('{}')))
+  const run = async (args: string) => (await ($ as any).command.run({ command: 'cg-index-dir', args })).text
+  expect(await run('')).toBe([T.indexDirUnfinished, 'n1'].join('\n'))
+  expect(await run(' "D:/cg" ')).toBe([T.indexDirDone('D:/cg'), 'n1'].join('\n'))
+  expect(ofCg(m, 'index-dir')).toEqual([{ argv: ['index-dir'], timeoutMs: 600_000 }, { argv: ['index-dir', '--path=D:/cg'], timeoutMs: 600_000 }])
+  expect(seen).toEqual([1, 2])
+  expect(m.toasts).toEqual(Array(2).fill(T.toast(T.encryptWindow)))
+})
+
+test('/cg-index-dir: a refusal of cg.py is in the reply with its reason, in a toast and kept for /cg-health', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'index-dir' ? failed('ValueError: D:/cg is not on a local disk. Nothing was changed') : ran('{}')))
+  expect((await ($ as any).command.run({ command: 'cg-index-dir', args: 'D:/cg' })).text).toBe('cg-index-dir: D:/cg is not on a local disk. Nothing was changed')
+  expect(m.toasts).toEqual([T.toast(T.encryptWindow), T.toast(T.failed('cg-index-dir', 'ValueError: D:/cg is not on a local disk. Nothing was changed'))])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-index-dir', msg: 'ValueError: D:/cg is not on a local disk. Nothing was changed' })
+})
+
+test('/cg-index-dir: a run the host stopped at its time limit says so and what to do; a start failure says Python did not start', async ($, on) => {
+  let why = 'cacheguard: $.process.run(python) aborted: still running after 600000ms' // as the engine words it
+  const m = await started($, on, a => (a[0] === 'index-dir' ? { deny: why } : ran('{}')))
+  const run = async () => (await ($ as any).command.run({ command: 'cg-index-dir', args: '' })).text
+  expect(await run()).toBe(`cg-index-dir: ${T.indexDirTimeout}`)
+  expect(m.toasts).toEqual([T.toast(T.encryptWindow), T.toast(T.failed('cg-index-dir', T.indexDirTimeout))])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-index-dir', msg: T.indexDirTimeout })
+  why = 'failed to start: ENOENT'
+  expect(await run()).toContain(T.pythonMissing('python'))
+})
+
+test('index notice: any answer of cg.py that carries one gives a toast, once per text for the life of the mod', async ($, on) => {
+  let notice = 'the index of the test is not in D:/one'
+  const m = await started($, on, a => (a[0] === 'index' ? ran(JSON.stringify({ files: 0, rows: 0, convs: 0, seconds: 0, errors: [], index_notice: notice })) : ran('{}')))
+  const index = () => ($ as any).command.run({ command: 'cg-index', args: '' })
+  await index()
+  await index()
+  expect(m.toasts).toEqual([T.toast(notice)])
+  notice = 'a merge of the test happened in D:/two'
+  await index()
+  await index()
+  expect(m.toasts).toEqual([T.toast('the index of the test is not in D:/one'), T.toast(notice)])
+})
+
+test('/cg-health: the notes of the index folder follow the index line', async ($, on) => {
+  wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) =>
+    e.argv.includes('status') ? ran(JSON.stringify({ db: 'd', convs: 0, rows: 0, size_mb: 0, index_dir: { configured: 'D:/cg', fallback: true, notes: ['n1'] } })) : noTurn(),
+  )
+  on('session.root', () => ({ value: 'C:/w' }))
+  const lines = (await ($ as any).command.run({ command: 'cg-health', args: '' })).text.split('\n')
+  expect(lines[lines.findIndex(l => l.startsWith('Index:')) + 1]).toBe('n1')
 })

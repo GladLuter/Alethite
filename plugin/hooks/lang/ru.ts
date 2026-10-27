@@ -212,4 +212,11 @@ export const ru: Partial<Texts> = {
   cgEncryptFailed: 'cg-encrypt: не получилось, причина — в уведомлении.',
   healthEncryptionOn: (cipher: string) => `Шифрование: включено (${cipher})`,
   healthEncryptionOff: 'Шифрование: выключено',
+
+  // the folder of the index (/cg-index-dir)
+  cgIndexDirDescription: 'Перенести индекс в папку по вашему выбору на локальном диске. Без пути окно спросит папку',
+  cgIndexDirHint: '[папка]',
+  indexDirDone: (dir: string) => `Индекс теперь в ${dir}.`,
+  indexDirUnfinished: 'cg-index-dir: не закончено.',
+  indexDirTimeout: 'не закончилось за 10 минут и было остановлено. /cg-health покажет, где индекс сейчас. Если он не там, где нужно, запустите /cg-index-dir ещё раз.',
 }

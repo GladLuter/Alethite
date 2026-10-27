@@ -214,6 +214,13 @@ export const en = {
   cgEncryptFailed: 'cg-encrypt: did not work, the reason is in the toast.',
   healthEncryptionOn: (cipher: string) => `Encryption: on (${cipher})`,
   healthEncryptionOff: 'Encryption: off',
+
+  // the folder of the index (/cg-index-dir)
+  cgIndexDirDescription: 'Move the index to a folder of your choice on a local disk. With no path a window asks for the folder',
+  cgIndexDirHint: '[folder]',
+  indexDirDone: (dir: string) => `The index is in ${dir} now.`,
+  indexDirUnfinished: 'cg-index-dir: not finished.',
+  indexDirTimeout: 'did not finish in 10 minutes and was stopped. /cg-health shows where the index is now. If it is not where you want it, run /cg-index-dir again.',
 }
 
 export type Texts = typeof en

@@ -215,4 +215,11 @@ export const uk: Partial<Texts> = {
   cgEncryptFailed: 'cg-encrypt: не вийшло, причина — у сповіщенні.',
   healthEncryptionOn: (cipher: string) => `Шифрування: ввімкнено (${cipher})`,
   healthEncryptionOff: 'Шифрування: вимкнено',
+
+  // the folder of the index (/cg-index-dir)
+  cgIndexDirDescription: 'Перенести індекс у теку на ваш вибір на локальному диску. Без шляху вікно запитає теку',
+  cgIndexDirHint: '[тека]',
+  indexDirDone: (dir: string) => `Індекс тепер у ${dir}.`,
+  indexDirUnfinished: 'cg-index-dir: не завершено.',
+  indexDirTimeout: 'не завершилося за 10 хвилин і було зупинено. /cg-health покаже, де індекс зараз. Якщо він не там, де потрібно, запустіть /cg-index-dir ще раз.',
 }
