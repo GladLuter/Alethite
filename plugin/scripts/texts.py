@@ -143,6 +143,7 @@ EN = {
     'dlg_delete_old_index': 'The index now works from the new folder. The old copy still lies in {dir}. Delete it now?\n\nThe settings file and the encryption key are not touched.',
     'index_old_busy': 'some files of the old copy in {dir} are in use by another program and were not deleted. Repeat /cg-index-dir with the new folder to delete the rest',
     'index_old_kept': 'the old copy of the index stays in {dir}. To delete it, repeat /cg-index-dir with the new folder',
+    'index_dir_merge_pending': 'the records saved in {home} while the index folder {dir} was away are not merged into the index there yet. The next run of the mod merges them. Then repeat the command. Nothing was changed',
 }
 
 RU = {
@@ -278,6 +279,7 @@ RU = {
     'dlg_delete_old_index': 'Индекс теперь работает из новой папки. Старая копия всё ещё лежит в {dir}. Удалить её сейчас?\n\nФайл настроек и ключ шифрования не затрагиваются.',
     'index_old_busy': 'часть файлов старой копии в {dir} занята другой программой и не удалена. Повторите /cg-index-dir с новой папкой, чтобы удалить остальное',
     'index_old_kept': 'старая копия индекса осталась в {dir}. Чтобы удалить её, повторите /cg-index-dir с новой папкой',
+    'index_dir_merge_pending': 'записи, сохранённые в {home}, пока папки индекса {dir} не было, ещё не влиты в индекс там. Следующий запуск мода их вольёт. Потом повторите команду. Ничего не изменено',
 }
 
 UK = {
@@ -413,6 +415,7 @@ UK = {
     'dlg_delete_old_index': 'Індекс тепер працює з нової теки. Стара копія все ще лежить у {dir}. Видалити її зараз?\n\nФайл налаштувань і ключ шифрування не зачіпаються.',
     'index_old_busy': 'частину файлів старої копії в {dir} зайнято іншою програмою, і їх не видалено. Повторіть /cg-index-dir з новою текою, щоб видалити решту',
     'index_old_kept': 'стара копія індексу залишилась у {dir}. Щоб видалити її, повторіть /cg-index-dir з новою текою',
+    'index_dir_merge_pending': 'записи, збережені в {home}, поки теки індексу {dir} не було, ще не влиті в індекс там. Наступний запуск мода їх влиє. Потім повторіть команду. Нічого не змінено',
 }
 
 TABLES = {'en': EN, 'ru': RU, 'uk': UK}

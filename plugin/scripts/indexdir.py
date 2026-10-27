@@ -24,6 +24,8 @@ LOCKS = ('maintain', 'embed', 'sync')  # the long runs on an index (memdb.lock):
 DRIVE_FIXED = 3  # GetDriveTypeW: a disk inside this computer, not a removable or a network one
 SPARE = 200 * 2 ** 20  # what a move leaves free on the target disk besides the files it copies
 MB = 2 ** 20
+LOCK_BYTE = 0x40000000  # where SQLite's lock-byte page starts, in a file over 1 GB: it never stores data there
+CHUNK = 2 ** 20
 CLOUD = ('OneDrive', 'OneDriveCommercial', 'OneDriveConsumer')  # the folders a cloud service syncs: no index there
 # the keys of the temporary index (tmp) that the index (main) has neither as a record nor forgotten, and the forgets it lacks
 _NEW = 'SELECT conv, cls, hash, n FROM tmp.keys EXCEPT SELECT conv, cls, hash, n FROM main.keys EXCEPT SELECT conv, cls, hash, n FROM main.forgotten'
@@ -238,13 +240,29 @@ def _existing(path):
     return path
 
 
+def _copyfile(path, copy, page, lock=LOCK_BYTE):
+    """`path` copied to `copy` in chunks, the lock-byte page (`page` bytes from `lock`) written as zeros and not read. Our write lock is a
+    byte-range lock there, which Windows enforces against a read through another handle: a plain copy of an index over 1 GB would fail."""
+    with open(path, 'rb') as src, open(copy, 'wb') as dst:
+        size, pos = os.fstat(src.fileno()).st_size, 0
+        while pos < size:
+            if lock <= pos < lock + page:
+                end = min(lock + page, size)
+                dst.write(bytes(end - pos))
+                src.seek(end)
+            else:
+                end = min(pos + CHUNK, size, lock if pos < lock else size)  # a chunk stops where the page begins
+                dst.write(src.read(end - pos))
+            pos = end
+
+
 def _copy(path, copy, key):
     """The index file `path` copied to `copy` under its own write lock (a chat cannot write meanwhile) and counted from a fresh open;
     the first page of `path` as it was then."""
     with contextlib.closing(_connect(path, key)) as conn:
         conn.execute('BEGIN IMMEDIATE')
         want, stamp = encrypt._counts(conn), encrypt._stamp(path)
-        shutil.copyfile(path, copy)
+        _copyfile(path, copy, int(conn.execute('PRAGMA page_size').fetchone()[0]))  # SQLCipher answers with text
         conn.execute('COMMIT')
     with contextlib.closing(_connect(copy, key)) as dst:
         got = encrypt._counts(dst)
@@ -317,6 +335,8 @@ def _switch(out, where, target, key, ui, drive_type, free):
     settings = os.path.join(crypto.HOME_DIR, 'settings.json')
     if not encrypt.SUPPORTED:
         raise ValueError(t('index_dir_windows_only'))
+    if where.merge_from:  # the records saved on C: while the folder was away are not in its index yet, and the old copy is that index
+        raise ValueError(t('index_dir_merge_pending', dir=cur, home=os.path.dirname(where.merge_from)))
     drive = os.path.splitdrive(folder)[0]
     if not (os.path.isabs(target) and os.path.splitdrive(target)[0]) or drive.startswith('\\\\') or drive_type(drive + '\\') != DRIVE_FIXED:
         raise ValueError(t('index_dir_not_local', dir=folder))

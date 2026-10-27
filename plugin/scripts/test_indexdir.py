@@ -593,6 +593,43 @@ def counts(path, key=None):
         return encrypt._counts(conn)
 
 
+class CopyFileTest(unittest.TestCase):
+    """The chunked copy of an index file: the lock-byte page (SQLite's, at 1 GB in a real file) is written as zeros and not read. The offset
+    is a parameter here, so that a small file stands for a big one."""
+
+    def setUp(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.path, self.copy = (os.path.join(d.name, n) for n in ('index.db', 'index.db.cg-move'))
+
+    def copied(self, data, page, lock, chunk=None):
+        with open(self.path, 'wb') as f:
+            f.write(data)
+        with mock.patch.object(indexdir, 'CHUNK', chunk or indexdir.CHUNK):
+            indexdir._copyfile(self.path, self.copy, page, lock)
+        with open(self.copy, 'rb') as f:
+            return f.read()
+
+    def test_the_bytes_outside_the_lock_byte_page_are_equal_and_the_page_is_zeros(self):
+        data = secrets.token_bytes(1000)
+        for chunk in (None, 100, 64, 7, 256, 320):  # chunks that end before, at, inside and after the page
+            got = self.copied(data, 64, 256, chunk)
+            self.assertEqual(got, data[:256] + bytes(64) + data[320:], chunk)
+
+    def test_a_file_that_ends_before_inside_or_at_the_page_keeps_its_size(self):
+        data = secrets.token_bytes(1000)
+        self.assertEqual(self.copied(data[:200], 64, 256), data[:200])
+        self.assertEqual(self.copied(data[:256], 64, 256), data[:256])
+        self.assertEqual(self.copied(data[:300], 64, 256), data[:256] + bytes(44))
+        self.assertEqual(self.copied(data[:320], 64, 256), data[:256] + bytes(64))
+        self.assertEqual(self.copied(b'', 64, 256), b'')
+
+    def test_the_real_lock_byte_is_where_sqlite_keeps_it(self):
+        self.assertEqual(indexdir.LOCK_BYTE, 0x40000000)
+        data = secrets.token_bytes(5000)
+        self.assertEqual(self.copied(data, 4096, indexdir.LOCK_BYTE), data)  # a file of the usual size never reaches it
+
+
 @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
 class MoveTest(unittest.TestCase):
     """indexdir.move on temporary folders. `home` stands for ~/.claude/cacheguard: crypto.HOME_DIR is patched, the real one is never read.
@@ -1011,6 +1048,49 @@ class MoveTest(unittest.TestCase):
         for lock in locks:
             with self.assertRaises(sqlite3.ProgrammingError):
                 lock.execute('SELECT 1')
+
+    def test_a_move_waits_while_the_temporary_index_on_c_is_not_merged_and_changes_nothing(self):
+        self.full_home()
+        self.move(ui=FakeUI([False]))  # No: the old copy stays in home, and the index in the target notes it
+        os.rename(self.target, self.target + '-away')  # the disk is away: the old copy stands in for the folder
+        where = resolve(self.home, self.free)
+        self.assertTrue(where.fallback)
+        with contextlib.closing(memdb.connect(where.db)) as conn:
+            put(conn, 'S', 'only on C', pos=9)
+        self.write(os.path.join(self.home, 'handoffs', 'S2.md'), 'unmerged')
+        os.rename(self.target + '-away', self.target)  # back, and its merge did not run (a lock was held) or failed
+        where = resolve(self.home, self.free)
+        self.assertEqual((where.configured, where.merge_from), (self.target, self.src))
+        asked = list(self.asked)
+        for target in (self.target, self.home, self.target.upper() + '\\'):  # "here", the home folder, "here" written another way
+            with self.subTest(target):
+                before = self.tree(self.home, self.target)
+                with self.assertRaises(ValueError) as e:
+                    self.move(target, where=where, ui=FakeUI([True]))
+                self.assertEqual(str(e.exception), t('index_dir_merge_pending', dir=self.target, home=self.home))
+                self.assertEqual((self.ui.asked, self.tree(self.home, self.target)), ([], before))  # no question, not a byte changed
+                self.assertTrue(all(os.path.exists(p) for p in (self.src, self.mark, os.path.join(self.home, 'handoffs', 'S2.md'))))
+        with contextlib.closing(memdb.connect(self.src)) as conn:
+            self.assertIn('only on C', texts_of(conn))
+        self.assertEqual(self.fields()['indexDir'], self.target)
+        self.assertEqual(self.asked, asked)  # not even the free space was looked at
+        self.assertTrue(merge_back(where, None))  # the next run merges them, and then the command goes through
+        out = self.move(self.home, where=resolve(self.home, self.free), ui=FakeUI([False]))
+        self.assertTrue(out['done'])
+        with contextlib.closing(memdb.connect(self.src)) as conn:
+            self.assertEqual(texts_of(conn), ['alpha', 'beta', 'only on C'])
+
+    def test_the_lock_byte_page_is_the_size_the_connection_reports(self):  # 4096 for a plain index, the 16 KB of an encrypted one
+        for key, page in ((None, 4096), (secrets.token_bytes(32), 16384)):
+            with self.subTest(page):
+                folder = os.path.join(self.root, 'k%d' % page)
+                self.make_home(folder)
+                self.full_home(key)
+                if key:
+                    crypto.save_key(self.settings, key)
+                with mock.patch.object(indexdir, '_copyfile', wraps=indexdir._copyfile) as copyfile:
+                    self.move(os.path.join(folder, 'new'), key=key)
+                self.assertEqual([c[0][2] for c in copyfile.call_args_list], [page, page])
 
     def test_the_settings_are_read_before_anything_is_copied(self):
         self.full_home()
