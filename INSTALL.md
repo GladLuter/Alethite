@@ -157,20 +157,49 @@ What else to know:
   - the auto-memory files of each project on the local disk (`.md`): Claude Code reads them;
   - the handoffs, `%USERPROFILE%\.claude\cacheguard\handoffs`: the same text goes into the chat unencrypted.
 
+## The index in another folder
+
+For a computer where C: is short of space and another local disk has plenty. The index grows with every chat. Windows only. Without this command nothing changes, and the index stays in `%USERPROFILE%\.claude\cacheguard\`.
+
+1. **Move it:** `/cg-index-dir D:\CacheGuard`. Without a path a window opens to choose the folder.
+   - The command copies the index, checks the copy, and only then switches the mod to the new folder. If a chat or the background job is using the index, it asks you to repeat in a minute.
+   - Then a window asks whether to delete the old copy. The default is No. The old files are deleted only after Yes. After No they stay, and `/cg-health` reminds you where they are. To be asked again, repeat `/cg-index-dir` with the same folder.
+2. **Check:** `/cg-health`. The "Index" line now shows the new path, for example `D:\CacheGuard\index.db`.
+
+The background job and the `recall` and `lesson_save` tools use the new folder on their own. Nothing needs reinstalling.
+
+What else to know:
+- **What moves:** `index.db`, its backup `index.before-stage2.db` (if there is one), the `handoffs` folder and the background job's `job.xml`. An encrypted index moves encrypted.
+- **What stays on C:** the `settings.json` file (it holds the encryption key and the new `indexDir` line) and Claude Code's conversations, `%USERPROFILE%\.claude\projects`.
+- **A refusal.** The command changes nothing and names the reason if:
+  - the folder is not on a local fixed disk (network paths, network disks and removable disks do not fit) or lies inside OneDrive
+  - the folder already holds another `index.db`, and the command does not write over a foreign index
+  - the target disk lacks space (it needs the size of the index plus 200 MB)
+  - an `index.db.plain` lies beside the index, so finish `/cg-encrypt on` first
+  - what was saved on C: while the folder was away is not merged yet (see below).
+- **If the folder or the `index.db` in it is gone** (the disk was unplugged, the folder deleted), the mod says so in a toast, once per session, and in a `/cg-health` line: "the index in D:\CacheGuard is not available, working with …". It works with the index on C: and leaves `indexDir` alone.
+  - If the standard folder already holds an index (the old copy after No), the work goes on with it. If not, a new one is made only when C: has at least 2 GB free. Otherwise every command answers with an error that names the paths and the numbers, and creates nothing.
+  - Sync goes on as usual.
+- **When the folder is back**, the first run of `cg.py` (the background job or a command in a chat) merges everything gathered on C: into it and deletes the temporary index. It does not ask, because space on C: is worth more. The message gives the number of records merged. What was deleted with `forget` does not come back. If the merge does not match, both indexes stay in place, the work goes on with D:, `/cg-health` shows the reason, and the next run tries again.
+- **The folder is not coming back.** While the mod works with C:, the command with the full path of the standard folder, `/cg-index-dir C:\Users\<name>\.claude\cacheguard`, removes `indexDir` and copies nothing. C: becomes the permanent place of the index. If the folder is back but has no index, the command with that folder's path moves the index from C: into it.
+- **Moving the index back to C:** from the working folder is done by the same command, `/cg-index-dir C:\Users\<name>\.claude\cacheguard`. If an old copy is left on C:, the command refuses. Then first repeat `/cg-index-dir` with the working folder and answer Yes to the question about deleting.
+
 ## Good to know
 
 - **The mod is read straight from the repository folder.**
   - Keep the folder on the `master` branch. If it used to be on `stage1`, run `git checkout master; git pull` once.
   - After a `git pull`, type `/reload-plugins` in Claude Code: no need to reinstall.
 - **The index and the vectors** live in `%USERPROFILE%\.claude\cacheguard\index.db` and never get into the repository. Each computer keeps its own index; the shared sync folder only carries batches between them.
+- **If the index has moved** with `/cg-index-dir`, it is in the folder you chose (see "The index in another folder").
 - **`/cg-index rebuild`** re-reads every transcript and adds only what is missing: the vectors stay and nothing is deleted.
-- **Settings:** a file of its own, `%USERPROFILE%\.claude\cacheguard\settings.json`, one per computer, beside the index. The keys: `language`, `compression`, `syncDir`, `bandMinTokens` and `bandIdleMinutes` (the band thresholds), `showLimits` (the limits line), `python` (the Python command, if it is `py`, not `python`), `embedModel`, `lessons` and `lessonsMinScore` (the lessons), `shareCipher` (the sync folder encryption). The table with the defaults is in [README.md](README.md).
+- **Settings:** a file of its own, `%USERPROFILE%\.claude\cacheguard\settings.json`, one per computer. It stays in this folder even when the index has moved. The keys: `language`, `compression`, `syncDir`, `bandMinTokens` and `bandIdleMinutes` (the band thresholds), `showLimits` (the limits line), `python` (the Python command, if it is `py`, not `python`), `embedModel`, `lessons` and `lessonsMinScore` (the lessons), `shareCipher` (the sync folder encryption), `indexDir` (the index folder). The table with the defaults is in [README.md](README.md).
   - The mod creates the file at the first start with all the current values, so you only open it and edit. A file may hold just the keys you change.
   - The mod reads it at every load: the start of a chat and `/reload-plugins`. After an edit, type `/reload-plugins`.
   - Its values win over `/config`. The desktop app has no settings window for mods, so the settings live in a file. `/config` in a terminal `claude` still works, but where they differ, the file wins.
   - Backslashes in JSON are doubled: `"Z:\\cacheguard"`.
   - `/cg-health` shows a line with the file's path.
   - The `encryptionKey` line is written by the mod itself: it is the encryption key, protected by Windows. Do not edit it.
+  - The `indexDir` line is written by the `/cg-index-dir` command. Do not edit it by hand: the index files will not move on their own.
   - A broken file (invalid JSON) gives a toast naming the file, and the mod keeps the `/config` values. An unknown key or a value of the wrong type gives the same toast, and that key is skipped.
 - **The band above the prompt** is one area shared by all mods. The CacheGuard band is drawn in a frame of its own, with its title, and the bands of other mods stay under it.
 - **`/cg-stats`** writes measurements to Obsidian through the `obsidian` MCP server, which must be connected on this computer. If Obsidian is unavailable, the measurement waits in a queue and goes out at the next run.

@@ -62,10 +62,11 @@ So the expensive part is not what is typed, but coming back to a big, idle chat.
 | `/cg-lessons [forget <pos>]` | the lessons of this project; delete one |
 | `/cg-job [on [minutes] \| off]` | the background job (Windows): on, off, its state |
 | `/cg-encrypt [on \| join \| off \| status]` | encryption of the index and the sync folder (Windows): on, join a second computer, off, its state |
+| `/cg-index-dir [folder]` | moves the index to another folder on a local disk (Windows), without a folder a window asks for one |
 
 ## Settings (the `settings.json` file)
 
-The file `%USERPROFILE%\.claude\cacheguard\settings.json` is one per computer and sits beside the index. The mod creates it at the first start with all the current values, so you only open it and edit. The mod reads the file at every load, and its values win over `/config`. After an edit, type `/reload-plugins`. Backslashes in JSON are doubled.
+The file `%USERPROFILE%\.claude\cacheguard\settings.json` is one per computer and stays in this folder even when the index has moved. The mod creates it at the first start with all the current values, so you only open it and edit. The mod reads the file at every load, and its values win over `/config`. After an edit, type `/reload-plugins`. Backslashes in JSON are doubled.
 
 | key | what it sets | default |
 |---|---|---|
@@ -80,6 +81,7 @@ The file `%USERPROFILE%\.claude\cacheguard\settings.json` is one per computer an
 | `lessons` | bring lessons back to messages and commands | `true` |
 | `lessonsMinScore` | how close a message must be (0–1) | `0.45` |
 | `shareCipher` | how the sync folder is encrypted (`/cg-encrypt on` writes it itself) | `"sqlcipher"` (also `"cryptography"`) |
+| `indexDir` | the index folder (written by `/cg-index-dir`, do not edit by hand) | no key (the index is in the standard folder) |
 
 The file may hold only the keys you change. For example:
 
