@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import crypto
 import dialogs
 import encrypt
+import indexdir
 import job
 import lessons
 import memdb
@@ -56,6 +57,7 @@ def _status(a):
     if note:
         out['encryption']['notes'].append(texts.t(note))
     out['job'] = json.loads(memdb.meta(conn, 'job_last') or 'null')  # the background job's last run (stage 4), for /cg-health
+    out['index_dir'] = indexdir.status(conn, a.where)
     if a.cwd:  # the scope of «в этом проекте»: a key that matches no conversation makes the project search find nothing
         key = project_key(a.cwd)
         out['project'] = {'key': key, 'convs': conn.execute('SELECT count(*) FROM convs WHERE ' + memdb.IN_PROJECT, {'p': key}).fetchone()[0]}
@@ -183,7 +185,7 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=job.on_battery, digest=sy
         if 'locked' not in str(e):
             raise
         return {'busy': True}
-    s, broken = _settings(a.settings or os.path.join(os.path.dirname(a.db), 'settings.json'))
+    s, broken = _settings(a.settings or crypto.settings_path(a.db))
     if isinstance(s.get('language'), str) and s['language'] in texts.TABLES:
         texts.lang = s['language']
     model = s.get('embedModel') if isinstance(s.get('embedModel'), str) and s['embedModel'].strip() else vectors.MODEL
@@ -347,7 +349,8 @@ def _stats(a):
 
 def _parser():
     p = _Parser(prog='cg.py')
-    p.add_argument('--db', default=memdb.DB_PATH)
+    p.add_argument('--db')  # the index file; without it `main` asks indexdir.resolve (the home settings), with it they are not read at all
+    p.set_defaults(where=None)  # the answer of resolve, once `main` has one
     p.add_argument('--projects', default=os.path.join(os.path.expanduser('~'), '.claude', 'projects'))
     p.add_argument('--lang', default='en')  # of the texts the owner and the model read: errors, the handoff, the note
     sub = p.add_subparsers(dest='cmd', required=True)
@@ -448,7 +451,15 @@ def main(argv):
     try:
         a = _parser().parse_args(argv)
         texts.lang = a.lang
+        if a.db is None:
+            a.where = indexdir.resolve()
+            a.db = a.where.db
+            if a.where.configured:  # the settings of an index in that folder are still the home ones
+                crypto.INDEX_DIRS.add(crypto.norm(a.where.configured))
         out, code = a.fn(a), 0
+        note = indexdir.notice(a.where)
+        if note and isinstance(out, dict):
+            out['index_notice'] = note
     except _Help as h:
         out, code = {'help': str(h)}, 0
     except Exception as e:

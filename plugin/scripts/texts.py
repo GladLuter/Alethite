@@ -116,6 +116,13 @@ EN = {
     'note_share_pending': 'the sync folder is not switched over completely yet (it was not reachable, or not everything is out); the old data there stays until then. Repeat the command',
     'note_old_share_kept': 'the old data of this computer stays in the sync folder; repeat the command to delete it',
     'note_index_plain': 'the key is set but the index is not encrypted yet: repeat encrypt on',
+
+    # indexdir.py: where the index is
+    'index_settings_unreadable': 'the settings file cannot be read, so it is not known where the index is: {path} ({e}). Fix the file and repeat',
+    'index_fallback_no_space': 'the index folder {dir} is not available and there is no index in {home}. A new one needs 2 GB free there, and {free} GB is free. Nothing was created. Connect {dir} again or free some space',
+    'index_fallback': 'the index in {dir} is not available, working with {home} for now. What is saved meanwhile is merged back when the folder is available again',
+    'index_old_copy': 'an old copy of the index is still in {dir}',
+    'index_merge_failed': 'the records saved in the standard folder while the index folder was away could not be merged back yet: {e}. Nothing was lost, the next run tries again',
 }
 
 RU = {
@@ -226,6 +233,12 @@ RU = {
     'note_share_pending': 'папка синхронизации переключена не полностью (она была недоступна или выложено не всё); старые данные в ней остаются до тех пор. Повторите команду',
     'note_old_share_kept': 'старые данные этого компьютера остаются в папке синхронизации; повторите команду, чтобы их удалить',
     'note_index_plain': 'ключ задан, а индекс ещё не зашифрован: повторите encrypt on',
+
+    'index_settings_unreadable': 'файл настроек не читается, поэтому неизвестно, где индекс: {path} ({e}). Исправьте файл и повторите',
+    'index_fallback_no_space': 'папка индекса {dir} недоступна, а в {home} индекса нет. Для нового там нужно 2 ГБ свободного места, а свободно {free} ГБ. Ничего не создано. Подключите {dir} снова или освободите место',
+    'index_fallback': 'индекс в {dir} недоступен, сейчас работаю с {home}. Что сохранится за это время, вольётся обратно, когда папка снова будет доступна',
+    'index_old_copy': 'старая копия индекса лежит в {dir}',
+    'index_merge_failed': 'записи, сохранённые в стандартной папке, когда папки индекса не было, влить обратно пока не удалось: {e}. Ничего не потеряно, следующий запуск попробует снова',
 }
 
 UK = {
@@ -336,6 +349,12 @@ UK = {
     'note_share_pending': 'тека синхронізації переключена не повністю (вона була недоступна або викладено не все); старі дані в ній лишаються до того часу. Повторіть команду',
     'note_old_share_kept': "старі дані цього комп'ютера лишаються в теці синхронізації; повторіть команду, щоб їх видалити",
     'note_index_plain': 'ключ задано, а індекс ще не зашифрований: повторіть encrypt on',
+
+    'index_settings_unreadable': 'файл налаштувань не читається, тому невідомо, де індекс: {path} ({e}). Виправте файл і повторіть',
+    'index_fallback_no_space': 'тека індексу {dir} недоступна, а в {home} індексу немає. Для нового там потрібно 2 ГБ вільного місця, а вільно {free} ГБ. Нічого не створено. Підключіть {dir} знову або звільніть місце',
+    'index_fallback': 'індекс у {dir} недоступний, зараз працюю з {home}. Що збережеться за цей час, влиється назад, коли тека знову буде доступна',
+    'index_old_copy': 'стара копія індексу лежить у {dir}',
+    'index_merge_failed': 'записи, збережені в стандартній теці, коли теки індексу не було, влити назад поки не вдалося: {e}. Нічого не втрачено, наступний запуск спробує знову',
 }
 
 TABLES = {'en': EN, 'ru': RU, 'uk': UK}

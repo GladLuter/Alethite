@@ -199,7 +199,7 @@ class MaintainTest(unittest.TestCase):
 
     def test_the_status_carries_the_last_run(self):
         self.run_job()
-        st = cg._status(SimpleNamespace(db=self.db, machine='AIJ-HP', cwd=None))
+        st = cg._status(SimpleNamespace(db=self.db, machine='AIJ-HP', cwd=None, where=None))
         self.assertEqual(st['job']['sync']['pushed'], 2)
 
     def test_main_runs_without_streams_as_pythonw_starts_it(self):

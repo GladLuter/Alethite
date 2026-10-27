@@ -17,8 +17,10 @@ import cg
 import crypto
 import dialogs
 import encrypt
+import indexdir
 import lessons
 import memdb
+import texts
 import vectors
 from test_encrypt import FakeUI
 from test_texts import use_lang
@@ -194,6 +196,7 @@ class CgTest(unittest.TestCase):
 
     def test_compress_previews_a_level(self):
         env = {k: v for k, v in os.environ.items() if k not in ('PYTHONIOENCODING', 'PYTHONUTF8')}
+        env.update(USERPROFILE=self.tmp, HOME=self.tmp)  # no --db: cg.py looks for the index in the home, and the test must not touch the real one
         p = subprocess.run([sys.executable, CG, 'compress', '--level', 'ultra'], input='Это очень просто, правда.'.encode('utf-8'), capture_output=True, env=env)
         self.assertEqual(json.loads(p.stdout.decode('utf-8')), {'text': 'просто правда', 'chars_in': 25, 'chars_out': 13})
         path = os.path.join(self.tmp, 'note.txt')
@@ -254,10 +257,13 @@ class CgTest(unittest.TestCase):
     # stage 5: encryption
 
     def main_json(self, *args):
+        return self.capture(['--db', self.db, '--projects', self.projects, *args])
+
+    def capture(self, argv):
         """cg.main in this process, where a window can be faked: (exit code, what it printed as JSON, everything it wrote: stdout and stderr)."""
         out, err = (io.TextIOWrapper(io.BytesIO(), encoding='utf-8') for _ in range(2))
         with mock.patch.object(sys, 'stdout', out), mock.patch.object(sys, 'stderr', err):
-            code = cg.main(['--db', self.db, '--projects', self.projects, *args])
+            code = cg.main(argv)
         out.flush()
         err.flush()
         text = out.buffer.getvalue().decode('utf-8')
@@ -514,6 +520,79 @@ class CgTest(unittest.TestCase):
         self.assertEqual(a.fn(a)['errors'], [])  # the flag wins over the file
         self.assertEqual(sorted(os.listdir(os.path.join(other, 'M', 'gen-0001'))), ['batch-00000001.sqlcipher', 'generation.json'])
         self.assertEqual(self.run_cg('sync', '--sync-dir', other, '--share-cipher', 'rot13')[0], 1)  # the flag knows two ciphers only
+
+    # the index folder: where cg.py finds the index when no --db is given
+
+    def home_dir(self, **settings):
+        """A stand-in for ~/.claude/cacheguard with these settings; the real one is never read."""
+        home = os.path.join(self.tmp, 'home')
+        os.makedirs(home, exist_ok=True)
+        with open(os.path.join(home, 'settings.json'), 'w', encoding='utf-8') as f:
+            json.dump(settings, f)
+        for patch in (mock.patch.object(crypto, 'HOME_DIR', home), mock.patch.object(crypto, 'INDEX_DIRS', set())):  # main registers the folder in it
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.addCleanup(gc.collect)  # cg never closes its connection; the temp folder cleanup needs the file released
+        return home
+
+    def main_home(self, *args):
+        return self.capture(['--lang', 'ru', '--projects', self.projects, *args])
+
+    def test_with_db_the_home_settings_are_not_read_at_all(self):
+        home = self.home_dir()
+        with open(os.path.join(home, 'settings.json'), 'w') as f:
+            f.write('{ "indexDir": ')
+        with mock.patch.object(indexdir, 'resolve', side_effect=AssertionError):
+            for cmd in (('status',), ('lessons', '--all'), ('forget', '--conv', 'x', '--pos', '1')):
+                code, out, _ = self.main_json(*cmd)
+                self.assertEqual(code, 0, out)
+                self.assertNotIn('index_notice', out)
+            self.assertEqual(self.main_json('status')[1]['index_dir'], {'configured': None, 'fallback': False, 'notes': []})
+
+    def test_without_db_the_standard_folder_is_the_index(self):
+        home = self.home_dir()
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, out['db'], out['index_dir']), (0, os.path.join(home, 'index.db'), {'configured': None, 'fallback': False, 'notes': []}))
+        self.assertNotIn('index_notice', out)
+
+    def test_an_index_in_its_folder_is_used_and_its_settings_are_the_home_ones(self):
+        far = os.path.join(self.tmp, 'far')
+        memdb.connect(os.path.join(far, 'index.db')).close()
+        home = self.home_dir(indexDir=far)
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, out['db'], out['index_dir']), (0, os.path.join(far, 'index.db'), {'configured': far, 'fallback': False, 'notes': []}))
+        self.assertNotIn('index_notice', out)
+        self.assertEqual(crypto.settings_path(out['db']), os.path.join(home, 'settings.json'))
+
+    def test_while_its_folder_is_gone_every_answer_says_so_and_nothing_is_made_there(self):
+        far = os.path.join(self.tmp, 'far')  # not made: the disk is away
+        home = self.home_dir(indexDir=far)
+        self.write('P/S1.jsonl', [owner_line('вопрос'), claude_line('ответ')])
+        open(os.path.join(home, 'index.db'), 'wb').close()  # the standard folder has an index to work with
+        want = t('index_fallback', dir=far, home=home)
+        for cmd in (('status',), ('index',), ('lessons', '--all'), ('forget', '--conv', 'x', '--pos', '1')):
+            code, out, _ = self.main_home(*cmd)
+            self.assertEqual((code, out['index_notice']), (0, want), cmd)
+        self.assertEqual(self.main_home('status')[1]['index_dir'], {'configured': far, 'fallback': True, 'notes': [want]})
+        self.assertFalse(os.path.exists(far))
+
+    def test_no_room_for_a_new_index_is_one_error_that_makes_nothing(self):
+        far = os.path.join(self.tmp, 'far')
+        home = self.home_dir(indexDir=far)
+        with mock.patch('shutil.disk_usage', return_value=SimpleNamespace(free=2 ** 30)):
+            code, out, _ = self.main_home('status')
+        self.assertEqual((code, out), (1, {'error': 'ValueError: ' + t('index_fallback_no_space', dir=far, home=home, free=1.0)}))
+        self.assertEqual((os.listdir(home), os.path.exists(far)), (['settings.json'], False))
+
+    def test_the_job_on_an_index_in_its_folder_reads_the_settings_in_the_home(self):
+        far, share = os.path.join(self.tmp, 'far'), self.share_dir()
+        self.home_dir(indexDir=far, syncDir=share, language='uk')
+        crypto.INDEX_DIRS.add(crypto.norm(far))
+        self.write('P/S1.jsonl', [owner_line('вопрос'), claude_line('ответ')])
+        a = cg._parser().parse_args(['--db', os.path.join(far, 'index.db'), '--projects', self.projects, 'maintain'])
+        with mock.patch.dict(os.environ, {'COMPUTERNAME': 'M'}):
+            out = cg.maintain(a, battery=lambda: True, digest=lambda m: None)
+        self.assertEqual((out['errors'], out['sync']['pushed'], texts.lang), ([], 2, 'uk'))
 
 
 @unittest.skipUnless(os.name == 'nt', 'user32 is Windows only')
