@@ -81,6 +81,15 @@ class EncryptTest(unittest.TestCase):
     def counts(self, conn):
         return {n: conn.execute('SELECT count(*) FROM ' + n).fetchone()[0] for n in ('chunks', 'keys', 'vecs')}
 
+    def assert_index_pages(self, path, key):
+        """The encrypted index file has 16 KB pages: it opens with them and does not open with the default 4096 (so it really has them)."""
+        conn = crypto.open_db(path, key, page=crypto.INDEX_PAGE)
+        self.assertEqual(conn.execute('PRAGMA cipher_page_size').fetchone(), ('16384',))
+        conn.close()
+        with self.assertRaises(ValueError) as cm:
+            crypto.open_db(path, key)
+        self.assertEqual(str(cm.exception), t('key_wrong'))
+
     def own(self, c):
         return os.path.join(self.share, c.name)
 
@@ -99,6 +108,7 @@ class EncryptTest(unittest.TestCase):
         self.assertEqual((res['action'], res['done'], res['notes']), ('on', True, []))
         self.assertTrue(crypto.is_encrypted(a.db))
         self.assertEqual(self.counts(a.conn), before)
+        self.assert_index_pages(a.db, self.key(a))
         self.assertEqual([h['conv'] for h in memdb.search(a.conn, 'ёжик')], ['conv-a'])  # the full-text index came over too
         self.assertFalse(os.path.exists(a.db + '.plain'))
         self.assertFalse(os.path.exists(a.db + '.cg-new'))
@@ -156,7 +166,8 @@ class EncryptTest(unittest.TestCase):
         self.assertTrue(self.on(a, ui)['done'])
         self.assertTrue(crypto.is_encrypted(a.db) and crypto.is_encrypted(backup))
         self.assertFalse(os.path.exists(backup + '.plain'))
-        conn = crypto.open_db(backup, self.key(a))
+        self.assert_index_pages(backup, self.key(a))
+        conn = crypto.open_db(backup, self.key(a), page=crypto.INDEX_PAGE)
         self.assertEqual(conn.execute('SELECT text FROM chunks').fetchall(), [('старый ёж',)])
         conn.close()
         self.assertIn(t('dlg_delete_plain', path=backup + '.plain'), ui.asked)
@@ -385,6 +396,7 @@ class EncryptTest(unittest.TestCase):
         code = crypto.make_code(key)
         self.assertEqual(self.join(b, code.lower().replace('-', ' '))['done'], True)
         self.assertEqual((self.key(b), crypto.is_encrypted(b.db)), (key, True))
+        self.assert_index_pages(b.db, key)
         gen = cgsync.generation(self.own(b))
         self.assertEqual((gen.cipher, gen.fingerprint), ('sqlcipher', crypto.fingerprint(key)))
         self.assertEqual(b.rows(), 4)  # B took A's records in
@@ -471,6 +483,9 @@ class EncryptTest(unittest.TestCase):
         self.assertFalse(crypto.is_encrypted(a.db))
         self.assertIsNone(self.key(a))
         self.assertEqual(self.counts(a.conn), before)
+        plain = sqlite3.connect(a.db)  # the 16 KB pages of the encrypted file are gone: a plain file that sqlite3 itself opens
+        self.assertEqual(self.counts(plain), before)
+        plain.close()
         self.assertFalse(os.path.exists(a.db + '.cg-new'))
         gen = cgsync.generation(self.own(a))
         self.assertEqual((gen.n, gen.cipher, gen.fingerprint), (2, None, None))  # open again, and the encrypted one before it is gone

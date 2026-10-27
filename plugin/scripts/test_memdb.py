@@ -65,6 +65,9 @@ class EncryptedIndexTest(unittest.TestCase):
         finally:
             conn.close()
         self.assertTrue(crypto.is_encrypted(self.db))
+        crypto.open_db(self.db, KEY, page=crypto.INDEX_PAGE).close()  # a new encrypted index is made with 16 KB pages
+        with self.assertRaises(ValueError):
+            crypto.open_db(self.db, KEY)
         self.assertNotIn('зашифрованноеслово'.encode('utf-8'), self.raw())
         conn = connect(self.db)  # an encrypted file opens again with the key
         try:
@@ -108,7 +111,7 @@ class EncryptedIndexTest(unittest.TestCase):
             connect(self.db)
         self.assertEqual(str(cm.exception), t('key_unreadable'))
         self.assertFalse(os.path.exists(self.db))
-        c = crypto.open_db(self.db, KEY)
+        c = crypto.open_db(self.db, KEY, page=crypto.INDEX_PAGE)
         c.execute('CREATE TABLE x(y)')  # the file is there only after a write
         c.close()
         with open(self.settings, 'w') as f:
@@ -126,10 +129,10 @@ class EncryptedIndexTest(unittest.TestCase):
         connect(self.db).close()
         self.assertFalse(crypto.is_encrypted(self.db))
         os.remove(self.db)
-        c = crypto.open_db(self.db, KEY)
+        c = crypto.open_db(self.db, KEY, page=crypto.INDEX_PAGE)
         c.execute('CREATE TABLE x(y)')
         c.close()
-        before = hashlib.sha1(self.raw()).hexdigest()
+        before =hashlib.sha1(self.raw()).hexdigest()
         with self.assertRaises(OSError):  # an encrypted index needs the key: it is refused, never guessed at
             connect(self.db)
         self.assertEqual(hashlib.sha1(self.raw()).hexdigest(), before)

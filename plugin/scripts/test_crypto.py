@@ -241,6 +241,23 @@ class DbTest(unittest.TestCase):
         self.assertEqual(c.execute('SELECT count(*) FROM t').fetchone(), (1,))
         c.close()
 
+    def test_page_size(self):
+        self.assertEqual(crypto.INDEX_PAGE, 16384)
+        for page, other in ((crypto.INDEX_PAGE, None), (None, crypto.INDEX_PAGE)):  # a file opens with the page it was made with only
+            path = '%s.%s' % (self.path, page)
+            c = crypto.open_db(path, KEY, page=page)
+            c.execute('CREATE TABLE t(x)')
+            self.assertEqual(c.execute('PRAGMA cipher_page_size').fetchone(), (str(page or 4096),))  # a string from the pragma
+            c.close()
+            crypto.open_db(path, KEY, page=page).close()
+            bad(self, crypto.open_db, t('key_wrong'), path, KEY, 30, other)
+        # a sealed container keeps the default page, as the other computers read it (unseal, which opens with the default, covers it too)
+        data = crypto.seal(LINES, 'sqlcipher', KEY, AAD)
+        with open(self.path, 'wb') as f:
+            f.write(data)
+        crypto.open_db(self.path, KEY).close()
+        bad(self, crypto.open_db, t('key_wrong'), self.path, KEY, 30, crypto.INDEX_PAGE)
+
     def test_wrong_key_is_quiet(self):
         crypto.open_db(self.path, KEY).close()
         c = crypto.open_db(self.path, KEY)

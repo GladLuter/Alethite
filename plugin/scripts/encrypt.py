@@ -64,7 +64,7 @@ def _shared(sync_dir):
 def _open(path, key):
     """The database at `path` through SQLCipher, under `key`, or as it is when there is none (an open one)."""
     if key:
-        return crypto.open_db(path, key)
+        return crypto.open_db(path, key, page=crypto.INDEX_PAGE)
     import sqlcipher3
     conn = sqlcipher3.connect(path, isolation_level=None, timeout=30)
     conn.execute('PRAGMA cipher_log_level = NONE')
@@ -103,6 +103,8 @@ def _convert(path, was, now, keep=None):
         src = _open(path, was)
         try:
             src.execute('ATTACH DATABASE ? AS target KEY ?', (new, "x'%s'" % now.hex() if now else ''))
+            if now:
+                src.execute('PRAGMA target.cipher_page_size = %d' % crypto.INDEX_PAGE)
             src.execute('BEGIN IMMEDIATE')
             src.execute("SELECT sqlcipher_export('target')")
             want = _counts(src)
@@ -256,7 +258,7 @@ def join(db, sync_dir, cipher, machine, ui, model=MODEL, memory_dir=None, projec
     if have and crypto.fingerprint(have) != crypto.fingerprint(key):
         raise ValueError(t('join_other_key_here'))
     if crypto.is_encrypted(db):
-        crypto.open_db(db, key).close()
+        crypto.open_db(db, key, page=crypto.INDEX_PAGE).close()
     elif not fingerprints:
         raise ValueError(t('code_unverifiable'))
     crypto.save_key(settings, key, cipher)

@@ -118,7 +118,7 @@ def _open(path):
             raise
         key = None
     if key:
-        return crypto.open_db(path, key)
+        return crypto.open_db(path, key, page=crypto.INDEX_PAGE)
     if crypto.is_encrypted(path):  # never a new index over the one that is there
         raise ValueError(t('key_missing'))
     return sqlite3.connect(path, isolation_level=None, timeout=30)

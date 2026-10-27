@@ -20,6 +20,7 @@ ENTROPY = b'Claude-CacheGuard'  # another program of the same user does not open
 PREFIX = 'dpapi:'
 CIPHERS = ('sqlcipher', 'cryptography')
 EXT = {None: '.jsonl.gz', 'sqlcipher': '.sqlcipher', 'cryptography': '.aesgcm'}
+INDEX_PAGE = 16384  # the encrypted index only: the vector read of recall is 0.2 s slower with the default 4096; containers keep 4096 (their format)
 # the module each cipher imports, lazily: without the package the mod works as before with the encryption off
 _MODULE = {'sqlcipher': 'sqlcipher3', 'cryptography': 'cryptography.hazmat.primitives.ciphers.aead'}
 
@@ -156,14 +157,17 @@ def is_encrypted(path):
     return bool(head) and head != b'SQLite format 3\x00'
 
 
-def open_db(path, key, timeout=30):
-    """The SQLCipher database at `path` (a new one when there is no file), keyed and checked by a read: a wrong key shows only then."""
+def open_db(path, key, timeout=30, page=None):
+    """The SQLCipher database at `path` (a new one when there is no file), keyed and checked by a read: a wrong key shows only then.
+    `page` is its cipher_page_size, which the file must have been made with (the default is 4096)."""
     need('sqlcipher')
     import sqlcipher3
     conn = sqlcipher3.connect(path, isolation_level=None, timeout=timeout)
     try:
         conn.execute('PRAGMA cipher_log_level = NONE')  # else a wrong key is also written to stderr from C
         conn.execute('PRAGMA key = "x\'%s\'"' % key.hex())
+        if page:
+            conn.execute('PRAGMA cipher_page_size = %d' % page)
         conn.execute('SELECT count(*) FROM sqlite_master')
     except sqlcipher3.DatabaseError as e:
         conn.close()
