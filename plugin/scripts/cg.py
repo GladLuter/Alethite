@@ -9,6 +9,9 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import crypto
+import dialogs
+import encrypt
 import job
 import lessons
 import memdb
@@ -48,6 +51,7 @@ def _status(a):
     conn = memdb.connect(a.db)
     out = memdb.status(conn)
     out['sync'] = sync.status(conn, a.machine)
+    out['encryption'] = encrypt.status(a.db)
     out['job'] = json.loads(memdb.meta(conn, 'job_last') or 'null')  # the background job's last run (stage 4), for /cg-health
     if a.cwd:  # the scope of «в этом проекте»: a key that matches no conversation makes the project search find nothing
         key = project_key(a.cwd)
@@ -130,12 +134,45 @@ def _settings(path):
     return (s, None) if isinstance(s, dict) else ({}, path)
 
 
+def _sync_dir(s):
+    """The sync folder of the settings file; "Copy as path" puts quotes around it."""
+    return s['syncDir'].strip().strip('"') if isinstance(s.get('syncDir'), str) else ''
+
+
+def _cipher(s, flag=None):
+    """How the sync folder is sealed: --share-cipher, else shareCipher of the settings file, else sqlcipher. A name no cipher has is an error
+    that names the setting, not a KeyError of the cipher table."""
+    c = flag or s.get('shareCipher')
+    if c is None:
+        return 'sqlcipher'
+    if c not in crypto.CIPHERS:
+        raise ValueError(texts.t('share_cipher_bad', value=c))
+    return c
+
+
+def _key(a):
+    """The key beside the index, None when there is none. A settings file that cannot be read shows none, as it does to memdb.connect: the
+    index it opened is plain then, and a sync refuses an encrypted share (share_needs_join) rather than write open data into it."""
+    try:
+        return crypto.load_key(crypto.settings_path(a.db))
+    except crypto.SettingsBroken:
+        return None
+
+
+def _memory_dir(path):
+    """The auto-memory folder when it is there: a project without one has no short memory to sync, and that is no failed sync."""
+    return path if path and os.path.isdir(path) else None
+
+
 def maintain(a, embed_fn=vectors.ollama_embed, battery=job.on_battery, digest=sync.ollama_digest):
     """One run of the background job: the index, then the vectors (on mains power, while no chat embeds), then the sync (when a folder
     is set). Each step under the lock a chat takes for it, so a chat and the job never do one thing twice at a time; a step that fails
     does not stop the next. The result is kept in meta.job_last for /cg-health. The short memory waits for a chat: only a chat knows its
     project's auto-memory folder."""
-    conn = memdb.connect(a.db)  # first: it also makes the folder the lock files lie in
+    try:
+        conn = memdb.connect(a.db)  # first: it also makes the folder the lock files lie in
+    except ValueError as e:  # an encrypted index and no key that opens it: nowhere to keep the run, /cg-health tells the same from `status`
+        return {'errors': [{'where': 'index', 'error': '%s: %s' % (type(e).__name__, e)}]}
     try:
         lock = _alone(a, 'maintain', 0)  # noqa: F841 (held until the return)
     except sqlite3.OperationalError as e:
@@ -146,7 +183,7 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=job.on_battery, digest=sy
     if isinstance(s.get('language'), str) and s['language'] in texts.TABLES:
         texts.lang = s['language']
     model = s.get('embedModel') if isinstance(s.get('embedModel'), str) and s['embedModel'].strip() else vectors.MODEL
-    sync_dir = s.get('syncDir').strip().strip('"') if isinstance(s.get('syncDir'), str) else ''
+    sync_dir = _sync_dir(s)
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     out = {'at': stamp, 'index': None, 'embed': None, 'sync': None, 'errors': []}
     fault = lambda where, e: out['errors'].append({'where': where, 'error': '%s: %s' % (type(e).__name__, e)})
@@ -181,9 +218,10 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=job.on_battery, digest=sy
                 held.close()
     if sync_dir:
         try:
+            key, cipher = _key(a), _cipher(s)  # a key that cannot be read or a cipher that is none fails the sync step only
             held = _alone(a, 'sync', a.sync_seconds)
             try:
-                r = sync.sync(conn, sync_dir, None, model, a.sync_seconds, digest=digest)
+                r = sync.sync(conn, sync_dir, None, model, a.sync_seconds, digest=digest, key=key, cipher=cipher)
             finally:
                 held.close()
             out['sync'] = {'pushed': r['pushed'], 'pulled': r['pulled'], 'errors': len(r['errors'])}
@@ -231,7 +269,38 @@ def _sync(a):
     if a.skip_batch:
         machine, n = a.skip_batch
         sync.skip_batch(conn, machine, int(n) if n.isdigit() else -1)
-    return sync.sync(conn, a.sync_dir, a.machine, a.model, max(1, a.max_seconds - (time.monotonic() - t0)), a.memory_dir, a.project_cwd)
+    cipher = _cipher(_settings(crypto.settings_path(a.db))[0], a.share_cipher)
+    return sync.sync(conn, a.sync_dir, a.machine, a.model, max(1, a.max_seconds - (time.monotonic() - t0)), _memory_dir(a.memory_dir), a.project_cwd,
+                     key=_key(a), cipher=cipher)
+
+
+ENCRYPT_WAITS = {'maintain': 300, 'embed': 10, 'sync': 60}  # how long encrypt waits for each lock of the background job, in the job's order
+
+
+def _encrypt(a):
+    """/cg-encrypt: on, join, off (windows ask the owner; the code is shown there and nowhere else) and status. No connection to the index
+    is held meanwhile: Windows cannot replace a file that is open. The sync folder and the cipher come from the settings file unless given."""
+    if a.action == 'status':
+        return encrypt.status(a.db)  # from the files alone: no lock, no connection
+    s, _ = _settings(crypto.settings_path(a.db))
+    sync_dir = _sync_dir(s) if a.sync_dir is None else a.sync_dir
+    kw = dict(model=a.model, memory_dir=_memory_dir(a.memory_dir), project_cwd=a.project_cwd)
+    os.makedirs(os.path.dirname(a.db), exist_ok=True)  # the lock files lie there; memdb.connect would open the index (and refuse an encrypted one)
+    locks = []
+    try:
+        for name, wait in ENCRYPT_WAITS.items():
+            locks.append(_alone(a, name, wait))
+        ui = dialogs.WindowsUI()
+        if a.action == 'off':
+            return encrypt.off(a.db, sync_dir, a.machine, ui, **kw)
+        return getattr(encrypt, a.action)(a.db, sync_dir, _cipher(s, a.share_cipher), a.machine, ui, **kw)
+    except memdb.db_errors() as e:  # a locked lock file, or an index another process holds: nothing was lost
+        if 'locked' not in str(e):
+            raise
+        raise ValueError(texts.t('encrypt_busy')) from None
+    finally:
+        for lock in locks:
+            lock.close()
 
 
 def _forget(a):
@@ -317,6 +386,15 @@ def _parser():
     s.add_argument('--memory-dir')  # the auto-memory folder of the current project, and its root: the short memory is synced for it
     s.add_argument('--project-cwd')
     s.add_argument('--skip-batch', nargs=2, metavar=('MACHINE', 'N'))
+    s.add_argument('--share-cipher', choices=crypto.CIPHERS)  # of the sync folder when the index has a key; the settings file's by default
+    s = add('encrypt', _encrypt)
+    s.add_argument('action', choices=('on', 'join', 'off', 'status'))
+    s.add_argument('--sync-dir')  # the settings file's by default; '' leaves the sync folder alone
+    s.add_argument('--share-cipher', choices=crypto.CIPHERS)
+    s.add_argument('--machine')
+    s.add_argument('--model', default=vectors.MODEL)
+    s.add_argument('--memory-dir')
+    s.add_argument('--project-cwd')
     s = add('lesson-save', _lesson_save)
     s.add_argument('--cwd', default=os.getcwd())
     s.add_argument('--model', default=vectors.MODEL)

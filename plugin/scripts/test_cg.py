@@ -3,6 +3,7 @@ import gc
 import io
 import json
 import os
+import secrets
 import sqlite3
 import subprocess
 import sys
@@ -10,12 +11,18 @@ import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 import cg
+import crypto
+import dialogs
+import encrypt
 import lessons
 import memdb
 import vectors
+from test_encrypt import FakeUI
 from test_texts import use_lang
+from texts import t
 from transcripts import project_key
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
@@ -243,6 +250,217 @@ class CgTest(unittest.TestCase):
         out = a.fn(a)
         self.assertGreaterEqual(time.monotonic() - t0, 0.5)
         self.assertEqual(out['errors'], [])
+
+    # stage 5: encryption
+
+    def main_json(self, *args):
+        """cg.main in this process, where a window can be faked: (exit code, what it printed as JSON, the text itself)."""
+        out = io.TextIOWrapper(io.BytesIO(), encoding='utf-8')
+        with mock.patch.object(sys, 'stdout', out):
+            code = cg.main(['--db', self.db, '--projects', self.projects, *args])
+        out.flush()
+        text = out.buffer.getvalue().decode('utf-8')
+        return code, json.loads(text), text
+
+    def share_dir(self, name='share'):
+        path = os.path.join(self.tmp, name)
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def settings(self, **fields):
+        """The mod's settings file beside the index."""
+        os.makedirs(os.path.dirname(self.db), exist_ok=True)
+        with open(crypto.settings_path(self.db), 'w', encoding='utf-8') as f:
+            json.dump(fields, f)
+
+    def encrypted_index(self, **fields):
+        """An encrypted index of one conversation, its key and these settings in the file beside it; returns the key."""
+        self.write('P/S1.jsonl', [owner_line('вопрос про ёжика'), claude_line('ответ')])
+        self.settings(**fields)
+        key = secrets.token_bytes(32)
+        crypto.save_key(crypto.settings_path(self.db), key)
+        conn = memdb.connect(self.db)  # no file and a key: the index is born encrypted
+        memdb.update(conn, self.projects)
+        conn.close()
+        self.assertTrue(crypto.is_encrypted(self.db))
+        return key
+
+    def maintain(self, battery=True):
+        self.addCleanup(gc.collect)  # maintain never closes its connection; the temp folder cleanup needs the file released
+        a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'maintain'])
+        with mock.patch.dict(os.environ, {'COMPUTERNAME': 'M'}):
+            return cg.maintain(a, battery=lambda: battery, digest=lambda m: None)
+
+    def test_encrypt_status_plain(self):
+        self.write('P/S1.jsonl', [owner_line('вопрос'), claude_line('ответ')])
+        self.run_cg('index')
+        self.assertEqual(self.run_cg('encrypt', 'status'), (0, {'on': False, 'db': 'plain', 'key': 'missing', 'notes': []}))
+        self.assertFalse(os.path.exists(self.db + '.maintain.lock'))  # a question takes no lock
+
+    def test_status_has_encryption(self):
+        self.assertFalse(self.run_cg('status')[1]['encryption']['on'])
+
+    @unittest.skipUnless(os.name == 'nt', 'DPAPI is Windows only')
+    def test_encrypt_on_prints_no_code(self):
+        self.write('P/S1.jsonl', [owner_line('вопрос про ёжика'), claude_line('ответ')])
+        self.run_cg('index')
+        share, ui = self.share_dir(), FakeUI()
+        no_memory = os.path.join(self.tmp, 'no-memory')  # a folder that is not there is no memory to sync, not a failed sync
+        with mock.patch('dialogs.WindowsUI', lambda: ui), mock.patch('urllib.request.build_opener', side_effect=OSError):  # no Ollama to ask
+            code, out, text = self.main_json('encrypt', 'on', '--sync-dir', share, '--machine', 'M', '--memory-dir', no_memory)
+        self.assertEqual((code, out['done'], out['notes']), (0, True, []))
+        self.assertTrue(crypto.is_encrypted(self.db))
+        self.assertEqual(len(ui.shown), 1)
+        for secret in (ui.shown[0], 'CG1-', crypto.load_key(crypto.settings_path(self.db)).hex()):
+            self.assertNotIn(secret, text)
+        self.assertEqual(sorted(os.listdir(os.path.join(share, 'M', 'gen-0001'))), ['batch-00000001.sqlcipher', 'generation.json'])
+
+    def test_encrypt_busy(self):
+        os.makedirs(os.path.dirname(self.db))
+        self.addCleanup(gc.collect)  # the lock that did not open is released by collecting it; the temp folder cleanup needs the file
+        other = sqlite3.connect(self.db + '.maintain.lock', isolation_level=None)  # what the background job holds while it runs
+        self.addCleanup(other.close)
+        other.execute('BEGIN EXCLUSIVE')
+        with mock.patch.object(cg, 'ENCRYPT_WAITS', {'maintain': 0, 'embed': 0, 'sync': 0}):
+            code, out, _ = self.main_json('--lang', 'ru', 'encrypt', 'on')
+        self.assertEqual(code, 1)
+        self.assertIn(t('encrypt_busy'), out['error'])
+
+    def test_encrypt_runs_alone_and_holds_no_connection_to_the_index(self):
+        self.write('P/S1.jsonl', [owner_line('вопрос'), claude_line('ответ')])
+        self.run_cg('index')
+        self.addCleanup(gc.collect)  # the locks that did not open stay in the tracebacks of the errors until collected
+        ran = []
+
+        def fake_on(db, *args, **kw):
+            os.replace(db, db + '.moved')  # Windows will not move a file that a connection of this process holds open
+            os.replace(db + '.moved', db)
+            for name in ('maintain', 'embed', 'sync'):  # the three locks of the background job, held while the command runs
+                with self.assertRaises(sqlite3.OperationalError):
+                    cg._alone(SimpleNamespace(db=db), name, 0)
+            ran.append(db)
+            return {'action': 'on', 'done': True, 'notes': []}
+
+        with mock.patch.object(encrypt, 'on', fake_on):
+            self.assertEqual(self.main_json('encrypt', 'on')[1]['done'], True)
+        self.assertEqual(ran, [self.db])
+        for name in ('maintain', 'embed', 'sync'):  # and let go afterwards
+            cg._alone(SimpleNamespace(db=self.db), name, 0).close()
+
+    def test_a_busy_index_is_encrypt_busy_and_any_other_database_error_is_not(self):
+        import sqlcipher3
+        for exc in (sqlite3.OperationalError, sqlcipher3.OperationalError):
+            with mock.patch.object(encrypt, 'on', side_effect=exc('database is locked')):
+                code, out, _ = self.main_json('--lang', 'ru', 'encrypt', 'on')
+            self.assertEqual((code, out['error']), (1, 'ValueError: ' + t('encrypt_busy')), exc)
+        with mock.patch.object(encrypt, 'on', side_effect=sqlite3.OperationalError('unable to open database file')):
+            code, out, _ = self.main_json('encrypt', 'on')
+        self.assertEqual((code, out['error']), (1, 'OperationalError: unable to open database file'))
+
+    def test_encrypt_takes_the_folder_and_the_cipher_from_the_settings(self):
+        share = self.share_dir()
+        self.settings(syncDir='"%s"' % share, shareCipher='cryptography')
+        calls = []
+        with mock.patch.object(encrypt, 'on', lambda *a, **kw: calls.append((a, kw)) or {'done': True}):
+            self.main_json('encrypt', 'on')
+            self.main_json('encrypt', 'on', '--sync-dir', '', '--share-cipher', 'sqlcipher')  # given on the line: the line wins
+            code, out, _ = self.main_json('encrypt', 'on', '--share-cipher', 'rot13')
+        self.assertEqual([(a[1], a[2]) for a, _ in calls], [(share, 'cryptography'), ('', 'sqlcipher')])
+        self.assertEqual(code, 1)
+        self.settings(shareCipher='rot13')
+        with mock.patch.object(encrypt, 'on', side_effect=AssertionError):
+            code, out, _ = self.main_json('encrypt', 'on')
+        self.assertEqual(code, 1)
+        self.assertIn('shareCipher', out['error'])  # the setting is named, no KeyError of the cipher table
+
+    @unittest.skipUnless(os.name == 'nt', 'DPAPI is Windows only')
+    def test_maintain_encrypted(self):
+        share = self.share_dir()
+        self.encrypted_index(syncDir=share)
+        out = self.maintain()
+        self.assertEqual((out['errors'], out['sync']['errors']), ([], 0))
+        self.assertEqual(sorted(os.listdir(os.path.join(share, 'M', 'gen-0001'))), ['batch-00000001.sqlcipher', 'generation.json'])
+
+    @unittest.skipUnless(os.name == 'nt', 'DPAPI is Windows only')
+    def test_maintain_without_the_key_says_so_instead_of_dying(self):
+        self.encrypted_index(syncDir=self.share_dir())
+        crypto.save_key(crypto.settings_path(self.db), None)
+        out = self.maintain()
+        self.assertEqual(list(out), ['errors'])  # the index cannot be opened to keep the run in: /cg-health shows the same words from `status`
+        self.assertIn(t('key_missing'), out['errors'][0]['error'])
+        code, status = self.run_cg('--lang', 'ru', 'status')
+        self.assertEqual(code, 1)
+        self.assertIn(t('key_missing'), status['error'])
+
+    def test_maintain_survives_a_key_that_cannot_be_read_and_a_cipher_that_is_unknown(self):
+        self.write('P/S1.jsonl', [owner_line('вопрос'), claude_line('ответ')])
+        memdb.connect(self.db).close()  # a plain index, which opens whatever the settings file says of a key
+        share = self.share_dir()
+        self.settings(syncDir=share, encryptionKey='junk')
+        out = self.maintain()
+        self.assertEqual([e['where'] for e in out['errors']], ['sync'])
+        self.assertIn(t('key_unreadable'), out['errors'][0]['error'])
+        self.assertIsNotNone(out['index'])  # the step before it ran
+        self.settings(syncDir=share, shareCipher='rot13')
+        out = self.maintain()
+        self.assertEqual([e['where'] for e in out['errors']], ['sync'])
+        self.assertIn('shareCipher', out['errors'][0]['error'])
+
+    def test_a_broken_settings_file_stops_no_sync_of_a_plain_index(self):
+        memdb.connect(self.db).close()
+        with open(crypto.settings_path(self.db), 'w') as f:
+            f.write('{ "syncDir": ')
+        share = self.share_dir()
+        self.addCleanup(gc.collect)
+        a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'sync', '--sync-dir', share, '--machine', 'M'])
+        self.assertEqual(a.fn(a)['errors'], [])
+
+    @unittest.skipUnless(os.name == 'nt', 'DPAPI is Windows only')
+    def test_the_cipher_is_the_flags_or_the_settings(self):
+        share, other = self.share_dir(), self.share_dir('other')
+        self.encrypted_index(syncDir=share, shareCipher='cryptography')
+        self.maintain()
+        self.assertEqual(sorted(os.listdir(os.path.join(share, 'M', 'gen-0001'))), ['batch-00000001.aesgcm', 'generation.json'])
+        self.addCleanup(gc.collect)
+        a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'sync', '--sync-dir', other, '--machine', 'M', '--share-cipher', 'sqlcipher'])
+        self.assertEqual(a.fn(a)['errors'], [])  # the flag wins over the file
+        self.assertEqual(sorted(os.listdir(os.path.join(other, 'M', 'gen-0001'))), ['batch-00000001.sqlcipher', 'generation.json'])
+        self.assertEqual(self.run_cg('sync', '--sync-dir', other, '--share-cipher', 'rot13')[0], 1)  # the flag knows two ciphers only
+
+
+@unittest.skipUnless(os.name == 'nt', 'user32 is Windows only')
+class DialogsTest(unittest.TestCase):
+    """No window opens here: the system is a fake. How the windows look is shown to the owner by hand."""
+
+    def test_the_boxes_are_topmost_and_a_yes_is_the_only_yes(self):
+        user32 = mock.Mock()
+        with mock.patch('ctypes.WinDLL', return_value=user32):
+            user32.MessageBoxW.return_value = 1
+            dialogs.WindowsUI().show_code('CG1-AAAA')
+            user32.MessageBoxW.return_value = 6
+            self.assertTrue(dialogs.WindowsUI().confirm('?'))
+            user32.MessageBoxW.return_value = 7
+            self.assertFalse(dialogs.WindowsUI().confirm('?'))
+        calls = [c[0] for c in user32.MessageBoxW.call_args_list]
+        self.assertIn('CG1-AAAA', calls[0][1])
+        self.assertEqual([c[3] for c in calls[:2]], [0x40000 | 0x10000, 0x40000 | 0x10000 | 0x4 | 0x30])  # topmost, foreground; Yes/No, warning sign
+
+    def test_a_window_that_cannot_open_says_what_failed_not_what_it_held(self):
+        user32 = mock.Mock()
+        user32.MessageBoxW.return_value = 0
+        with mock.patch('ctypes.WinDLL', return_value=user32):
+            for call in (lambda ui: ui.show_code('CG1-SECRET'), lambda ui: ui.confirm('SECRET?')):
+                with self.assertRaises(OSError) as e:
+                    call(dialogs.WindowsUI())
+                self.assertNotIn('SECRET', str(e.exception))
+
+    def test_without_tkinter_the_code_is_typed_in_a_console_and_comes_back_through_the_pipe_only(self):
+        for returncode, stdout, want in ((0, b'CG1-AAAA', 'CG1-AAAA'), (1, b'', None)):  # closing the console window is a cancel
+            ran = SimpleNamespace(returncode=returncode, stdout=stdout)
+            with mock.patch.dict(sys.modules, {'tkinter': None}), mock.patch('subprocess.run', return_value=ran) as run:
+                self.assertEqual(dialogs.WindowsUI().ask_code(), want)
+            args, kw = run.call_args
+            self.assertEqual((args[0][0], kw['stdout'], kw['creationflags']), (sys.executable, subprocess.PIPE, 0x10))
 
 
 if __name__ == '__main__':
