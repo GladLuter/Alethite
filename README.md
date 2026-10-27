@@ -43,8 +43,8 @@ So the expensive part is not what is typed, but coming back to a big, idle chat.
 
 **A background job** (stage 4, Windows). A Task Scheduler task keeps the index, the vectors (on mains power) and the sync up to date with no chat open.
 
-**Encryption** (stage 5, Windows, optional). The index on disk and everything a computer puts in the sync folder are encrypted; the key sits in `settings.json`, protected by Windows.
-- `/cg-encrypt on` turns it on: the recovery code is shown once, in a window, and is kept in a password manager. A second computer joins with `join`.
+**Encryption** (stage 5, Windows, optional). The index on disk and everything a computer puts in the sync folder are encrypted. The key sits in `settings.json`, protected by Windows.
+- `/cg-encrypt on` turns it on. The recovery code is shown once, in a window, and belongs in a password manager. A second computer joins with `join`.
 - Claude Code's own transcripts, each project's auto-memory files and the handoffs stay plain.
 - Without the `sqlcipher3` package and without `/cg-encrypt on`, nothing changes for you.
 

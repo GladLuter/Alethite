@@ -126,8 +126,8 @@ After `git pull` and `/reload-plugins`:
 
 ## Encryption (stage 5)
 
-Optional, and Windows only. The index (with its backup `index.before-stage2.db`) and everything a computer puts in the sync folder are encrypted; in the folder only the computer's name, the batch numbers, their count and sizes stay readable.
-- The key sits in `settings.json`, protected by Windows (DPAPI): the file copied to another disk is useless.
+Optional, and Windows only. The index (with its backup `index.before-stage2.db`) and everything a computer puts in the sync folder are encrypted. In the folder anyone can read the computer's name, the batch numbers, their count and sizes, and the label of a generation (`gen-0001\generation.json`) also names the cipher, the key's fingerprint and the date. The fingerprint does not give the key away.
+- The key sits in `settings.json`, protected by Windows (DPAPI). On another computer or under another Windows account the file gives no key.
 - Without the `sqlcipher3` package and without `/cg-encrypt on`, nothing changes for you.
 
 1. **Install the package** on each computer from an ordinary PowerShell window, not from inside Claude: the `pip` of Claude puts packages into its own sandbox, and the background job will not see them.
@@ -138,18 +138,19 @@ Optional, and Windows only. The index (with its backup `index.before-stage2.db`)
 2. **The first computer:** `/reload-plugins`, then `/cg-encrypt on`. The "Claude-CacheGuard" windows may appear behind other windows.
    - The first window shows the **recovery code**, once. Ctrl+C copies the text of the window: paste the code into a password manager. Without it the encrypted history cannot be read if the computers or their Windows accounts are lost.
    - The question "Is the recovery code saved?" defaults to No. Encryption starts only after Yes.
-   - The index and its backup are encrypted. The unencrypted copies (`index.db.plain`) are deleted only after Yes; after No they stay, and `/cg-encrypt on` asks again.
+   - The index and its backup are encrypted. The unencrypted copies (`index.db.plain`) are deleted only after Yes. After No they stay, and `/cg-encrypt on` asks again.
    - The sync folder: the computer puts its own subfolder out again, encrypted. The older unencrypted data there is deleted only after Yes, and only once the new data is fully out.
 3. **The second computer:** `git pull`, `/reload-plugins`, `/cg-encrypt join`. The recovery code is entered in a window with hidden input. One key serves all computers, so `on` on the second one refuses and points to `join`.
-4. **Check:** `/cg-health` on both computers says "Encryption: on (sqlcipher)". If something is unfinished, the lines below say what to repeat. The state alone: `/cg-encrypt status`.
+4. **Check:** `/cg-health` on both computers says "Encryption: on (sqlcipher)". If something is unfinished, the lines under it say what to repeat. `/cg-encrypt status` shows the state alone.
 
 What else to know:
-- **Commands:** `/cg-encrypt on | join | off | status`; with no argument, `status`.
+- **Commands:** `/cg-encrypt on | join | off | status`. With no argument it runs `status`.
   - `off` decrypts the index, puts this computer's subfolder out unencrypted again, and removes the key from `settings.json`. Turn it off on each computer. A new `on` makes a new key, and the other computers join again.
   - If the key is lost (another Windows account, a reinstall): `/cg-encrypt join` with the recovery code.
 - **Until the second computer has joined**, the first takes nothing from it, and `/cg-health` names it: "run `join` on it". Its history is not lost: after `join` it puts it out encrypted.
 - **The time limit.** One run is limited to about 10 minutes (the limit of the desktop app). A big first push may not fit: the reply says it is not finished. Repeat `/cg-encrypt on` (or `join`): it goes on from where it stopped, and every step is safe to repeat. The background job also pushes the rest, but the older unencrypted data in the folder is deleted only by repeating the command, after Yes.
 - **How the folder is encrypted** is the `shareCipher` key in `settings.json`: `sqlcipher` (the default) or `cryptography`. `/cg-encrypt on` and `join` write it into the file themselves, and the file wins over `/config`, so change it later in the file, then `/reload-plugins` and `/cg-encrypt on`. A computer reads the others' data whichever way it was encrypted, if the package is installed.
+- **Speed.** On the encrypted index `recall` is about 0.08 s slower (measured 2026-10-27 on 24.7 thousand vectors). The gap grows with the number of vectors.
 - **What stays plain:**
   - Claude Code's conversations, `%USERPROFILE%\.claude\projects\*.jsonl`;
   - the auto-memory files of each project on the local disk (`.md`): Claude Code reads them;
