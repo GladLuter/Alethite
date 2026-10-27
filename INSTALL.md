@@ -159,7 +159,7 @@ What else to know:
 
 ## The index in another folder
 
-For a computer where C: is short of space and another local disk has plenty. The index grows with every chat. Windows only. Without this command nothing changes, and the index stays in `%USERPROFILE%\.claude\cacheguard\`.
+For a computer that is short of space on C:. The index grows with every chat, and it can move to another local disk. Windows only. Without this command nothing changes, and the index stays in `%USERPROFILE%\.claude\cacheguard\`.
 
 1. **Move it:** `/cg-index-dir D:\CacheGuard`. Without a path a window opens to choose the folder.
    - The command copies the index, checks the copy, and only then switches the mod to the new folder. If a chat or the background job is using the index, it asks you to repeat in a minute.
