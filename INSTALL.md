@@ -124,6 +124,37 @@ After `git pull` and `/reload-plugins`:
    - A lesson comes beside a message close in meaning and stops once a command that holds its trigger.
    - If lessons come where they do not belong, raise `lessonsMinScore` in `settings.json` to `0.55`; if they never come, lower it to `0.4`. To turn them off: `"lessons": false`.
 
+## Encryption (stage 5)
+
+Optional, and Windows only. The index (with its backup `index.before-stage2.db`) and everything a computer puts in the sync folder are encrypted; in the folder only the computer's name, the batch numbers, their count and sizes stay readable.
+- The key sits in `settings.json`, protected by Windows (DPAPI): the file copied to another disk is useless.
+- Without the `sqlcipher3` package and without `/cg-encrypt on`, nothing changes for you.
+
+1. **Install the package** on each computer from an ordinary PowerShell window, not from inside Claude: the `pip` of Claude puts packages into its own sandbox, and the background job will not see them.
+   ```powershell
+   python -m pip install sqlcipher3
+   ```
+   If you choose `"shareCipher": "cryptography"`, also install `python -m pip install cryptography`.
+2. **The first computer:** `/reload-plugins`, then `/cg-encrypt on`. The "Claude-CacheGuard" windows may appear behind other windows.
+   - The first window shows the **recovery code**, once. Ctrl+C copies the text of the window: paste the code into a password manager. Without it the encrypted history cannot be read if the computers or their Windows accounts are lost.
+   - The question "Is the recovery code saved?" defaults to No. Encryption starts only after Yes.
+   - The index and its backup are encrypted. The unencrypted copies (`index.db.plain`) are deleted only after Yes; after No they stay, and `/cg-encrypt on` asks again.
+   - The sync folder: the computer puts its own subfolder out again, encrypted. The older unencrypted data there is deleted only after Yes, and only once the new data is fully out.
+3. **The second computer:** `git pull`, `/reload-plugins`, `/cg-encrypt join`. The recovery code is entered in a window with hidden input. One key serves all computers, so `on` on the second one refuses and points to `join`.
+4. **Check:** `/cg-health` on both computers says "Encryption: on (sqlcipher)". If something is unfinished, the lines below say what to repeat. The state alone: `/cg-encrypt status`.
+
+What else to know:
+- **Commands:** `/cg-encrypt on | join | off | status`; with no argument, `status`.
+  - `off` decrypts the index, puts this computer's subfolder out unencrypted again, and removes the key from `settings.json`. Turn it off on each computer. A new `on` makes a new key, and the other computers join again.
+  - If the key is lost (another Windows account, a reinstall): `/cg-encrypt join` with the recovery code.
+- **Until the second computer has joined**, the first takes nothing from it, and `/cg-health` names it: "run `join` on it". Its history is not lost: after `join` it puts it out encrypted.
+- **The time limit.** One run is limited to about 10 minutes (the limit of the desktop app). A big first push may not fit: the reply says it is not finished. Repeat `/cg-encrypt on` (or `join`): it goes on from where it stopped, and every step is safe to repeat. The background job also pushes the rest, but the older unencrypted data in the folder is deleted only by repeating the command, after Yes.
+- **How the folder is encrypted** is the `shareCipher` key in `settings.json`: `sqlcipher` (the default) or `cryptography`. `/cg-encrypt on` and `join` write it into the file themselves, and the file wins over `/config`, so change it later in the file, then `/reload-plugins` and `/cg-encrypt on`. A computer reads the others' data whichever way it was encrypted, if the package is installed.
+- **What stays plain:**
+  - Claude Code's conversations, `%USERPROFILE%\.claude\projects\*.jsonl`;
+  - the auto-memory files of each project on the local disk (`.md`): Claude Code reads them;
+  - the handoffs, `%USERPROFILE%\.claude\cacheguard\handoffs`: the same text goes into the chat unencrypted.
+
 ## Good to know
 
 - **The mod is read straight from the repository folder.**
@@ -131,12 +162,13 @@ After `git pull` and `/reload-plugins`:
   - After a `git pull`, type `/reload-plugins` in Claude Code: no need to reinstall.
 - **The index and the vectors** live in `%USERPROFILE%\.claude\cacheguard\index.db` and never get into the repository. Each computer keeps its own index; the shared sync folder only carries batches between them.
 - **`/cg-index rebuild`** re-reads every transcript and adds only what is missing: the vectors stay and nothing is deleted.
-- **Settings:** a file of its own, `%USERPROFILE%\.claude\cacheguard\settings.json`, one per computer, beside the index. The keys: `language`, `compression`, `syncDir`, `bandMinTokens` and `bandIdleMinutes` (the band thresholds), `showLimits` (the limits line), `python` (the Python command, if it is `py`, not `python`), `embedModel`, `lessons` and `lessonsMinScore` (the lessons). The table with the defaults is in [README.md](README.md).
+- **Settings:** a file of its own, `%USERPROFILE%\.claude\cacheguard\settings.json`, one per computer, beside the index. The keys: `language`, `compression`, `syncDir`, `bandMinTokens` and `bandIdleMinutes` (the band thresholds), `showLimits` (the limits line), `python` (the Python command, if it is `py`, not `python`), `embedModel`, `lessons` and `lessonsMinScore` (the lessons), `shareCipher` (the sync folder encryption). The table with the defaults is in [README.md](README.md).
   - The mod creates the file at the first start with all the current values, so you only open it and edit. A file may hold just the keys you change.
   - The mod reads it at every load: the start of a chat and `/reload-plugins`. After an edit, type `/reload-plugins`.
   - Its values win over `/config`. The desktop app has no settings window for mods, so the settings live in a file. `/config` in a terminal `claude` still works, but where they differ, the file wins.
   - Backslashes in JSON are doubled: `"Z:\\cacheguard"`.
   - `/cg-health` shows a line with the file's path.
+  - The `encryptionKey` line is written by the mod itself: it is the encryption key, protected by Windows. Do not edit it.
   - A broken file (invalid JSON) gives a toast naming the file, and the mod keeps the `/config` values. An unknown key or a value of the wrong type gives the same toast, and that key is skipped.
 - **The band above the prompt** is one area shared by all mods. The CacheGuard band is drawn in a frame of its own, with its title, and the bands of other mods stay under it.
 - **`/cg-stats`** writes measurements to Obsidian through the `obsidian` MCP server, which must be connected on this computer. If Obsidian is unavailable, the measurement waits in a queue and goes out at the next run.

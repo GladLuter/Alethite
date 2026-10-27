@@ -43,6 +43,11 @@ So the expensive part is not what is typed, but coming back to a big, idle chat.
 
 **A background job** (stage 4, Windows). A Task Scheduler task keeps the index, the vectors (on mains power) and the sync up to date with no chat open.
 
+**Encryption** (stage 5, Windows, optional). The index on disk and everything a computer puts in the sync folder are encrypted; the key sits in `settings.json`, protected by Windows.
+- `/cg-encrypt on` turns it on: the recovery code is shown once, in a window, and is kept in a password manager. A second computer joins with `join`.
+- Claude Code's own transcripts, each project's auto-memory files and the handoffs stay plain.
+- Without the `sqlcipher3` package and without `/cg-encrypt on`, nothing changes for you.
+
 **Languages.** English (default), Russian, Ukrainian: the interface, the texts for the model and the handoff.
 
 ## Commands
@@ -56,6 +61,7 @@ So the expensive part is not what is typed, but coming back to a big, idle chat.
 | `/cg-stats [days]` | cost measurement, written to Obsidian |
 | `/cg-lessons [forget <pos>]` | the lessons of this project; delete one |
 | `/cg-job [on [minutes] \| off]` | the background job (Windows): on, off, its state |
+| `/cg-encrypt [on \| join \| off \| status]` | encryption of the index and the sync folder (Windows): on, join a second computer, off, its state |
 
 ## Settings (the `settings.json` file)
 
@@ -73,6 +79,7 @@ The file `%USERPROFILE%\.claude\cacheguard\settings.json` is one per computer an
 | `embedModel` | Ollama embedding model | `"embeddinggemma"` |
 | `lessons` | bring lessons back to messages and commands | `true` |
 | `lessonsMinScore` | how close a message must be (0–1) | `0.45` |
+| `shareCipher` | how the sync folder is encrypted (`/cg-encrypt on` writes it itself) | `"sqlcipher"` (also `"cryptography"`) |
 
 The file may hold only the keys you change. For example:
 
@@ -88,6 +95,7 @@ The file may hold only the keys you change. For example:
 - The Claude Code desktop app (engine 2.1.295 or newer);
 - Python 3.8+ with numpy;
 - Ollama for the search by meaning (optional);
+- the `sqlcipher3` package for encryption (optional, Windows only);
 - git.
 
 Installation: [INSTALL.md](INSTALL.md).
