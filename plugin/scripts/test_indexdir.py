@@ -1,6 +1,8 @@
+import contextlib
 import json
 import os
 import secrets
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -14,6 +16,7 @@ import memdb
 import sync as cgsync
 import texts
 from indexdir import MARK, MIN_FREE, Where, absorb, merge_back, resolve
+from test_encrypt import FakeUI
 from test_memdb import claude_line, owner_line
 from test_sync import Computer
 from test_texts import use_lang
@@ -462,6 +465,20 @@ class MergeTest(unittest.TestCase):
             self.assertTrue(all(os.path.exists(p) for p in (self.src, self.mark)))
         self.assertEqual(self.merge(key), t('index_merged', dir=self.far, home=self.home, n=2))
 
+    def test_the_note_of_an_old_copy_goes_with_the_temporary_index_that_was_that_copy(self):  # the move left it on C: and the owner said No
+        self.two()
+        d = self.index(self.db)
+        d.execute("INSERT INTO meta VALUES('old_copy', ?)", (self.home.upper() + '\\',))  # the same folder, written another way
+        self.assertEqual(self.merge(), t('index_merged', dir=self.far, home=self.home, n=2))
+        self.assertIsNone(memdb.meta(self.index(self.db), 'old_copy'))
+
+    def test_the_note_of_another_old_copy_stays(self):
+        self.two()
+        elsewhere = os.path.join(os.path.dirname(self.home), 'elsewhere')
+        self.index(self.db).execute("INSERT INTO meta VALUES('old_copy', ?)", (elsewhere,))
+        self.assertEqual(self.merge(), t('index_merged', dir=self.far, home=self.home, n=2))
+        self.assertEqual(memdb.meta(self.index(self.db), 'old_copy'), elsewhere)
+
 
 class AbsorbTest(unittest.TestCase):
     """absorb on indexes with hand-made rows: what each step does. `a` is the index in its folder, `b` the temporary one."""
@@ -568,6 +585,440 @@ class AbsorbTest(unittest.TestCase):
             self.absorb()
         self.assertEqual(str(e.exception), t('index_merge_differs'))
         self.assertEqual([self.a.execute('SELECT count(*) FROM ' + n).fetchone()[0] for n in ('chunks', 'keys')], [0, 0])  # the good one is undone too
+
+
+def counts(path, key=None):
+    """The rows of the tables that matter, from a fresh open."""
+    with contextlib.closing(indexdir._connect(path, key)) as conn:
+        return encrypt._counts(conn)
+
+
+@unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
+class MoveTest(unittest.TestCase):
+    """indexdir.move on temporary folders. `home` stands for ~/.claude/cacheguard: crypto.HOME_DIR is patched, the real one is never read.
+    The fakes answer the drive type and the free space, and record what they were asked."""
+
+    def setUp(self):
+        use_lang(self, 'en')
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.root = d.name
+        self.target = os.path.join(d.name, 'new')
+        self.kind, self.room, self.roots, self.asked = 3, 10 * GB, [], []  # DRIVE_FIXED, plenty of room
+        env = mock.patch.dict(os.environ)  # the OneDrive of this computer is no business of the temp folder
+        env.start()
+        self.addCleanup(env.stop)
+        for var in indexdir.CLOUD:
+            os.environ.pop(var, None)
+        self.make_home(os.path.join(d.name, 'home'))
+
+    def make_home(self, home):
+        self.home = home
+        os.makedirs(home)
+        self.settings, self.src, self.mark = (os.path.join(home, n) for n in ('settings.json', 'index.db', MARK))
+        self.where = Where(self.src, None, False, None)
+        for patch in (mock.patch.object(crypto, 'HOME_DIR', home), mock.patch.object(crypto, 'INDEX_DIRS', set())):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def drive(self, root):
+        self.roots.append(root)
+        return self.kind
+
+    def free(self, path):
+        self.asked.append(path)
+        return self.room
+
+    def move(self, target=None, ui=None, key=None, where=None, **kw):
+        self.ui = ui or FakeUI()
+        return indexdir.move(where or self.where, target or self.target, key, self.ui, drive_type=self.drive, free=self.free, **kw)
+
+    def index(self, path, *texts, key=None):
+        """An index at `path` with a record and a vector for each text, closed."""
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if key:
+            conn = crypto.open_db(path, key, page=crypto.INDEX_PAGE)
+            conn.executescript(memdb._SCHEMA)
+            conn.execute("INSERT INTO meta VALUES('schema', '2')")  # as memdb.connect leaves it: opening it later migrates nothing
+        else:
+            conn = memdb.connect(path)
+        with contextlib.closing(conn):
+            for i, text in enumerate(texts):
+                put(conn, 'S', text, pos=i + 1, vec=REAL)
+
+    def write(self, path, text='x'):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(text)
+
+    def tree(self, *folders):
+        """{path: bytes} of every file under the folders: what 'nothing was changed' compares."""
+        out = {}
+        for folder in folders:
+            for dp, _, names in os.walk(folder):
+                for n in names:
+                    with open(os.path.join(dp, n), 'rb') as f:
+                        out[os.path.join(dp, n)] = f.read()
+        return out
+
+    def fields(self):
+        with open(self.settings, encoding='utf-8') as f:
+            return json.load(f)
+
+    def full_home(self, key=None):
+        """The index with two records, the backup of stage 2, a handoff, job.xml and a settings file with a language."""
+        self.index(self.src, 'alpha', 'beta', key=key)
+        self.index(os.path.join(self.home, 'index.before-stage2.db'), 'alpha', key=key)
+        self.write(os.path.join(self.home, 'handoffs', 'S1.md'), 'handoff')
+        self.write(os.path.join(self.home, 'job.xml'), '<Task/>')
+        crypto.set_fields(self.settings, {'language': 'ru'})
+
+    def new_db(self, folder=None):
+        return os.path.join(folder or self.target, 'index.db')
+
+    def old_copy(self, db):
+        with contextlib.closing(memdb.connect(db)) as conn:
+            return memdb.meta(conn, 'old_copy')
+
+    def test_a_move_copies_checks_switches_the_setting_and_leaves_the_old_copy_when_the_answer_is_no(self):
+        self.full_home()
+        crypto.save_key(self.settings, secrets.token_bytes(32))  # a key is set, the index is open: the field must come through the move
+        was = self.fields()
+        want = {n: counts(os.path.join(self.home, n)) for n in ('index.db', 'index.before-stage2.db')}
+        self.assertEqual(want['index.db']['chunks'], 2)
+        out = self.move(ui=FakeUI([False]))
+        self.assertEqual(out, {'action': 'index-dir', 'done': True, 'dir': self.target, 'notes': [t('index_old_kept', dir=self.home)]})
+        for name, rows in want.items():
+            self.assertEqual(counts(os.path.join(self.target, name)), rows)
+        for name, text in (('handoffs\\S1.md', 'handoff'), ('job.xml', '<Task/>')):
+            with open(os.path.join(self.target, name), encoding='utf-8') as f:
+                self.assertEqual(f.read(), text)
+        self.assertEqual(sorted(os.listdir(self.target)), ['handoffs', 'index.before-stage2.db', 'index.db', 'job.xml'])  # no .cg-move
+        self.assertEqual(self.fields(), dict(was, indexDir=self.target))  # the key and the rest as they were
+        self.assertEqual(self.ui.asked, [t('dlg_delete_old_index', dir=self.home)])
+        self.assertEqual(self.roots, [os.path.splitdrive(self.target)[0] + '\\'])  # the root of the drive
+        self.assertEqual(self.asked, [self.root])  # the target is not there yet: the nearest folder that is
+        self.assertEqual(crypto.INDEX_DIRS, {crypto.norm(self.target)})
+        self.assertTrue(os.path.exists(self.src))  # No: nothing of the old copy is touched
+        self.assertEqual(self.old_copy(self.new_db()), self.home)
+        with contextlib.closing(memdb.connect(self.new_db())) as conn:  # and /cg-health says where it lies
+            self.assertEqual(indexdir.status(conn, Where(self.new_db(), self.target, False, None))['notes'], [t('index_old_copy', dir=self.home)])
+
+    def test_yes_deletes_the_listed_files_of_the_old_copy_and_its_note_and_nothing_else(self):
+        self.full_home()
+        locks = [memdb.lock(self.src, name, 0) for name in indexdir.LOCKS]  # what cg.py holds meanwhile: given back before the old copy goes
+        self.write(self.mark)
+        self.write(os.path.join(self.home, 'notes.txt'))
+        self.write(os.path.join(self.home, 'other', 'keep.txt'))
+        out = self.move(locks=locks)
+        self.assertEqual(out['notes'], [])  # no file was busy
+        self.assertEqual(sorted(os.listdir(self.home)), ['notes.txt', 'other', 'settings.json'])
+        self.assertEqual(self.fields(), {'language': 'ru', 'indexDir': self.target})
+        self.assertIsNone(self.old_copy(self.new_db()))
+
+    def test_the_same_folder_in_any_spelling_is_here_and_asks_about_the_old_copy_again(self):
+        self.full_home()
+        self.move(ui=FakeUI([False]))
+        where = resolve(self.home, self.free)
+        self.assertEqual(where, Where(self.new_db(), self.target, False, None))
+        for spelling in (self.target.upper(), self.target.replace('\\', '/') + '/', self.target + '\\', os.path.join(self.target, '..', 'new')):
+            out = self.move(spelling, where=where, ui=FakeUI([False]))
+            self.assertEqual(out['notes'], [t('index_dir_here', dir=out['dir']), t('index_old_kept', dir=self.home)], spelling)
+            self.assertEqual((out['done'], self.ui.asked), (True, [t('dlg_delete_old_index', dir=self.home)]), spelling)
+        self.assertTrue(os.path.exists(self.src))
+        out = self.move(where=where)  # and Yes deletes it
+        self.assertEqual(out['notes'], [t('index_dir_here', dir=self.target)])
+        self.assertEqual(os.listdir(self.home), ['settings.json'])
+        self.assertIsNone(self.old_copy(self.new_db()))
+        self.move(where=where)  # nothing is left to ask about
+        self.assertEqual(self.ui.asked, [])
+
+    def test_a_note_that_names_the_folder_in_use_or_no_full_path_deletes_nothing_and_only_goes(self):  # the index must never be its own old copy
+        self.full_home()
+        self.move()
+        where = resolve(self.home, self.free)
+        for value in (self.target.upper() + '\\', 'relative\\x'):
+            with contextlib.closing(memdb.connect(self.new_db())) as conn:
+                conn.execute("INSERT OR REPLACE INTO meta VALUES('old_copy', ?)", (value,))
+            self.move(where=where)
+            self.assertEqual(self.ui.asked, [], value)
+            self.assertEqual(counts(self.new_db())['chunks'], 2)
+            self.assertIsNone(self.old_copy(self.new_db()))
+
+    def test_a_move_cut_after_the_rename_and_before_the_setting_is_finished_by_the_repeat(self):
+        self.full_home()
+        was = self.fields()
+        with mock.patch.object(crypto, 'set_fields', side_effect=OSError('cut')), self.assertRaises(OSError):
+            self.move()
+        self.assertEqual(self.fields(), was)
+        self.assertTrue(os.path.exists(self.new_db()))  # renamed already
+        out = self.move(ui=FakeUI([False]))  # the same index in the target is the half-done copy of this move
+        self.assertEqual(out['notes'], [t('index_old_kept', dir=self.home)])
+        self.assertEqual(self.fields(), dict(was, indexDir=self.target))
+        self.assertEqual(counts(self.new_db()), counts(self.src))
+        self.assertEqual(sorted(os.listdir(self.target)), ['handoffs', 'index.before-stage2.db', 'index.db', 'job.xml'])
+
+    def test_another_index_in_the_target_is_refused_and_nothing_changes(self):
+        self.full_home()
+        with open(self.src, 'rb') as f:
+            mine = f.read()
+        flipped = bytearray(mine)
+        flipped[24] ^= 1  # the change counter of page 1: the same size, another first page
+        target = self.new_db()
+        for label, make in (
+                ('another index', lambda: self.index(target, 'other', 'index', 'with', 'more')),
+                ('the same size, another first page', lambda: self.write_bytes(target, bytes(flipped))),
+                ('longer', lambda: self.write_bytes(target, mine + b'x')),
+                ('only a backup', lambda: self.write_bytes(os.path.join(self.target, 'index.before-stage2.db'), b'other')),
+                ('a folder', lambda: os.makedirs(target))):
+            with self.subTest(label):
+                shutil.rmtree(self.target, ignore_errors=True)
+                make()
+                before = self.tree(self.home, self.target)
+                with self.assertRaises(ValueError) as e:
+                    self.move()
+                self.assertEqual(str(e.exception), t('index_dir_foreign', dir=self.target))
+                self.assertEqual(self.tree(self.home, self.target), before)
+                self.assertEqual((self.ui.asked, crypto.INDEX_DIRS, self.fields()), ([], set(), {'language': 'ru'}))
+        shutil.rmtree(self.target, ignore_errors=True)
+        os.remove(self.src)  # no index here and one there is not a half-done copy of anything
+        os.remove(os.path.join(self.home, 'index.before-stage2.db'))
+        self.index(target, 'other')
+        with self.assertRaises(ValueError) as e:
+            self.move()
+        self.assertEqual(str(e.exception), t('index_dir_foreign', dir=self.target))
+
+    def write_bytes(self, path, data):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'wb') as f:
+            f.write(data)
+
+    def test_a_refusal_comes_before_any_change(self):
+        self.full_home()
+        size = sum(os.path.getsize(os.path.join(self.home, n)) for n in ('index.db', 'index.before-stage2.db'))
+        need = -(-(size + 200 * 2 ** 20) // 2 ** 20)  # the files and 200 MB to spare, in whole MB
+        onedrive = lambda var: mock.patch.dict(os.environ, {var: os.path.join(self.root, 'OD')})
+        od = lambda *parts: os.path.join(self.root, 'OD', *parts)
+        cases = (
+            ('not Windows', t('index_dir_windows_only'), self.target, lambda: mock.patch.object(encrypt, 'SUPPORTED', False)),
+            ('a network drive', t('index_dir_not_local', dir=self.target), self.target, lambda: mock.patch.object(self, 'kind', 4)),
+            ('a removable drive', t('index_dir_not_local', dir=self.target), self.target, lambda: mock.patch.object(self, 'kind', 2)),
+            ('UNC', t('index_dir_not_local', dir='\\\\server\\share\\x'), '\\\\server\\share\\x', contextlib.nullcontext),
+            ('UNC with slashes', t('index_dir_not_local', dir='\\\\server\\share\\y'), '//server/share/y', contextlib.nullcontext),
+            ('not a full path', t('index_dir_not_local', dir=os.path.abspath('new')), 'new', contextlib.nullcontext),
+            ('OneDrive', t('index_dir_cloud', dir=od('idx')), od('idx'), lambda: onedrive('OneDrive')),
+            ('OneDrive itself', t('index_dir_cloud', dir=od()), od(), lambda: onedrive('OneDriveCommercial')),
+            ('OneDrive of a person', t('index_dir_cloud', dir=od('a')), od('a'), lambda: onedrive('OneDriveConsumer')),
+            ('no room', t('index_dir_no_space', dir=self.target, need=need, free=100), self.target, lambda: mock.patch.object(self, 'room', 100 * 2 ** 20)),
+            ('an unencrypted copy beside', t('index_dir_plain_left', dir=self.home), self.target, self.plain_beside))
+        for label, text, target, setup in cases:
+            with self.subTest(label), setup():
+                before = self.tree(self.home)
+                with self.assertRaises(ValueError) as e:
+                    self.move(target)
+                self.assertEqual(str(e.exception), text)
+                self.assertEqual(self.tree(self.home), before)
+                self.assertFalse(os.path.exists(self.target))
+                self.assertEqual((self.ui.asked, crypto.INDEX_DIRS), ([], set()))
+        self.assertEqual(self.fields(), {'language': 'ru'})
+
+    @contextlib.contextmanager
+    def plain_beside(self):
+        self.write(self.src + '.plain')
+        try:
+            yield
+        finally:
+            os.remove(self.src + '.plain')
+
+    def test_a_folder_that_only_starts_like_the_onedrive_one_is_fine(self):
+        self.full_home()
+        with mock.patch.dict(os.environ, {'OneDrive': os.path.join(self.root, 'OD')}):
+            out = self.move(os.path.join(self.root, 'OD2'))
+        self.assertTrue(out['done'])
+
+    def test_a_computer_without_an_index_gets_an_empty_one_in_the_target(self):
+        crypto.set_fields(self.settings, {'language': 'ru'})
+        out = self.move()
+        self.assertEqual((out['done'], out['notes'], self.ui.asked, self.asked), (True, [], [], [self.root]))  # nothing to ask about, and the room is checked as for any
+        self.assertEqual(os.listdir(self.target), ['index.db'])
+        with contextlib.closing(memdb.connect(self.new_db())) as conn:
+            self.assertEqual((texts_of(conn), memdb.meta(conn, 'old_copy')), ([], None))
+        self.assertEqual(self.fields(), {'language': 'ru', 'indexDir': self.target})
+
+    def test_that_empty_index_is_encrypted_when_a_key_is_set(self):  # the key is the home one, as the folder is registered first
+        key = secrets.token_bytes(32)
+        crypto.save_key(self.settings, key)
+        self.move()
+        self.assertTrue(crypto.is_encrypted(self.new_db()))
+        crypto.open_db(self.new_db(), key, page=crypto.INDEX_PAGE).close()
+
+    def test_back_to_the_standard_folder_takes_indexDir_out_and_keeps_the_rest(self):
+        self.full_home()
+        want = counts(self.src)
+        self.move()  # Yes: the copy in the home folder goes
+        out = self.move(self.home.replace('\\', '/') + '/', where=resolve(self.home, self.free), ui=FakeUI([False]))
+        self.assertEqual((out['dir'], out['notes']), (self.home, [t('index_old_kept', dir=self.target)]))
+        self.assertEqual(self.fields(), {'language': 'ru'})
+        self.assertEqual(counts(self.src), want)
+        self.assertEqual(self.old_copy(self.src), self.target)
+        self.assertEqual(resolve(self.home, self.free), Where(self.src, None, False, None))
+
+    def test_the_index_on_c_with_its_folder_gone_for_good_becomes_the_standard_one_and_nothing_is_copied(self):
+        far = os.path.join(self.root, 'far')
+        self.full_home()
+        crypto.set_fields(self.settings, {'indexDir': far})
+        self.write(self.mark, far)
+        kept = {k: v for k, v in self.tree(self.home).items() if k not in (self.mark, self.settings)}
+        out = self.move(self.home.upper(), where=Where(self.src, far, True, None))
+        self.assertEqual((out['done'], out['notes'], self.ui.asked, self.asked), (True, [t('index_dir_permanent', dir=self.home.upper())], [], []))
+        self.assertEqual(self.fields(), {'language': 'ru'})
+        self.assertFalse(os.path.exists(self.mark))
+        self.assertEqual({k: v for k, v in self.tree(self.home).items() if k != self.settings}, kept)  # not a byte else
+        self.assertEqual(self.roots, [os.path.splitdrive(self.home.upper())[0] + '\\'])  # checked as any target is
+        self.assertFalse(os.path.exists(far))
+
+    def test_the_index_on_c_goes_to_its_old_folder_when_that_is_back_and_empty_as_to_any_other(self):
+        far = os.path.join(self.root, 'far')
+        os.makedirs(far)
+        self.full_home()
+        crypto.set_fields(self.settings, {'indexDir': far})
+        self.write(self.mark, far)
+        want = counts(self.src)
+        out = self.move(far, where=Where(self.src, far, True, None))
+        self.assertEqual((out['done'], out['notes']), (True, []))  # Yes: the copy on C: goes
+        self.assertEqual(counts(self.new_db(far)), want)
+        self.assertEqual(self.fields(), {'language': 'ru', 'indexDir': far})
+        self.assertEqual(sorted(os.listdir(self.home)), ['settings.json'])  # the index, the mark and the rest of the temporary copy
+        self.assertIsNone(self.old_copy(self.new_db(far)))
+
+    def test_a_temporary_copy_that_is_kept_is_only_an_old_copy_with_no_mark(self):
+        far = os.path.join(self.root, 'far')
+        self.full_home()
+        crypto.set_fields(self.settings, {'indexDir': far})
+        self.write(self.mark, far)
+        self.move(far, where=Where(self.src, far, True, None), ui=FakeUI([False]))
+        self.assertTrue(os.path.exists(self.src))
+        self.assertFalse(os.path.exists(self.mark))
+        self.assertEqual(self.old_copy(self.new_db(far)), self.home)
+
+    def test_a_source_that_changed_while_it_was_copied_is_busy_and_nothing_stays_behind(self):
+        self.full_home()
+        real, seen = encrypt._stamp, []
+
+        def stamp(path):
+            seen.append(path)
+            return real(path) + (b'x' if seen.count(path) > 1 else b'')  # the second look at a source finds it changed
+
+        before = self.tree(self.home)
+        with mock.patch.object(encrypt, '_stamp', stamp), self.assertRaises(ValueError) as e:
+            self.move()
+        self.assertEqual(str(e.exception), t('index_dir_busy'))
+        self.assertEqual(self.tree(self.home), before)
+        self.assertEqual(sorted(os.listdir(self.target)), ['handoffs', 'job.xml'])  # no .cg-move, no index
+        self.assertEqual((self.fields(), self.ui.asked, crypto.INDEX_DIRS), ({'language': 'ru'}, [], set()))
+        self.assertTrue(self.move()['done'])  # and a try that finds it quiet goes through
+
+    def test_an_encrypted_index_moves_and_opens_in_the_target_with_the_key_of_the_home_settings(self):
+        key = secrets.token_bytes(32)
+        self.full_home(key)
+        crypto.save_key(self.settings, key)
+        want = {n: counts(os.path.join(self.home, n), key) for n in ('index.db', 'index.before-stage2.db')}
+        out = self.move(key=key, ui=FakeUI([False]))
+        self.assertTrue(out['done'])
+        for name, rows in want.items():
+            path = os.path.join(self.target, name)
+            self.assertTrue(crypto.is_encrypted(path))
+            self.assertEqual(counts(path, key), rows)
+            with contextlib.closing(crypto.open_db(path, key, page=crypto.INDEX_PAGE)) as conn:
+                self.assertEqual(conn.execute('PRAGMA cipher_page_size').fetchone(), ('16384',))
+        self.assertEqual(crypto.settings_path(self.new_db()), self.settings)  # the folder is registered: the key is looked for at home
+        self.assertEqual(self.old_copy(self.new_db()), self.home)  # and the mod opens it its own way
+        self.assertEqual(crypto.load_key(self.settings), key)
+
+    def test_an_encrypted_index_with_no_key_is_refused_and_nothing_changes(self):
+        key = secrets.token_bytes(32)
+        self.full_home(key)
+        before = self.tree(self.home)
+        with self.assertRaises(ValueError) as e:
+            self.move()
+        self.assertEqual(str(e.exception), t('key_missing'))
+        self.assertEqual(self.tree(self.home), before)
+        self.assertFalse(os.path.exists(self.target))
+
+    def test_a_target_inside_the_old_folder_is_not_hit_by_the_deletion(self):
+        self.full_home()
+        for name in ('notes.txt', 'other\\keep.txt'):
+            self.write(os.path.join(self.home, name))
+        inside = os.path.join(self.home, 'D-copy')
+        self.move(inside)  # Yes
+        self.assertEqual(sorted(os.listdir(self.home)), ['D-copy', 'notes.txt', 'other', 'settings.json'])
+        self.assertEqual(counts(self.new_db(inside))['chunks'], 2)
+        self.assertIsNone(self.old_copy(self.new_db(inside)))
+
+    def test_a_target_inside_the_handoffs_of_the_old_folder_keeps_its_index(self):  # the handoff files go, the folder they are in is not walked
+        self.full_home()
+        inside = os.path.join(self.home, 'handoffs')
+        self.move(inside)
+        self.assertEqual(counts(self.new_db(inside))['chunks'], 2)
+        self.assertFalse(os.path.exists(os.path.join(inside, 'S1.md')))
+        with open(os.path.join(inside, 'handoffs', 'S1.md'), encoding='utf-8') as f:  # its copy beside the new index
+            self.assertEqual(f.read(), 'handoff')
+
+    def test_the_old_folder_inside_the_target_loses_its_files_and_the_target_keeps_all_else(self):
+        outer = os.path.join(self.root, 'outer')
+        self.make_home(os.path.join(outer, 'home'))
+        self.full_home()
+        self.write(os.path.join(outer, 'mine.txt'))
+        self.move(outer)
+        self.assertEqual(sorted(os.listdir(outer)), ['handoffs', 'home', 'index.before-stage2.db', 'index.db', 'job.xml', 'mine.txt'])
+        self.assertEqual(os.listdir(self.home), ['settings.json'])
+        self.assertEqual(counts(self.new_db(outer))['chunks'], 2)
+
+    def test_a_file_of_the_old_copy_in_use_stays_with_a_note_and_the_repeat_deletes_the_rest(self):
+        self.full_home()
+        job = os.path.join(self.home, 'job.xml')
+        with open(job, encoding='utf-8'):  # a program that holds it: Windows will not delete it
+            out = self.move()
+            self.assertEqual(out['notes'], [t('index_old_busy', dir=self.home)])
+            self.assertEqual(sorted(os.listdir(self.home)), ['job.xml', 'settings.json'])
+            self.assertEqual(self.old_copy(self.new_db()), self.home)  # the note stays while a file does
+        out = self.move(where=resolve(self.home, self.free))
+        self.assertEqual(out['notes'], [t('index_dir_here', dir=self.target)])
+        self.assertEqual(os.listdir(self.home), ['settings.json'])
+        self.assertIsNone(self.old_copy(self.new_db()))
+
+    def test_the_locks_are_given_back_after_the_switch_and_on_a_refusal(self):
+        self.full_home()
+        take = lambda: [memdb.lock(self.src, name, 0) for name in indexdir.LOCKS]
+        self.kind = 4
+        with self.assertRaises(ValueError):
+            self.move(locks=take())
+        for lock in take():  # none is kept: all three can be taken again
+            lock.close()
+        self.kind = 3
+        locks = take()
+        self.move(locks=locks)
+        for lock in locks:  # closed, so the lock files could be deleted
+            with self.assertRaises(sqlite3.ProgrammingError):
+                lock.execute('SELECT 1')
+        self.assertFalse(any(os.path.exists('%s.%s.lock' % (self.src, name)) for name in indexdir.LOCKS))
+
+    def test_the_locks_are_given_back_when_the_copy_fails_too(self):
+        self.full_home()
+        locks = [memdb.lock(self.src, name, 0) for name in indexdir.LOCKS]
+        with mock.patch.object(crypto, 'set_fields', side_effect=OSError('cut')), self.assertRaises(OSError):
+            self.move(locks=locks)
+        for lock in locks:
+            with self.assertRaises(sqlite3.ProgrammingError):
+                lock.execute('SELECT 1')
+
+    def test_the_settings_are_read_before_anything_is_copied(self):
+        self.full_home()
+        with open(self.settings, 'w') as f:
+            f.write('{ "indexDir": ')
+        with self.assertRaises(crypto.SettingsBroken):
+            self.move()
+        self.assertFalse(os.path.exists(self.target))
 
 
 class OwnBatchTest(unittest.TestCase):

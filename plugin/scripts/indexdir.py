@@ -1,8 +1,11 @@
 """Where the index is on every run of cg.py: in the folder `indexDir` of the home settings names, else in the home folder itself. While that
-folder has no index the mod works with the home folder and says so. It makes no folder and no index there (only the move command does).
+folder has no index the mod works with the home folder and says so. It makes no folder and no index there (only the move command does:
+`move`, which copies the index to a folder of the owner's choice, checks the copy, switches the setting and asks before the old copy goes).
 When the folder has its index back, what the home folder gathered meanwhile is merged into it and deleted (`merge_back`)."""
 import collections
 import contextlib
+import ctypes
+import glob
 import os
 import shutil
 import sqlite3
@@ -18,15 +21,27 @@ MARK = 'index.db.fallback'  # in the home folder: the index beside it stands in 
 # merge_from: the home index to merge into db, None when there is none
 Where = collections.namedtuple('Where', 'db configured fallback merge_from')
 LOCKS = ('maintain', 'embed', 'sync')  # the long runs on an index (memdb.lock): a merge waits for none, it takes all of both indexes or does nothing
+DRIVE_FIXED = 3  # GetDriveTypeW: a disk inside this computer, not a removable or a network one
+SPARE = 200 * 2 ** 20  # what a move leaves free on the target disk besides the files it copies
+MB = 2 ** 20
+CLOUD = ('OneDrive', 'OneDriveCommercial', 'OneDriveConsumer')  # the folders a cloud service syncs: no index there
 # the keys of the temporary index (tmp) that the index (main) has neither as a record nor forgotten, and the forgets it lacks
 _NEW = 'SELECT conv, cls, hash, n FROM tmp.keys EXCEPT SELECT conv, cls, hash, n FROM main.keys EXCEPT SELECT conv, cls, hash, n FROM main.forgotten'
 _UNFORGOTTEN = 'SELECT conv, cls, hash, n FROM tmp.forgotten EXCEPT SELECT conv, cls, hash, n FROM main.forgotten'
 
 
+def _free(path):
+    return shutil.disk_usage(path).free
+
+
+def _drive_type(root):
+    return ctypes.windll.kernel32.GetDriveTypeW(root)
+
+
 def resolve(home=None, free=None):
     """The `Where` of this run, from the settings file in `home` (crypto.HOME_DIR). `free(path)` is the free bytes of a disk."""
     home = home or crypto.HOME_DIR
-    free = free or (lambda path: shutil.disk_usage(path).free)
+    free = free or _free
     db, mark, settings = (os.path.join(home, name) for name in ('index.db', MARK, 'settings.json'))
     try:
         d = crypto._read(settings).get('indexDir')
@@ -190,6 +205,10 @@ def merge_back(where, key):
         if encrypt._stamp(src) != before:
             return None
         _handoffs(src, db)
+        with contextlib.closing(_connect(db, key)) as conn:  # a move may have left src as the old copy of db: its note goes with it
+            old = memdb.meta(conn, 'old_copy')
+            if old and crypto.norm(old) == crypto.norm(fields['home']):
+                conn.execute("DELETE FROM meta WHERE key = 'old_copy'")
         encrypt._remove(src)
         with contextlib.suppress(OSError):  # a mark left beside no index does nothing, and no failure may stay on record once the index is gone
             os.remove(os.path.join(fields['home'], MARK))
@@ -203,3 +222,181 @@ def merge_back(where, key):
     finally:
         for lock in held:
             lock.close()
+
+
+# ---- the move (/cg-index-dir)
+
+def _same(a, b):
+    """The file `b` is a whole copy of `a`: the same size and the same first page (every commit rewrites it)."""
+    return os.path.isfile(a) and os.path.isfile(b) and os.path.getsize(a) == os.path.getsize(b) and encrypt._stamp(a) == encrypt._stamp(b)
+
+
+def _existing(path):
+    """The nearest folder of `path` that is there: the disk a folder that is not made yet will lie on."""
+    while not os.path.exists(path) and os.path.dirname(path) != path:
+        path = os.path.dirname(path)
+    return path
+
+
+def _copy(path, copy, key):
+    """The index file `path` copied to `copy` under its own write lock (a chat cannot write meanwhile) and counted from a fresh open;
+    the first page of `path` as it was then."""
+    with contextlib.closing(_connect(path, key)) as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        want, stamp = encrypt._counts(conn), encrypt._stamp(path)
+        shutil.copyfile(path, copy)
+        conn.execute('COMMIT')
+    with contextlib.closing(_connect(copy, key)) as dst:
+        got = encrypt._counts(dst)
+    if got != want:
+        raise ValueError(t('encrypt_copy_differs', path=path))
+    return stamp
+
+
+def _handoffs_in(folder):
+    """The handoff files of an index folder, `handoffs\\*.md` and nothing deeper: a move copies and deletes these and walks no tree, so a
+    folder that lies inside `handoffs` (or the new index there) is never reached."""
+    return [p for p in glob.glob(os.path.join(glob.escape(folder), 'handoffs', '*.md')) if os.path.isfile(p)]
+
+
+def _copy_extras(cur, folder):
+    """The handoff files and job.xml beside the index go over as they are."""
+    mine = _handoffs_in(cur)
+    if mine:
+        os.makedirs(os.path.join(folder, 'handoffs'), exist_ok=True)
+        for path in mine:
+            shutil.copyfile(path, os.path.join(folder, 'handoffs', os.path.basename(path)))
+    job = os.path.join(cur, 'job.xml')
+    if os.path.isfile(job):
+        shutil.copyfile(job, os.path.join(folder, 'job.xml'))
+
+
+def _unmark():
+    """The mark of a temporary index in the home folder goes: what lies there is a plain old copy now, or the permanent index."""
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(os.path.join(crypto.HOME_DIR, MARK))
+
+
+def _delete_old(old):
+    """The files an index leaves in the folder `old` go: the index and the backup of stage 2 with their journals, the lock files, job.xml,
+    the handoff files and the mark. Never the settings file, never a folder tree. Whether a file stayed because something holds it."""
+    db = os.path.join(old, 'index.db')
+    names = [*encrypt._files(db), *('%s.%s.lock' % (db, name) for name in LOCKS), os.path.join(old, 'job.xml'), os.path.join(old, MARK), *_handoffs_in(old)]
+    stayed = False
+    for path in names:
+        try:
+            encrypt._remove(path)
+        except OSError:
+            stayed = True
+    with contextlib.suppress(OSError):  # a folder that still holds something (the new index may lie in it) or is in use stays
+        os.rmdir(os.path.join(old, 'handoffs'))
+    return stayed
+
+
+def _drop_old(old, db, ui, notes):
+    """The question about the old copy in the folder `old`, the index in use being `db`: Yes deletes it, No leaves a note (and meta.old_copy of
+    `db`, which /cg-health shows). That note goes when the last file does. A name that is no full path, or is the folder of `db` itself, is
+    no old copy to delete: only its note goes."""
+    if os.path.isabs(old) and crypto.norm(old) != crypto.norm(os.path.dirname(db)):
+        if not ui.confirm(t('dlg_delete_old_index', dir=old)):
+            notes.append(t('index_old_kept', dir=old))
+            return
+        if _delete_old(old):
+            notes.append(t('index_old_busy', dir=old))
+            return
+    with contextlib.closing(memdb.connect(db)) as conn:
+        conn.execute("DELETE FROM meta WHERE key = 'old_copy'")
+
+
+def _switch(out, where, target, key, ui, drive_type, free):
+    """The move up to the switch, with `out` (see `move`) filled in. Every refusal is a ValueError raised before anything is changed; a
+    failure later leaves at most a whole copy in the target, which the repeat takes for its own. Returns (the folder of an old copy, the
+    index that notes it) when the owner is to be asked about deleting it, else None."""
+    src, folder, notes = where.db, out['dir'], out['notes']
+    cur, n, home = os.path.dirname(src), crypto.norm(out['dir']), crypto.norm(crypto.HOME_DIR)
+    settings = os.path.join(crypto.HOME_DIR, 'settings.json')
+    if not encrypt.SUPPORTED:
+        raise ValueError(t('index_dir_windows_only'))
+    drive = os.path.splitdrive(folder)[0]
+    if not (os.path.isabs(target) and os.path.splitdrive(target)[0]) or drive.startswith('\\\\') or drive_type(drive + '\\') != DRIVE_FIXED:
+        raise ValueError(t('index_dir_not_local', dir=folder))
+    for var in CLOUD:
+        cloud = crypto.norm(os.environ[var]) if os.environ.get(var) else None
+        if cloud and (n == cloud or n.startswith(cloud.rstrip(os.sep) + os.sep)):
+            raise ValueError(t('index_dir_cloud', dir=folder))
+    if where.fallback and n == home:  # before "here": the folder C: works in now is the home one, and this makes it the permanent one
+        crypto.set_fields(settings, {'indexDir': None})
+        _unmark()
+        out['done'] = True
+        notes.append(t('index_dir_permanent', dir=folder))
+        return None
+    if n == crypto.norm(cur):
+        out['done'] = True
+        notes.append(t('index_dir_here', dir=folder))
+        if os.path.isfile(src):
+            with contextlib.closing(memdb.connect(src)) as conn:
+                old = memdb.meta(conn, 'old_copy')
+            if old:
+                return old, src
+        return None
+    if glob.glob(os.path.join(glob.escape(cur), '*.plain')):
+        raise ValueError(t('index_dir_plain_left', dir=cur))
+    new_db = os.path.join(folder, 'index.db')
+    pairs = list(zip(encrypt._files(src), encrypt._files(new_db)))
+    if any(os.path.exists(b) and not _same(a, b) for a, b in pairs):  # one the target has must be a copy of ours, a half-done move of this one
+        raise ValueError(t('index_dir_foreign', dir=folder))
+    pairs = [(a, b) for a, b in pairs if os.path.isfile(a)]
+    if key is None and any(crypto.is_encrypted(a) for a, _ in pairs):
+        raise ValueError(t('key_missing'))
+    crypto._read(settings)  # a settings file that cannot be read stops the move here, not after the copy
+    if not os.path.exists(new_db):  # a copy of an earlier try has taken its room already
+        need, room = sum(os.path.getsize(a) for a, _ in pairs) + SPARE, free(_existing(folder))
+        if room < need:
+            raise ValueError(t('index_dir_no_space', dir=folder, need=-(-need // MB), free=room // MB))
+    field = None if n == home else folder  # the home folder is "no indexDir"
+    if not pairs:  # an index nowhere: the first one is made in the target
+        crypto.INDEX_DIRS.add(n)
+        memdb.connect(new_db).close()
+        crypto.set_fields(settings, {'indexDir': field})
+        out['done'] = True
+        return None
+    os.makedirs(folder, exist_ok=True)
+    copies = [b + '.cg-move' for _, b in pairs]
+    try:
+        stamps = [_copy(a, c, key) for (a, _), c in zip(pairs, copies)]
+        _copy_extras(cur, folder)
+        if [encrypt._stamp(a) for a, _ in pairs] != stamps:  # a chat wrote to an index meanwhile, and the copy lacks it
+            raise ValueError(t('index_dir_busy'))
+        for c, (_, b) in zip(copies, pairs):
+            os.replace(c, b)
+    finally:
+        for c in copies:  # what the replace did not take
+            encrypt._remove(c)
+    crypto.set_fields(settings, {'indexDir': field})  # from here every new run of cg.py works in the target
+    crypto.INDEX_DIRS.add(n)
+    with contextlib.closing(memdb.connect(new_db)) as conn:
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('old_copy', ?)", (cur,))
+    if where.fallback:  # the source was the temporary index: left behind it is a plain old copy
+        _unmark()
+    out['done'] = True
+    return cur, new_db
+
+
+def move(where, target, key, ui, drive_type=None, free=None, locks=()):
+    """/cg-index-dir: the index in use (`where.db`) moves to the folder `target` (a full path). The checks come first and change nothing. Then
+    the index files are copied under their write lock, counted and put in place, the settings point to the target (`indexDir`, the other
+    fields as they were), and only then the owner is asked about the old copy (`ui.confirm`, default No). Result: {'action': 'index-dir',
+    'done': True, 'dir': the target, 'notes': what the owner is told besides}. A refusal or a failure is a ValueError. `key` opens an encrypted
+    index (the home settings hold it). `drive_type(root)` and `free(path)` are the system's by default. `locks`: the connections the caller
+    holds on the source index (memdb.lock). They are closed here as soon as the switch is made, or on any failure: with them open the lock
+    files and the index could not be deleted."""
+    folder = os.path.abspath(target)
+    out = {'action': 'index-dir', 'done': False, 'dir': folder, 'notes': []}
+    try:
+        old = _switch(out, where, target, key, ui, drive_type or _drive_type, free or _free)
+    finally:
+        for lock in locks:
+            lock.close()
+    if old:
+        _drop_old(*old, ui, out['notes'])
+    return out

@@ -126,6 +126,23 @@ EN = {
     'index_merged': 'the index folder {dir} is available again: what was saved in {home} meanwhile is merged into it (records: {n}), and the temporary index in {home} is deleted',
     'index_merge_differs': 'the merged index does not hold everything the temporary one had, so the merge was undone',
     'index_merge_mixed': 'the index in the index folder is not encrypted and the temporary one is: run /cg-encrypt on, then the merge goes through',
+
+    # indexdir.py move: /cg-index-dir and its windows
+    'index_dir_windows_only': 'moving the index to another folder works on Windows only for now',
+    'index_dir_not_local': '{dir} is not on a disk inside this computer. Give a full path on a local fixed disk, for example D:\\CacheGuard. Network paths, network drives and removable disks do not fit. Nothing was changed',
+    'index_dir_cloud': '{dir} lies in a folder that a cloud service syncs (OneDrive). The index changes all the time and the sync can damage it. Choose a folder outside OneDrive. Nothing was changed',
+    'index_dir_here': 'the index is in {dir} already, nothing was moved',
+    'index_dir_permanent': 'the index stays in {dir} for good: the setting indexDir is removed and nothing was copied. An index left in the earlier index folder is not used any more',
+    'index_dir_plain_left': 'an unencrypted copy of the index lies next to it in {dir}. Finish the encryption first with /cg-encrypt on and delete that copy. Nothing was changed',
+    'index_dir_foreign': 'there is another index in {dir} already, and it is not a copy of this one. It is not written over. Choose an empty folder or delete that index by hand. Nothing was changed',
+    'index_dir_no_space': 'there is not enough free space for {dir}: {need} MB are needed and {free} MB are free. Nothing was changed',
+    'index_dir_busy': 'the index is in use by a chat or the background job, or it changed while it was copied. Nothing was changed, try again in a minute',
+    'index_dir_cancelled': 'no folder was chosen, nothing was changed',
+    'index_dir_no_picker': 'this Python has no window for choosing a folder. Give the path in the command: /cg-index-dir D:\\CacheGuard',
+    'dlg_pick_index_dir': 'Choose the folder for the CacheGuard index',
+    'dlg_delete_old_index': 'The index now works from the new folder. The old copy still lies in {dir}. Delete it now?\n\nThe settings file and the encryption key are not touched.',
+    'index_old_busy': 'some files of the old copy in {dir} are in use by another program and were not deleted. Repeat /cg-index-dir with the new folder to delete the rest',
+    'index_old_kept': 'the old copy of the index stays in {dir}. To delete it, repeat /cg-index-dir with the new folder',
 }
 
 RU = {
@@ -245,6 +262,22 @@ RU = {
     'index_merged': 'папка индекса {dir} снова доступна: то, что сохранилось за это время в {home}, влито в неё (записей: {n}), временный индекс в {home} удалён',
     'index_merge_differs': 'в слитом индексе нет всего, что было во временном, поэтому слияние отменено',
     'index_merge_mixed': 'индекс в папке индекса не зашифрован, а временный зашифрован: выполните /cg-encrypt on, после этого слияние пройдёт',
+
+    'index_dir_windows_only': 'перенос индекса в другую папку пока работает только на Windows',
+    'index_dir_not_local': '{dir} не на диске внутри этого компьютера. Укажите полный путь на локальном несъёмном диске, например D:\\CacheGuard. Сетевые пути, сетевые диски и съёмные диски не подходят. Ничего не изменено',
+    'index_dir_cloud': '{dir} лежит в папке, которую синхронизирует облачный сервис (OneDrive). Индекс меняется постоянно, и синхронизация может его испортить. Выберите папку вне OneDrive. Ничего не изменено',
+    'index_dir_here': 'индекс уже лежит в {dir}, ничего не перенесено',
+    'index_dir_permanent': 'индекс остаётся в {dir} насовсем: настройка indexDir убрана, ничего не скопировано. Индекс, оставшийся в прежней папке индекса, больше не используется',
+    'index_dir_plain_left': 'рядом с индексом в {dir} лежит незашифрованная копия. Сначала доведите шифрование до конца командой /cg-encrypt on и удалите эту копию. Ничего не изменено',
+    'index_dir_foreign': 'в {dir} уже есть другой индекс, и это не копия нынешнего. Поверх него ничего не пишу. Выберите пустую папку или удалите тот индекс вручную. Ничего не изменено',
+    'index_dir_no_space': 'для {dir} не хватает свободного места: нужно {need} МБ, свободно {free} МБ. Ничего не изменено',
+    'index_dir_busy': 'индекс сейчас занят чатом или фоновой задачей, либо изменился, пока копировался. Ничего не изменено, повторите через минуту',
+    'index_dir_cancelled': 'папка не выбрана, ничего не изменено',
+    'index_dir_no_picker': 'в этом Python нет окна выбора папки. Укажите путь в команде: /cg-index-dir D:\\CacheGuard',
+    'dlg_pick_index_dir': 'Выберите папку для индекса CacheGuard',
+    'dlg_delete_old_index': 'Индекс теперь работает из новой папки. Старая копия всё ещё лежит в {dir}. Удалить её сейчас?\n\nФайл настроек и ключ шифрования не затрагиваются.',
+    'index_old_busy': 'часть файлов старой копии в {dir} занята другой программой и не удалена. Повторите /cg-index-dir с новой папкой, чтобы удалить остальное',
+    'index_old_kept': 'старая копия индекса осталась в {dir}. Чтобы удалить её, повторите /cg-index-dir с новой папкой',
 }
 
 UK = {
@@ -364,6 +397,22 @@ UK = {
     'index_merged': 'тека індексу {dir} знову доступна: те, що збереглося за цей час у {home}, влито в неї (записів: {n}), тимчасовий індекс у {home} видалено',
     'index_merge_differs': 'у злитому індексі немає всього, що було в тимчасовому, тому злиття скасовано',
     'index_merge_mixed': 'індекс у теці індексу не зашифрований, а тимчасовий зашифрований: виконайте /cg-encrypt on, після цього злиття пройде',
+
+    'index_dir_windows_only': 'перенесення індексу в іншу теку поки що працює лише на Windows',
+    'index_dir_not_local': "{dir} не на диску всередині цього комп'ютера. Вкажіть повний шлях на локальному незнімному диску, наприклад D:\\CacheGuard. Мережеві шляхи, мережеві диски та знімні диски не підходять. Нічого не змінено",
+    'index_dir_cloud': '{dir} лежить у теці, яку синхронізує хмарний сервіс (OneDrive). Індекс змінюється постійно, і синхронізація може його зіпсувати. Оберіть теку поза OneDrive. Нічого не змінено',
+    'index_dir_here': 'індекс уже лежить у {dir}, нічого не перенесено',
+    'index_dir_permanent': 'індекс лишається в {dir} назавжди: налаштування indexDir прибрано, нічого не скопійовано. Індекс, що залишився в попередній теці індексу, більше не використовується',
+    'index_dir_plain_left': 'поруч з індексом у {dir} лежить незашифрована копія. Спершу доведіть шифрування до кінця командою /cg-encrypt on і видаліть цю копію. Нічого не змінено',
+    'index_dir_foreign': 'у {dir} уже є інший індекс, і це не копія нинішнього. Поверх нього нічого не пишу. Оберіть порожню теку або видаліть той індекс вручну. Нічого не змінено',
+    'index_dir_no_space': 'для {dir} не вистачає вільного місця: потрібно {need} МБ, вільно {free} МБ. Нічого не змінено',
+    'index_dir_busy': 'індекс зараз зайнятий чатом або фоновим завданням, або змінився, поки копіювався. Нічого не змінено, повторіть за хвилину',
+    'index_dir_cancelled': 'теку не обрано, нічого не змінено',
+    'index_dir_no_picker': 'у цьому Python немає вікна вибору теки. Вкажіть шлях у команді: /cg-index-dir D:\\CacheGuard',
+    'dlg_pick_index_dir': 'Оберіть теку для індексу CacheGuard',
+    'dlg_delete_old_index': 'Індекс тепер працює з нової теки. Стара копія все ще лежить у {dir}. Видалити її зараз?\n\nФайл налаштувань і ключ шифрування не зачіпаються.',
+    'index_old_busy': 'частину файлів старої копії в {dir} зайнято іншою програмою, і їх не видалено. Повторіть /cg-index-dir з новою текою, щоб видалити решту',
+    'index_old_kept': 'стара копія індексу залишилась у {dir}. Щоб видалити її, повторіть /cg-index-dir з новою текою',
 }
 
 TABLES = {'en': EN, 'ru': RU, 'uk': UK}

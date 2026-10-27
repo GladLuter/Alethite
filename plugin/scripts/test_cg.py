@@ -644,6 +644,103 @@ class CgTest(unittest.TestCase):
         self.assertEqual(out['rows'], 2)
         self.assertEqual([os.path.exists(os.path.join(home, n)) for n in ('index.db', indexdir.MARK)], [False, False])
 
+    # index-dir: the move, as the mod runs it
+
+    def move_ui(self, *answers, folder=None):
+        """The windows of the move are a fake, and every disk is a fixed one: the temp folder may lie on any."""
+        ui = FakeUI(answers, folder=folder)
+        for patch in (mock.patch('dialogs.WindowsUI', lambda: ui), mock.patch.object(indexdir, '_drive_type', lambda root: 3)):
+            patch.start()
+            self.addCleanup(patch.stop)
+        return ui
+
+    def home_index(self, home):
+        self.write('P/S1.jsonl', [owner_line('вопрос'), claude_line('ответ')])
+        conn = memdb.connect(os.path.join(home, 'index.db'))
+        memdb.update(conn, self.projects)
+        conn.close()
+
+    @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
+    def test_index_dir_moves_the_index_and_every_next_run_follows_it(self):
+        home = self.home_dir()
+        self.home_index(home)
+        far = os.path.join(self.tmp, 'far')
+        ui = self.move_ui(False)
+        code, out, _ = self.main_home('index-dir', '--path', far)
+        self.assertEqual((code, out), (0, {'action': 'index-dir', 'done': True, 'dir': far, 'notes': [t('index_old_kept', dir=home)]}))
+        self.assertEqual(ui.asked, [t('dlg_delete_old_index', dir=home)])
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, out['db'], out['rows']), (0, os.path.join(far, 'index.db'), 2))
+        self.assertEqual(out['index_dir'], {'configured': far, 'fallback': False, 'notes': [t('index_old_copy', dir=home)]})
+        self.assertNotIn('index_notice', out)
+
+    @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
+    def test_the_locks_the_move_holds_are_given_back_before_the_old_copy_goes(self):
+        home = self.home_dir()
+        self.home_index(home)
+        self.move_ui(True)
+        code, out, _ = self.main_home('index-dir', '--path', os.path.join(self.tmp, 'far'))
+        self.assertEqual((code, out['done'], out['notes']), (0, True, []))  # a lock file still open would have been index_old_busy
+        self.assertEqual(os.listdir(home), ['settings.json'])
+
+    @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
+    def test_a_busy_index_stops_the_move_before_anything_and_none_of_the_locks_is_kept(self):
+        home = self.home_dir()
+        self.home_index(home)
+        self.move_ui()
+        far = os.path.join(self.tmp, 'far')
+        db = os.path.join(home, 'index.db')
+        held = memdb.lock(db, 'embed', 0)  # a chat embeds right now
+        self.addCleanup(held.close)
+        with mock.patch.object(cg, 'ENCRYPT_WAITS', {'maintain': 0, 'embed': 0, 'sync': 0}):
+            code, out, _ = self.main_home('index-dir', '--path', far)
+        self.assertEqual((code, out), (1, {'error': 'ValueError: ' + t('index_dir_busy')}))
+        self.assertFalse(os.path.exists(far))
+        held.close()
+        for name in ('maintain', 'embed', 'sync'):
+            memdb.lock(db, name, 0).close()
+
+    @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
+    def test_without_a_path_the_window_chooses_the_folder_and_cancelling_it_changes_nothing(self):
+        home = self.home_dir()
+        self.home_index(home)
+        far = os.path.join(self.tmp, 'far')
+        before = sorted(os.listdir(home))
+        self.move_ui(folder=None)
+        self.assertEqual(self.main_home('index-dir')[:2], (0, {'done': False, 'notes': [t('index_dir_cancelled')]}))
+        self.assertEqual((sorted(os.listdir(home)), os.path.exists(far)), (before, False))
+        self.move_ui(False, folder=far)
+        code, out, _ = self.main_home('index-dir')
+        self.assertEqual((code, out['done'], out['dir']), (0, True, far))
+
+    @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
+    def test_the_index_on_c_made_permanent_does_not_report_the_folder_that_is_gone(self):
+        far = os.path.join(self.tmp, 'far')  # not made: the disk is away
+        home = self.home_dir(indexDir=far)
+        open(os.path.join(home, 'index.db'), 'wb').close()
+        self.assertEqual(self.main_home('status')[1]['index_notice'], t('index_fallback', dir=far, home=home))
+        self.move_ui()
+        code, out, _ = self.main_home('index-dir', '--path', home)
+        self.assertEqual((code, out['done'], out['notes']), (0, True, [t('index_dir_permanent', dir=home)]))
+        self.assertNotIn('index_notice', out)  # the notice of the state before the command is stale by now
+        code, out, _ = self.main_home('status')
+        self.assertEqual((out['index_dir'], 'index_notice' in out), ({'configured': None, 'fallback': False, 'notes': []}, False))
+        with open(os.path.join(home, 'settings.json'), encoding='utf-8') as f:
+            self.assertNotIn('indexDir', json.load(f))
+
+    @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
+    def test_with_db_the_index_named_is_the_one_moved(self):
+        home = self.home_dir()
+        memdb.connect(self.db).close()
+        far = os.path.join(self.tmp, 'far')
+        self.move_ui()
+        code, out, _ = self.main_json('index-dir', '--path', far)
+        self.assertEqual((code, out['done'], out['notes']), (0, True, []))
+        self.assertEqual(os.listdir(far), ['index.db'])
+        self.assertEqual(os.path.exists(self.db), False)
+        with open(os.path.join(home, 'settings.json'), encoding='utf-8') as f:
+            self.assertEqual(json.load(f), {'indexDir': far})
+
 
 @unittest.skipUnless(os.name == 'nt', 'user32 is Windows only')
 class DialogsTest(unittest.TestCase):
@@ -671,6 +768,29 @@ class DialogsTest(unittest.TestCase):
                 with self.assertRaises(OSError) as e:
                     call(dialogs.WindowsUI())
                 self.assertNotIn('SECRET', str(e.exception))
+
+    def test_the_folder_window_is_hidden_on_top_and_gives_back_the_folder_or_none(self):
+        tk = mock.MagicMock()
+        for chosen, want in (('D:/Cache', 'D:/Cache'), ('', None), ((), None)):  # a cancelled window gives back an empty string or tuple
+            tk.filedialog.askdirectory.return_value = chosen
+            with mock.patch.dict(sys.modules, {'tkinter': tk, 'tkinter.filedialog': tk.filedialog}):
+                self.assertEqual(dialogs.pick_folder('title'), want)
+        root = tk.Tk.return_value
+        root.withdraw.assert_called()
+        root.attributes.assert_called_with('-topmost', True)
+        self.assertEqual(root.destroy.call_count, 3)  # whatever the answer
+        tk.filedialog.askdirectory.assert_called_with(parent=root, title='title')
+
+    def test_without_tkinter_the_folder_window_asks_for_the_path_in_the_command(self):
+        for modules in ({'tkinter': None}, {'tkinter': mock.Mock(Tk=mock.Mock(side_effect=Exception('no Tcl')))}):  # no package, or no Tcl/Tk behind it
+            with mock.patch.dict(sys.modules, modules), self.assertRaises(ValueError) as e:
+                dialogs.pick_folder('title')
+            self.assertEqual(str(e.exception), t('index_dir_no_picker'))
+
+    def test_the_ui_asks_for_the_folder_with_its_title(self):
+        with mock.patch.object(dialogs, 'pick_folder', return_value='D:/Cache') as pick:
+            self.assertEqual(dialogs.WindowsUI().pick_folder(), 'D:/Cache')
+        pick.assert_called_once_with(t('dlg_pick_index_dir'))
 
     def test_without_tkinter_the_code_is_typed_in_a_console_and_comes_back_through_the_pipe_only(self):
         for returncode, stdout, want in ((0, b'CG1-AAAA', 'CG1-AAAA'), (1, b'', None)):  # closing the console window is a cancel

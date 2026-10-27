@@ -20,10 +20,11 @@ from texts import t
 
 
 class FakeUI:
-    """`answers`: what `confirm` says one after the other, "yes" when they run out; `code`: what the entry window gives back (None: cancelled)."""
+    """`answers`: what `confirm` says one after the other, "yes" when they run out; `code`: what the entry window gives back (None: cancelled);
+    `folder`: what the folder window gives back (None: cancelled)."""
 
-    def __init__(self, answers=(), code=None):
-        self.answers, self.code, self.shown, self.asked, self.entries = list(answers), code, [], [], 0
+    def __init__(self, answers=(), code=None, folder=None):
+        self.answers, self.code, self.folder, self.shown, self.asked, self.entries = list(answers), code, folder, [], [], 0
 
     def show_code(self, code):
         self.shown.append(code)
@@ -35,6 +36,9 @@ class FakeUI:
     def ask_code(self):
         self.entries += 1
         return self.code
+
+    def pick_folder(self):
+        return self.folder
 
 
 @unittest.skipUnless(os.name == 'nt', 'DPAPI is Windows only')

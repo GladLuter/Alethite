@@ -313,6 +313,31 @@ def _encrypt(a):
             lock.close()
 
 
+def _index_dir(a):
+    """/cg-index-dir: the index moves to the folder of --path, or of the window that asks when there is none. Alone like encrypt: the locks of
+    the background job are held until `move` has switched over, and given back there (the old copy could not be deleted with them open)."""
+    ui = dialogs.WindowsUI()
+    path = a.path or ui.pick_folder()  # before the locks: nobody waits while the owner looks for a folder
+    if path is None:
+        return {'done': False, 'notes': [texts.t('index_dir_cancelled')]}
+    where = a.where or indexdir.Where(a.db, None, False, None)  # a run with --db: that index is the one that moves
+    os.makedirs(os.path.dirname(a.db), exist_ok=True)  # the lock files lie there
+    locks = []
+    try:
+        for name, wait in ENCRYPT_WAITS.items():
+            locks.append(_alone(a, name, wait))
+        out = indexdir.move(where, path, _key(a), ui, locks=locks)
+        a.where = None  # `main` adds the notice of where the index was before the command: stale now
+        return out
+    except memdb.db_errors() as e:  # a locked lock file, or an index another process holds: nothing was lost
+        if 'locked' not in str(e):
+            raise
+        raise ValueError(texts.t('index_dir_busy')) from None
+    finally:
+        for lock in locks:
+            lock.close()
+
+
 def _forget(a):
     return {'forgotten': memdb.forget(memdb.connect(a.db), a.conv, a.pos)}
 
@@ -406,6 +431,7 @@ def _parser():
     s.add_argument('--model', default=vectors.MODEL)
     s.add_argument('--memory-dir')
     s.add_argument('--project-cwd')
+    add('index-dir', _index_dir).add_argument('--path')  # a window chooses the folder without it
     s = add('lesson-save', _lesson_save)
     s.add_argument('--cwd', default=os.getcwd())
     s.add_argument('--model', default=vectors.MODEL)

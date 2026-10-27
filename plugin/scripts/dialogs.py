@@ -1,6 +1,6 @@
-"""The windows of /cg-encrypt (Windows only): the recovery code, a Yes/No question, a hidden entry of the code. What a window shows or
-takes never leaves it: a failure says what failed (the system's error number), never the text of the window, and a typed code comes
-back only as the return value, never in a message, a printed line or an exception."""
+"""The windows of /cg-encrypt (Windows only): the recovery code, a Yes/No question, a hidden entry of the code. Also the folder window of
+/cg-index-dir. What a window shows or takes never leaves it: a failure says what failed (the system's error number), never the text of
+the window, and a typed code comes back only as the return value, never in a message, a printed line or an exception."""
 import ctypes
 import os
 import subprocess
@@ -61,8 +61,26 @@ def _console_code():
     return r.stdout.decode('utf-8') if r.returncode == 0 else None
 
 
+def pick_folder(title):
+    """The system's window for choosing a folder, hidden parent and on top of the others: the folder, None when cancelled. Without tkinter
+    (or Tcl/Tk behind it) there is no window, and the answer asks for the path in the command."""
+    try:
+        import tkinter
+        from tkinter import filedialog
+        root = tkinter.Tk()
+    except Exception:  # ImportError, TclError
+        raise ValueError(t('index_dir_no_picker')) from None
+    try:
+        root.withdraw()
+        root.attributes('-topmost', True)
+        return filedialog.askdirectory(parent=root, title=title) or None  # a cancelled window gives back an empty string
+    finally:
+        root.destroy()
+
+
 class WindowsUI:
-    """The `ui` of encrypt.py: show_code(code), confirm(text) -> bool, ask_code() -> str | None (None: cancelled)."""
+    """The `ui` of encrypt.py: show_code(code), confirm(text) -> bool, ask_code() -> str | None (None: cancelled),
+    and of indexdir.py: pick_folder() -> str | None (None: cancelled)."""
 
     def show_code(self, code):
         _box(t('dlg_code', code=code), 0)
@@ -78,3 +96,6 @@ class WindowsUI:
         except Exception:  # no tkinter, or no Tcl/Tk behind it (ImportError, TclError)
             return _console_code()
         return _window_code(tkinter, root)
+
+    def pick_folder(self):
+        return pick_folder(t('dlg_pick_index_dir'))
