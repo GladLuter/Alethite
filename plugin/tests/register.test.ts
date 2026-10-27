@@ -1223,11 +1223,12 @@ test('/cg-encrypt: cg.py fails: a toast with its words, a short reply, the error
 })
 
 test('/cg-encrypt: a run the host stopped at its time limit says so and what to do, not that Python did not start; a start failure still says the latter', async ($, on) => {
-  let why = 'aborted: still running after 600000ms'
+  let why = 'cacheguard: $.process.run(python) aborted: still running after 600000ms' // as the engine words it
   const m = await started($, on, a => (a[0] === 'encrypt' ? { deny: why } : ran('{}')))
   const run = async (args: string) => (await ($ as any).command.run({ command: 'cg-encrypt', args })).text
-  expect(await run('join')).toBe(T.encryptTimeout('join'))
+  expect(await run('join')).toBe(`cg-encrypt join: ${T.encryptTimeout('join')}`)
   expect(m.toasts).toEqual([T.toast(T.encryptWindow), T.toast(T.failed('cg-encrypt', T.encryptTimeout('join')))])
+  expect(m.toasts[1]).not.toContain('cg-encrypt — cg-encrypt') // the name once at the head of the toast, not twice
   expect(m.store.get('lastError')).toMatchObject({ where: 'cg-encrypt', msg: T.encryptTimeout('join') })
   why = 'failed to start: ENOENT'
   expect(await run('on')).toBe(T.cgEncryptFailed)

@@ -510,6 +510,25 @@ class EncryptTest(unittest.TestCase):
         self.assertEqual(conn.execute('SELECT text FROM chunks').fetchall(), [('старый ёж',)])
         conn.close()
 
+    def test_the_cipher_is_written_beside_the_key_on_every_run_and_off_leaves_it(self):  # the job reads the file only: it must seal as on and join did
+        a, b = self.a, self.b
+
+        def fields(c=a):
+            with open(crypto.settings_path(c.db), encoding='utf-8-sig') as f:
+                return json.load(f)
+
+        self.write_settings(crypto.settings_path(a.db), {'language': 'ru', 'shareCipher': 'sqlcipher'})
+        self.assertTrue(self.cmd(encrypt.on, a, FakeUI(), 'cryptography')['done'])
+        key = self.key(a)
+        self.assertEqual((fields()['shareCipher'], fields()['language']), ('cryptography', 'ru'))  # a key made in this run: one write
+        self.assertEqual(cgsync.generation(self.own(a)).cipher, 'cryptography')
+        self.assertTrue(self.cmd(encrypt.on, a, FakeUI(), 'sqlcipher')['done'])  # the key is there: the field is written all the same
+        self.assertEqual((fields()['shareCipher'], fields()['language'], self.key(a)), ('sqlcipher', 'ru', key))
+        self.assertTrue(self.cmd(encrypt.join, b, FakeUI(code=crypto.make_code(key)), 'cryptography')['done'])
+        self.assertEqual(fields(b)['shareCipher'], 'cryptography')
+        self.assertTrue(self.cmd(encrypt.off, a, FakeUI())['done'])
+        self.assertEqual((fields(), self.key(a)), ({'language': 'ru', 'shareCipher': 'sqlcipher'}, None))  # off takes the key out and nothing else
+
     # status and refusals
     def test_status(self):
         a = self.a

@@ -22,6 +22,6 @@ export const encryptReply = (r: EncryptResult) => [r.done ? T.encryptDone(r.acti
 export const encryptHealth = (e: EncryptStatus, shareCipher: string) => [e.on && e.db !== 'plain' ? T.healthEncryptionOn(shareCipher) : T.healthEncryptionOff, ...e.notes]
 
 // A run the host stopped at its time limit. The engine words that as `<plugin>: $.process.run(<command>) aborted: still running after <N>ms`
-// and gives the error no code or class a mod can read, so these words are the only mark of it (runCg keeps them at the end of its own text).
-// Anchored at the end: no text of cg.py is taken for it.
-export const isTimeout = (msg: string) => /aborted: still running after \d+ms\)?$/.test(msg)
+// and gives the error no code or class a mod can read, so these words are the only mark of it. runCg puts them in brackets at the end of its
+// own text: both the marker and the closing bracket are asked for, so no text of cg.py is taken for a timeout.
+export const isTimeout = (msg: string) => /\$\.process\.run\(.*\) aborted: still running after \d+ms\)$/s.test(msg)

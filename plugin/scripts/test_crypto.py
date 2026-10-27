@@ -100,6 +100,20 @@ class SettingsTest(unittest.TestCase):
         with open(self.path, encoding='utf-8-sig') as f:
             self.assertEqual(list(json.load(f)), [crypto.KEY_FIELD])
 
+    @dpapi
+    def test_settings_cipher_goes_in_with_the_key_and_stays_when_none_is_given(self):
+        self.write('{"language": "ru"}')
+        crypto.save_key(self.path, KEY, 'cryptography')  # the key and the cipher in one write
+        with open(self.path, encoding='utf-8-sig') as f:
+            s = json.load(f)
+        self.assertEqual((list(s), s['language'], s['shareCipher']), (['language', crypto.KEY_FIELD, 'shareCipher'], 'ru', 'cryptography'))
+        self.assertEqual(crypto.load_key(self.path), KEY)
+        for key, cipher, left in ((KEY, 'sqlcipher', 'sqlcipher'), (KEY, None, 'sqlcipher'), (None, None, 'sqlcipher')):  # a new one wins; none given, none taken
+            crypto.save_key(self.path, key, cipher)
+            with open(self.path, encoding='utf-8-sig') as f:
+                self.assertEqual(json.load(f).get('shareCipher'), left)
+        self.assertIsNone(crypto.load_key(self.path))
+
     def test_settings_broken_untouched(self):
         for text in ['{"language": "ru",', '[1]']:
             self.write(text)

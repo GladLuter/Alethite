@@ -122,13 +122,16 @@ def load_key(settings):
     return key
 
 
-def save_key(settings, key):
-    """Puts the key into the settings file (None takes it out), the other fields as they were."""
+def save_key(settings, key, cipher=None):
+    """Puts the key into the settings file (None takes it out) and, if given, shareCipher beside it, in one write; the other fields as they were.
+    The background job reads the cipher from this file only, so it must hold the one the sync folder was switched to."""
     s = _read(settings)
     if key is None:
         s.pop(KEY_FIELD, None)
     else:
         s[KEY_FIELD] = PREFIX + base64.b64encode(protect(key)).decode()
+    if cipher is not None:
+        s['shareCipher'] = cipher
     tmp = settings + '.cg-tmp'
     with open(tmp, 'wb') as f:
         f.write(json.dumps(s, ensure_ascii=False, indent=2).encode('utf-8'))

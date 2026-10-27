@@ -316,6 +316,30 @@ class CgTest(unittest.TestCase):
             self.assertNotIn(secret, text)
         self.assertEqual(sorted(os.listdir(os.path.join(share, 'M', 'gen-0001'))), ['batch-00000001.sqlcipher', 'generation.json'])
 
+    @unittest.skipUnless(os.name == 'nt', 'DPAPI is Windows only')
+    def test_what_the_job_seals_with_after_encrypt_is_the_cipher_encrypt_was_given(self):
+        self.write('P/S1.jsonl', [owner_line('вопрос про ёжика'), claude_line('ответ')])
+        self.run_cg('index')
+        share = self.share_dir()
+        with mock.patch('dialogs.WindowsUI', lambda: FakeUI()), mock.patch('urllib.request.build_opener', side_effect=OSError):
+            code, out, _ = self.main_json('encrypt', 'on', '--sync-dir', share, '--machine', 'M', '--memory-dir', os.path.join(self.tmp, 'no-memory'),
+                                          '--share-cipher', 'cryptography')
+        self.assertEqual((code, out['done']), (0, True))
+        gen = os.path.join(share, 'M', 'gen-0001')
+        self.assertEqual(sorted(os.listdir(gen)), ['batch-00000001.aesgcm', 'generation.json'])
+        path = crypto.settings_path(self.db)  # the job knows the folder from the file, and the cipher: `encrypt` wrote it beside the key
+        with open(path, encoding='utf-8') as f:
+            s = json.load(f)
+        self.assertEqual(s['shareCipher'], 'cryptography')
+        s['syncDir'] = share
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(s, f)
+        self.write('P/S2.jsonl', [owner_line('второй вопрос'), claude_line('второй ответ')])
+        out = self.maintain()  # no flag
+        self.assertEqual((out['errors'], out['sync']['errors']), ([], 0))
+        self.assertEqual(sorted(os.listdir(os.path.join(share, 'M'))), ['gen-0001'])  # the same generation: no new one, no re-send
+        self.assertEqual(sorted(os.listdir(gen)), ['batch-00000001.aesgcm', 'batch-00000002.aesgcm', 'generation.json'])
+
     def test_encrypt_busy(self):
         os.makedirs(os.path.dirname(self.db))
         self.addCleanup(gc.collect)  # the lock that did not open is released by collecting it; the temp folder cleanup needs the file

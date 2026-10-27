@@ -215,8 +215,9 @@ def _encrypt(db, sync_dir, cipher, machine, ui, key, notes, **kw):
 # ---- the commands
 
 def on(db, sync_dir, cipher, machine, ui, model=MODEL, memory_dir=None, project_cwd=None, seconds=600):
-    """Encryption on: a key (shown once as a recovery code), the index files encrypted, the sync folder switched to `cipher`. With the key
-    in the settings already the code is not shown again. `seconds`: how long to push to the sync folder."""
+    """Encryption on: a key (shown once as a recovery code), the index files encrypted, the sync folder switched to `cipher`, which goes into
+    the settings file beside the key (the background job reads it there) on every run. With the key in the settings already the code is not
+    shown again. `seconds`: how long to push to the sync folder."""
     _can(cipher)
     settings, key = _key(db)
     machine = machine or sync.machine_name()
@@ -228,7 +229,7 @@ def on(db, sync_dir, cipher, machine, ui, model=MODEL, memory_dir=None, project_
         ui.show_code(crypto.make_code(key))
         if not ui.confirm(t('dlg_code_saved')):
             return _result('on', [t('code_not_saved')])
-        crypto.save_key(settings, key)
+    crypto.save_key(settings, key, cipher)  # a new key and the cipher in one write; a key that is there is written again (same key, new blob)
     notes = []
     _encrypt(db, sync_dir, cipher, machine, ui, key, notes, model=model, memory_dir=memory_dir, project_cwd=project_cwd, max_seconds=seconds)
     return _result('on', notes)
@@ -258,7 +259,7 @@ def join(db, sync_dir, cipher, machine, ui, model=MODEL, memory_dir=None, projec
         crypto.open_db(db, key).close()
     elif not fingerprints:
         raise ValueError(t('code_unverifiable'))
-    crypto.save_key(settings, key)
+    crypto.save_key(settings, key, cipher)
     notes = []
     _encrypt(db, sync_dir, cipher, machine or sync.machine_name(), ui, key, notes, model=model, memory_dir=memory_dir,
              project_cwd=project_cwd, max_seconds=seconds)

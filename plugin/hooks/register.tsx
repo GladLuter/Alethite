@@ -275,7 +275,7 @@ export const register: Register = (on, options) => {
   const apply = (o: Record<string, unknown>) => {
     setLanguage(o.language as string)
     syncDir = (o.syncDir as string).trim().replace(/^"(.*)"$/, '$1') // Explorer's "Copy as path" puts quotes around it
-    shareCipher = o.shareCipher as string // sqlcipher or cryptography; anything else is refused by cg.py, not turned into the other
+    shareCipher = (o.shareCipher as string | undefined) ?? 'sqlcipher' // sqlcipher or cryptography; any other word is refused by cg.py, not turned into the other
     minTokens = o.bandMinTokens as number
     idleMinutes = o.bandIdleMinutes as number
     showLimits = o.showLimits as boolean
@@ -488,7 +488,7 @@ export const register: Register = (on, options) => {
       // cut at the time limit: not "Python did not start" (what runCg says of any failure of the process), but what to do
       const cut = !isState && isTimeout(message(err)) ? T.encryptTimeout(args[1]!) : undefined
       await fail($, 'cg-encrypt', cut ?? err)
-      return { text: cut ?? T.cgEncryptFailed }
+      return { text: cut === undefined ? T.cgEncryptFailed : `cg-encrypt ${args[1]}: ${cut}` }
     }
   })
 
