@@ -91,6 +91,26 @@ EN = {
     'seal_broken': 'a sealed file does not open: it is damaged, it was moved from its place, or it was written under another key',
     'key_wrong': 'this key does not open the encrypted index: enter the recovery code of the right key with /cg-encrypt join',
     'key_missing': 'the index is encrypted and this computer has no key for it: enter the recovery code with /cg-encrypt join',
+
+    # encrypt.py: the commands that turn encryption on and off, and the windows they ask in
+    'encrypt_unsupported': 'encryption of the index and the sync folder works on Windows only for now',
+    'encrypt_use_join': '{machine} already shares encrypted under a key this computer does not have: do not start another one, enter its recovery code with /cg-encrypt join',
+    'encrypt_busy': 'the index files are in use by another program or another run of the mod; nothing was lost, try again in a minute',
+    'encrypt_copy_differs': 'the copy of {path} does not match the original; nothing was replaced, try again',
+    'code_other_key': 'this code is of another key than the one the sync folder is encrypted with: check that it is the code that was shown when encryption was turned on',
+    'code_unverifiable': 'this code cannot be checked: this computer has no encrypted index and the sync folder holds nothing encrypted (is it set and reachable?). To start encryption, run /cg-encrypt on on one computer first',
+    'join_other_key_here': 'this computer already has another key and join would replace it: turn encryption off first with /cg-encrypt off, then join',
+    'dlg_title': 'Claude-CacheGuard: encryption',
+    'dlg_code': 'This is the recovery code of the key that encrypts your index and the sync folder:\n\n{code}\n\nSave it in your password manager now. It is shown only once. Without it nothing can be read if this computer or its Windows account is lost, and it is needed to add another computer. Ctrl+C copies the text of this window.',
+    'dlg_code_saved': 'Is the recovery code saved? Encryption starts only after you answer Yes.',
+    'dlg_ask_code': 'Enter the recovery code. The characters you type are hidden.',
+    'dlg_delete_plain': 'The encrypted copy of the index is made and checked. Delete the unencrypted copy now?\n\n{path}',
+    'dlg_delete_old_share': 'The sync folder still holds {n} old items of this computer, from before the change. The other computers read the new ones, so these are not needed. Delete them now?',
+    'code_not_saved': 'the recovery code was not confirmed as saved, so encryption was not started and nothing was changed; run encrypt on again when you can save the code',
+    'note_plain_kept': 'the unencrypted copy is still there: {path}; repeat the command to delete it',
+    'note_share_pending': 'the sync folder is not switched over completely yet (it was not reachable, or not everything is out); the old data there stays until then. Repeat the command',
+    'note_old_share_kept': 'the old data of this computer stays in the sync folder; repeat the command to delete it',
+    'note_index_plain': 'the key is set but the index is not encrypted yet: repeat encrypt on',
 }
 
 RU = {
@@ -177,6 +197,25 @@ RU = {
     'seal_broken': 'запечатанный файл не открывается: он повреждён, перенесён со своего места или записан под другим ключом',
     'key_wrong': 'этот ключ не открывает зашифрованный индекс: введите код восстановления нужного ключа командой /cg-encrypt join',
     'key_missing': 'индекс зашифрован, а ключа на этом компьютере нет: введите код восстановления командой /cg-encrypt join',
+
+    'encrypt_unsupported': 'шифрование индекса и папки синхронизации пока работает только в Windows',
+    'encrypt_use_join': '{machine} уже выкладывает зашифрованное под ключом, которого на этом компьютере нет: не начинайте другой, введите его код восстановления командой /cg-encrypt join',
+    'encrypt_busy': 'файлы индекса заняты другой программой или другим запуском мода; ничего не потеряно, повторите через минуту',
+    'encrypt_copy_differs': 'копия {path} не совпала с оригиналом; ничего не заменено, повторите',
+    'code_other_key': 'этот код от другого ключа, чем тот, которым зашифрована папка синхронизации: проверьте, что это код, показанный при включении шифрования',
+    'code_unverifiable': 'этот код не с чем сверить: на этом компьютере нет зашифрованного индекса, а в папке синхронизации нет ничего зашифрованного (она задана и доступна?). Чтобы начать шифрование, сначала выполните /cg-encrypt on на одном компьютере',
+    'join_other_key_here': 'на этом компьютере уже есть другой ключ, а join его заменил бы: сначала выключите шифрование командой /cg-encrypt off, потом присоединяйтесь',
+    'dlg_title': 'Claude-CacheGuard: шифрование',
+    'dlg_code': 'Это код восстановления ключа, которым зашифрованы ваш индекс и папка синхронизации:\n\n{code}\n\nСохраните его в менеджере паролей прямо сейчас. Он показывается один раз. Без него ничего не прочитать, если пропадёт этот компьютер или его учётная запись Windows, и он нужен, чтобы добавить другой компьютер. Ctrl+C копирует текст этого окна.',
+    'dlg_code_saved': 'Код восстановления сохранён? Шифрование начнётся только после ответа «Да».',
+    'dlg_ask_code': 'Введите код восстановления. Вводимые символы скрыты.',
+    'dlg_delete_plain': 'Зашифрованная копия индекса сделана и проверена. Удалить незашифрованную копию сейчас?\n\n{path}',
+    'dlg_delete_old_share': 'В папке синхронизации остались старые элементы этого компьютера, от времени до изменения: {n}. Другие компьютеры читают новые, так что эти не нужны. Удалить их сейчас?',
+    'code_not_saved': 'сохранение кода восстановления не подтверждено, поэтому шифрование не начато и ничего не изменено; выполните encrypt on снова, когда сможете сохранить код',
+    'note_plain_kept': 'незашифрованная копия всё ещё на месте: {path}; повторите команду, чтобы её удалить',
+    'note_share_pending': 'папка синхронизации переключена не полностью (она была недоступна или выложено не всё); старые данные в ней остаются до тех пор. Повторите команду',
+    'note_old_share_kept': 'старые данные этого компьютера остаются в папке синхронизации; повторите команду, чтобы их удалить',
+    'note_index_plain': 'ключ задан, а индекс ещё не зашифрован: повторите encrypt on',
 }
 
 UK = {
@@ -263,6 +302,25 @@ UK = {
     'seal_broken': 'запечатаний файл не відкривається: він пошкоджений, перенесений зі свого місця або записаний під іншим ключем',
     'key_wrong': 'цей ключ не відкриває зашифрований індекс: введіть код відновлення потрібного ключа командою /cg-encrypt join',
     'key_missing': "індекс зашифрований, а ключа на цьому комп'ютері немає: введіть код відновлення командою /cg-encrypt join",
+
+    'encrypt_unsupported': 'шифрування індексу й теки синхронізації поки працює лише у Windows',
+    'encrypt_use_join': "{machine} уже викладає зашифроване під ключем, якого на цьому комп'ютері немає: не починайте інший, введіть його код відновлення командою /cg-encrypt join",
+    'encrypt_busy': 'файли індексу зайняті іншою програмою або іншим запуском мода; нічого не втрачено, повторіть за хвилину',
+    'encrypt_copy_differs': 'копія {path} не збіглася з оригіналом; нічого не замінено, повторіть',
+    'code_other_key': 'цей код від іншого ключа, ніж той, яким зашифрована тека синхронізації: перевірте, що це код, показаний під час вмикання шифрування',
+    'code_unverifiable': "цей код нема з чим звірити: на цьому комп'ютері немає зашифрованого індексу, а в теці синхронізації немає нічого зашифрованого (її задано й вона доступна?). Щоб почати шифрування, спершу виконайте /cg-encrypt on на одному комп'ютері",
+    'join_other_key_here': "на цьому комп'ютері вже є інший ключ, а join його замінив би: спершу вимкніть шифрування командою /cg-encrypt off, потім приєднуйтесь",
+    'dlg_title': 'Claude-CacheGuard: шифрування',
+    'dlg_code': "Це код відновлення ключа, яким зашифровано ваш індекс і теку синхронізації:\n\n{code}\n\nЗбережіть його в менеджері паролів просто зараз. Він показується один раз. Без нього нічого не прочитати, якщо зникне цей комп'ютер або його обліковий запис Windows, і він потрібен, щоб додати інший комп'ютер. Ctrl+C копіює текст цього вікна.",
+    'dlg_code_saved': 'Код відновлення збережено? Шифрування почнеться лише після відповіді «Так».',
+    'dlg_ask_code': 'Введіть код відновлення. Символи, які ви вводите, приховані.',
+    'dlg_delete_plain': 'Зашифровану копію індексу зроблено й перевірено. Видалити незашифровану копію зараз?\n\n{path}',
+    'dlg_delete_old_share': "У теці синхронізації залишилися старі елементи цього комп'ютера, від часу до зміни: {n}. Інші комп'ютери читають нові, тож ці не потрібні. Видалити їх зараз?",
+    'code_not_saved': 'збереження коду відновлення не підтверджено, тому шифрування не почато й нічого не змінено; виконайте encrypt on знову, коли зможете зберегти код',
+    'note_plain_kept': 'незашифрована копія все ще на місці: {path}; повторіть команду, щоб її видалити',
+    'note_share_pending': 'тека синхронізації переключена не повністю (вона була недоступна або викладено не все); старі дані в ній лишаються до того часу. Повторіть команду',
+    'note_old_share_kept': "старі дані цього комп'ютера лишаються в теці синхронізації; повторіть команду, щоб їх видалити",
+    'note_index_plain': 'ключ задано, а індекс ще не зашифрований: повторіть encrypt on',
 }
 
 TABLES = {'en': EN, 'ru': RU, 'uk': UK}
