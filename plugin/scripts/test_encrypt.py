@@ -139,14 +139,19 @@ class EncryptTest(unittest.TestCase):
         self.assertFalse(crypto.is_encrypted(a.db))
         self.assertEqual((self.counts(a.conn), os.listdir(self.share)), (before, []))
 
-    def test_on_backup(self):
-        a = self.a
-        backup = os.path.join(os.path.dirname(a.db), 'index.before-stage2.db')
-        old = sqlite3.connect(backup)  # an index of before stage 2 has no keys and no vecs
+    def old_backup(self, c):
+        """An index of before stage 2 beside the index of `c`: no keys and no vecs in it."""
+        backup = os.path.join(os.path.dirname(c.db), 'index.before-stage2.db')
+        old = sqlite3.connect(backup)
         old.execute('CREATE VIRTUAL TABLE chunks USING fts5(text, conv UNINDEXED, pos UNINDEXED, ts UNINDEXED, kind UNINDEXED)')
         old.execute("INSERT INTO chunks VALUES('старый ёж', 'c', 1, 't', 'owner')")
         old.commit()
         old.close()
+        return backup
+
+    def test_on_backup(self):
+        a = self.a
+        backup = self.old_backup(a)
         ui = FakeUI()
         self.assertTrue(self.on(a, ui)['done'])
         self.assertTrue(crypto.is_encrypted(a.db) and crypto.is_encrypted(backup))
@@ -236,6 +241,7 @@ class EncryptTest(unittest.TestCase):
         ui = FakeUI()
         self.assertTrue(self.on(a, ui)['done'])
         self.assertEqual((ui.shown, crypto.is_encrypted(a.db), os.path.exists(a.db + '.plain')), ([], True, False))
+        self.assertEqual(ui.asked, [t('dlg_delete_plain', path=a.db + '.plain')])  # the link of the failed run was no question
         self.assertEqual(self.counts(a.conn), before)
 
     def test_on_swap_busy(self):
@@ -279,6 +285,83 @@ class EncryptTest(unittest.TestCase):
         self.assertEqual((crypto.is_encrypted(a.db), self.counts(a.conn)), (False, before))
         self.assertEqual([os.path.exists(a.db + s) for s in ('.cg-new', '.plain')], [False, False])  # no copy, and nothing linked yet
 
+    def test_on_asks_about_a_plain_copy_that_is_another_file(self):
+        a = self.a
+        plain = a.db + '.plain'
+        a.close()
+        shutil.copyfile(a.db, plain)  # an older copy, not the link of a replace that failed
+        with open(plain, 'rb') as f:
+            stale = f.read()
+        ui = FakeUI([True, False])  # the code is saved; the older copy stays
+        res = self.on(a, ui)
+        self.assertEqual((res['done'], res['notes']), (False, [t('note_plain_kept', path=plain)]))
+        self.assertEqual((ui.asked[1:], crypto.is_encrypted(a.db)), ([t('dlg_delete_plain', path=plain)], False))  # asked before, not converted
+        with open(plain, 'rb') as f:
+            self.assertEqual(f.read(), stale)
+        again = FakeUI()
+        self.assertTrue(self.on(a, again)['done'])
+        self.assertEqual(again.asked, [t('dlg_delete_plain', path=plain)] * 2)  # the older copy, then the copy of this run
+        self.assertEqual((os.path.exists(plain), crypto.is_encrypted(a.db)), (False, True))
+
+    def test_leftover_copies_of_a_killed_run_go_in_either_direction(self):
+        a = self.a
+        left = [a.db + '.cg-new', a.db + '.cg-new-journal']
+
+        def leave():
+            for p in left:
+                with open(p, 'wb') as f:
+                    f.write(b'plain text of the index')
+
+        leave()
+        self.assertTrue(self.on(a)['done'])
+        self.assertEqual([os.path.exists(p) for p in left], [False, False])
+        leave()  # the index is encrypted already: nothing to convert, the leftover still goes
+        self.assertTrue(self.on(a)['done'])
+        self.assertEqual([os.path.exists(p) for p in left], [False, False])
+        self.assertTrue(self.cmd(encrypt.off, a, FakeUI())['done'])
+        leave()  # and the same when it is open already
+        self.assertTrue(self.cmd(encrypt.off, a, FakeUI())['done'])
+        self.assertEqual([os.path.exists(p) for p in left], [False, False])
+
+    def test_old_share_dialog_counts_generations(self):
+        a = self.a
+        self.assertEqual(a.sync()['errors'], [])
+        a.say('conv-a2', 'третье сообщение', 'ответ на третье')
+        a.index()
+        self.assertEqual(a.sync()['errors'], [])  # two batches of generation 0 lie in the folder itself
+        res = self.on(a, FakeUI([True, True, False]))  # the code, the open copy, and the old data of the folder stays
+        self.assertEqual(res['notes'], [t('note_old_share_kept')])
+        ui = FakeUI()
+        self.assertTrue(self.cmd(encrypt.off, a, ui)['done'])
+        self.assertEqual(ui.asked, [t('dlg_delete_old_share', n=2)])  # generation 0 with its two batches, and gen-0001: three paths
+        self.assertEqual(sorted(os.listdir(self.own(a))), ['gen-0002'])
+
+    def test_flag_stays_when_the_cleanup_fails_midway(self):
+        a = self.a
+        self.assertEqual(a.sync()['errors'], [])
+        with mock.patch.object(encrypt, '_delete', side_effect=OSError('boom')), self.assertRaises(OSError):
+            self.on(a)
+        self.assertEqual(self.flag(a), 'old')
+        self.assertTrue(os.path.exists(os.path.join(self.own(a), 'batch-00000001.jsonl.gz')))
+        self.assertTrue(self.on(a)['done'])
+        self.assertEqual((self.flag(a), sorted(os.listdir(self.own(a)))), (None, ['gen-0001']))
+
+    def test_flag_is_set_before_the_sync(self):
+        a = self.a
+        self.assertTrue(self.on(a)['done'])
+        with mock.patch.object(cgsync, 'generation', side_effect=OSError('hiccup')), self.assertRaises(OSError):
+            self.cmd(encrypt.off, a, FakeUI())  # the folder cannot be looked at after the sync
+        self.assertEqual(self.flag(a), 'pending')
+        self.assertTrue(self.cmd(encrypt.off, a, FakeUI())['done'])
+        self.assertEqual((self.flag(a), sorted(os.listdir(self.own(a)))), (None, ['gen-0002']))
+
+    def test_delete_needs_nothing_newer_than_python_3_8(self):  # the project documents 3.8
+        d = os.path.join(self.root, 'folder')
+        os.makedirs(os.path.join(d, 'sub'))
+        with mock.patch.object(os.path, 'isjunction', create=True, side_effect=AttributeError):
+            encrypt._delete(d)
+        self.assertFalse(os.path.exists(d))
+
     def test_on_old_share_is_cleaned_without_following_links(self):
         a = self.a
         self.assertEqual(a.sync()['errors'], [])
@@ -307,6 +390,10 @@ class EncryptTest(unittest.TestCase):
         self.assertEqual(b.rows(), 4)  # B took A's records in
         self.assertEqual(a.sync(key=key)['errors'], [])
         self.assertEqual((a.rows(), a.texts()), (4, b.texts()))  # and A reads B's
+        with self.assertRaises(ValueError) as cm:  # a stale code on a computer that has the right key: the code is wrong, not the key here
+            self.join(b, crypto.make_code(secrets.token_bytes(32)))
+        self.assertEqual(str(cm.exception), t('code_other_key'))
+        self.assertEqual(self.key(b), key)
 
     def test_join_refuses_what_it_cannot_check(self):
         a, b = self.a, self.b
@@ -328,11 +415,13 @@ class EncryptTest(unittest.TestCase):
         res = self.cmd(encrypt.join, self.b, ui, 'sqlcipher')
         self.assertEqual((res, ui.entries, ui.asked, self.key(self.b)), ({'action': 'join', 'done': False, 'notes': []}, 1, [], None))
 
-    def test_join_refuses_to_replace_another_key(self):
-        a = self.a
+    def test_join_refuses_to_replace_another_key(self):  # a code that fits the folder, on a computer that has a key of its own
+        a, b = self.a, self.b
         self.assertTrue(self.on(a)['done'])
+        other = secrets.token_bytes(32)
+        cgsync.start_generation(b.conn, self.own(b), 'MTLAPTOP', 'sqlcipher', other)
         with self.assertRaises(ValueError) as cm:
-            self.join(a, crypto.make_code(secrets.token_bytes(32)))
+            self.join(a, crypto.make_code(other))
         self.assertEqual(str(cm.exception), t('join_other_key_here'))
         self.assertEqual(crypto.fingerprint(self.key(a)), cgsync.generation(self.own(a)).fingerprint)
 
@@ -352,11 +441,13 @@ class EncryptTest(unittest.TestCase):
         self.assertTrue(self.on(a)['done'])
         key, settings = self.key(a), crypto.settings_path(a.db)
         code = crypto.make_code(key)
-        for damage in (lambda: crypto.save_key(settings, None), lambda: self.write_settings(settings, {'encryptionKey': 'dpapi:AAAA'})):
+        for damage, text in ((lambda: crypto.save_key(settings, None), t('key_missing')),
+                             (lambda: self.write_settings(settings, {'encryptionKey': 'dpapi:AAAA'}), t('key_unreadable'))):
             damage()
             a.close()
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ValueError) as cm:
                 memdb.connect(a.db)
+            self.assertEqual(str(cm.exception), text)
             self.assertTrue(self.join(a, code)['done'])
             self.assertEqual(self.key(a), key)
             a.open()
@@ -397,6 +488,27 @@ class EncryptTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.join(self.own(a), 'gen-0001')))
         self.assertTrue(self.cmd(encrypt.off, a, FakeUI())['done'])  # the repeat finds nothing to switch and asks again
         self.assertEqual((sorted(os.listdir(self.own(a))), self.flag(a)), (['gen-0002'], None))
+
+    def test_off_refuses_when_the_key_is_gone(self):
+        a = self.a
+        self.assertTrue(self.on(a)['done'])
+        crypto.save_key(crypto.settings_path(a.db), None)
+        ui = FakeUI()
+        with self.assertRaises(ValueError) as cm:
+            self.cmd(encrypt.off, a, ui)
+        self.assertEqual(str(cm.exception), t('key_missing'))
+        self.assertEqual((ui.asked, crypto.is_encrypted(a.db), cgsync.generation(self.own(a)).cipher), ([], True, 'sqlcipher'))
+
+    def test_off_converts_the_backup_too(self):
+        a = self.a
+        backup = self.old_backup(a)
+        self.assertTrue(self.on(a)['done'])
+        self.assertTrue(crypto.is_encrypted(backup))
+        self.assertTrue(self.cmd(encrypt.off, a, FakeUI())['done'])
+        self.assertFalse(crypto.is_encrypted(backup))
+        conn = sqlite3.connect(backup)
+        self.assertEqual(conn.execute('SELECT text FROM chunks').fetchall(), [('старый ёж',)])
+        conn.close()
 
     # status and refusals
     def test_status(self):

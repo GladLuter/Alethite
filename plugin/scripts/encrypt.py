@@ -6,6 +6,7 @@ import contextlib
 import os
 import secrets
 import shutil
+import stat
 import time
 
 import crypto
@@ -96,9 +97,8 @@ def _replace(new, path):
 def _convert(path, was, now, keep=None):
     """The database at `path` under another key (`was` to `now`, None is open): a copy is made beside it under the write lock of the
     original, counted against it from a fresh open, and only then put in its place. `keep` is a hard link to the original made just
-    before, so the old file outlives the replacing."""
+    before, so the old file outlives the replacing. A `.cg-new` of a run that died is cleared by the caller."""
     new = path + '.cg-new'
-    _remove(new)  # of an attempt that died
     try:
         src = _open(path, was)
         try:
@@ -124,59 +124,83 @@ def _convert(path, was, now, keep=None):
         raise
 
 
+def _drop_plain(plain, ui, notes):
+    """The unencrypted copy deleted if the owner says so, else a note; whether it is gone."""
+    if ui.confirm(t('dlg_delete_plain', path=plain)):
+        os.remove(plain)
+        return True
+    notes.append(t('note_plain_kept', path=plain))
+    return False
+
+
 def _encrypt_file(path, key, ui, notes):
     """One index file encrypted, then its open copy deleted if the owner says so. A file that is encrypted already is not touched, only the
-    question about a copy left from an earlier run is asked again."""
+    question about a copy left from an earlier run is asked again. A `.plain` beside an open file that is not its link is somebody's data:
+    it is asked about first, and with "No" the file is left as it is this time."""
+    _remove(path + '.cg-new')  # a whole copy of a run that died, in whichever form: never the only one, os.replace is atomic
     if not _size(path):
         return
     plain = path + '.plain'
     if not crypto.is_encrypted(path):
-        _remove(plain)  # a link left by a run that died before the replacing
+        if os.path.exists(plain):
+            if os.path.samefile(plain, path):
+                os.remove(plain)  # the link of a replace that failed: the same file, no data goes with it
+            elif not _drop_plain(plain, ui, notes):
+                return
         _convert(path, None, key, keep=plain)
     if os.path.exists(plain):
-        if ui.confirm(t('dlg_delete_plain', path=plain)):
-            os.remove(plain)
-        else:
-            notes.append(t('note_plain_kept', path=plain))
+        _drop_plain(plain, ui, notes)
 
 
 # ---- the sync folder
 
 def _delete(path):
-    """A file, a folder or a link out of the share: a link goes by itself, never what it points to (the share is not to be trusted)."""
-    if os.path.isdir(path) and not (os.path.islink(path) or os.path.isjunction(path)):
+    """A file, a folder or a link out of the share: a link goes by itself, never what it points to (the share is not to be trusted). A
+    junction is told by its reparse point bit, a symlink by lstat: nothing here needs Python above 3.8 (Windows only, like the command)."""
+    st = os.lstat(path)
+    if stat.S_ISDIR(st.st_mode) and not st.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
         shutil.rmtree(path)
     else:
         os.remove(path)
 
 
+def _flag(conn, value):
+    """meta.share_unfinished for /cg-health: 'pending' (the new generation is not all out), 'old' (the old data is still in the folder)."""
+    if value:
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('share_unfinished', ?)", (value,))
+    else:
+        conn.execute("DELETE FROM meta WHERE key = 'share_unfinished'")
+
+
+def _generations(old):
+    """How many generations the paths of `old_generations` make: the entries of generation 0 lie in the folder itself and count as one."""
+    names = [os.path.basename(p) for p in old]
+    return sum(n.startswith('gen-') for n in names) + any(not n.startswith('gen-') for n in names)
+
+
 def _share(conn, sync_dir, machine, key, cipher, ui, notes, **kw):
     """Moves the sync folder to the wanted form (`key` None: open): our new generation out, then the old ones gone once the owner agrees.
-    What is left undone is meta.share_unfinished for /cg-health: 'pending' (the new generation is not all out), 'old' (the old one is still
-    there). `ready` is read from the folder after the sync, not taken from the sync having returned: it may stop at the time cap, or an
-    own batch that cannot be read may keep the new generation from starting."""
+    The flag is set before each step and cleared only when the last one is done, so a failure or a kill in between leaves it for /cg-health.
+    Whether the new generation is out is read from the folder after the sync, not taken from the sync having returned: it may stop at the
+    time cap, or an own batch that cannot be read may keep the new generation from starting."""
+    _flag(conn, 'pending')
     report = sync.sync(conn, sync_dir, machine, key=key, cipher=cipher, **kw)
     own = os.path.join(sync_dir, machine)
     gen = sync.generation(own)
     wanted = (cipher, crypto.fingerprint(key)) if key else (None, None)
-    flag = None
-    if (gen.cipher, gen.fingerprint) == wanted and not sync.pending(conn) and not any(e['where'] == 'sync' for e in report['errors']):
-        old = sync.old_generations(own)
-        if old:
-            if ui.confirm(t('dlg_delete_old_share', n=len(old))):
-                for path in old:
-                    _delete(path)
-            else:
-                flag = 'old'
-                notes.append(t('note_old_share_kept'))
-    else:
-        flag = 'pending'
+    if (gen.cipher, gen.fingerprint) != wanted or sync.pending(conn) or any(e['where'] == 'sync' for e in report['errors']):
         notes.append(t('note_share_pending'))
         notes += [e['error'] for e in report['errors'] if e['where'] == 'sync' or e.get('machine') == machine]
-    if flag:
-        conn.execute("INSERT OR REPLACE INTO meta VALUES('share_unfinished', ?)", (flag,))
-    else:
-        conn.execute("DELETE FROM meta WHERE key = 'share_unfinished'")
+        return
+    old = sync.old_generations(own)
+    if old:
+        _flag(conn, 'old')
+        if not ui.confirm(t('dlg_delete_old_share', n=_generations(old))):
+            notes.append(t('note_old_share_kept'))
+            return
+        for path in old:
+            _delete(path)
+    _flag(conn, None)
 
 
 def _encrypt(db, sync_dir, cipher, machine, ui, key, notes, **kw):
@@ -219,6 +243,9 @@ def join(db, sync_dir, cipher, machine, ui, model=MODEL, memory_dir=None, projec
         return {'action': 'join', 'done': False, 'notes': []}
     key = crypto.parse_code(code)
     settings = crypto.settings_path(db)
+    fingerprints = {g.fingerprint for g in _shared(sync_dir).values() if g.cipher}
+    if fingerprints and crypto.fingerprint(key) not in fingerprints:  # first: a stale code is wrong, whatever key this computer has
+        raise ValueError(t('code_other_key'))
     try:
         have = crypto.load_key(settings)
     except crypto.SettingsBroken:
@@ -227,9 +254,6 @@ def join(db, sync_dir, cipher, machine, ui, model=MODEL, memory_dir=None, projec
         have = None
     if have and crypto.fingerprint(have) != crypto.fingerprint(key):
         raise ValueError(t('join_other_key_here'))
-    fingerprints = {g.fingerprint for g in _shared(sync_dir).values() if g.cipher}
-    if fingerprints and crypto.fingerprint(key) not in fingerprints:
-        raise ValueError(t('code_other_key'))
     if crypto.is_encrypted(db):
         crypto.open_db(db, key).close()
     elif not fingerprints:
@@ -246,6 +270,7 @@ def off(db, sync_dir, machine, ui, model=MODEL, memory_dir=None, project_cwd=Non
     folder in the sync folder open again. The flag in the index that lets the sync leave an encrypted folder is set before the key goes."""
     settings, key = _key(db)
     for path in _files(db):
+        _remove(path + '.cg-new')  # of a run that died: a plain copy of the encrypted index
         if crypto.is_encrypted(path):
             _convert(path, key, None)
     machine = machine or sync.machine_name()
