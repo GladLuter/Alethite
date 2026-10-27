@@ -675,6 +675,30 @@ class CgTest(unittest.TestCase):
         self.assertNotIn('index_notice', out)
 
     @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
+    def test_a_merge_done_in_the_same_run_is_no_pending_merge_for_the_move(self):  # the folder is back: the common case of the first move after it
+        far, home = self.temporary_index()
+        other = os.path.join(self.tmp, 'other')
+        self.move_ui()
+        code, out, _ = self.main_home('index-dir', '--path=' + other)
+        self.assertEqual((code, out.get('error')), (0, None))
+        self.assertEqual((out['done'], out['dir'], out['notes']), (True, other, []))
+        self.assertEqual(out['index_notice'], t('index_merged', dir=far, home=home, n=2))  # the merge is told, not lost
+        self.assertEqual([os.path.exists(os.path.join(home, n)) for n in ('index.db', indexdir.MARK)], [False, False])
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, out['db'], out['rows']), (0, os.path.join(other, 'index.db'), 2))
+
+    @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
+    def test_a_merge_that_did_not_happen_still_stops_the_move(self):
+        far, home = self.temporary_index()
+        held = memdb.lock(os.path.join(home, 'index.db'), 'maintain', 0)  # the background job runs on the temporary index: no merge this run
+        self.addCleanup(held.close)
+        self.move_ui()
+        other = os.path.join(self.tmp, 'other')
+        code, out, _ = self.main_home('index-dir', '--path=' + other)
+        self.assertEqual((code, out), (1, {'error': 'ValueError: ' + t('index_dir_merge_pending', dir=far, home=home)}))
+        self.assertEqual((os.path.exists(os.path.join(home, 'index.db')), os.path.exists(other)), (True, False))
+
+    @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
     def test_the_locks_the_move_holds_are_given_back_before_the_old_copy_goes(self):
         home = self.home_dir()
         self.home_index(home)

@@ -487,6 +487,8 @@ def main(argv):
         pending = a.where and a.where.merge_from
         enc = pending and (crypto.is_encrypted(a.where.db) or crypto.is_encrypted(a.where.merge_from))
         merged = pending and indexdir.merge_back(a.where, crypto.load_key(crypto.settings_path(a.db)) if enc else None)
+        if pending and not os.path.exists(pending):  # merged and deleted just now: the command is not to see it as still to merge
+            a.where = a.where._replace(merge_from=None)
         out, code = a.fn(a), 0
         note = merged or indexdir.notice(a.where)
         if note and isinstance(out, dict):
