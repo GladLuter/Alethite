@@ -96,6 +96,21 @@ class EncryptTest(unittest.TestCase):
     def flag(self, c):
         return (c.conn.execute("SELECT value FROM meta WHERE key = 'share_unfinished'").fetchone() or (None,))[0]
 
+    def reinstall(self, c):
+        """Windows installed anew: the index and the key of `c` are gone, its own history in the sync folder is not."""
+        c.close()
+        os.remove(c.db)
+        crypto.save_key(crypto.settings_path(c.db), None)
+
+    def assert_own_history_left(self, c, res, code):
+        """`res` of an `off` that could not read the own encrypted generation: nothing was deleted, and the recovery code brings it all back."""
+        path = os.path.join(self.own(c), 'gen-0001')
+        self.assertEqual((res['done'], res['notes']), (False, [t('note_share_pending'), t('own_share_unread', machine=c.name, path=path)]))
+        self.assertEqual(sorted(os.listdir(self.own(c))), ['gen-0001'])
+        self.assertIn('batch-00000001.sqlcipher', os.listdir(path))
+        self.assertTrue(self.join(c, code)['done'])
+        self.assertEqual(c.rows(), 2)
+
     # on
     def test_on(self):
         a = self.a
@@ -194,6 +209,20 @@ class EncryptTest(unittest.TestCase):
         self.assertEqual((ui.shown, ui.asked), ([], []))
         self.assertTrue(crypto.is_encrypted(a.db))
 
+    def test_on_after_a_reinstall_is_no_second_key(self):  # the own history in the share is under the old key: its code joins, a new key would orphan it
+        a = self.a
+        ui = FakeUI()
+        self.assertTrue(self.on(a, ui)['done'])
+        code = ui.shown[0]
+        self.reinstall(a)
+        again = FakeUI()
+        with self.assertRaises(ValueError) as cm:
+            self.on(a, again)
+        self.assertEqual(str(cm.exception), t('encrypt_use_join', machine='AIJ-HP'))
+        self.assertEqual((again.shown, again.asked, self.key(a), sorted(os.listdir(self.own(a)))), ([], [], None, ['gen-0001']))
+        self.assertTrue(self.join(a, code)['done'])
+        self.assertEqual(a.rows(), 2)
+
     def test_on_share_unfinished(self):
         a = self.a
         self.assertEqual(a.sync()['errors'], [])
@@ -213,12 +242,23 @@ class EncryptTest(unittest.TestCase):
     def test_on_share_missing_is_pending_too(self):
         a = self.a
         nowhere = os.path.join(self.root, 'nowhere')
+        self.assertTrue(self.on(a)['done'])  # the key is here: a folder that is gone now only leaves the switch pending
         res = self.on(a, share=nowhere)
         self.assertFalse(res['done'])
         self.assertEqual(res['notes'][0], t('note_share_pending'))
         self.assertTrue(res['notes'][1].startswith('the sync folder is unavailable: ' + nowhere), res['notes'])
         self.assertTrue(crypto.is_encrypted(a.db))
         self.assertEqual(self.flag(a), 'pending')
+
+    def test_on_makes_no_key_while_the_sync_folder_cannot_be_seen(self):  # it may hold another computer's key: a second one would split the share
+        a = self.a
+        nowhere = os.path.join(self.root, 'nowhere')
+        ui = FakeUI()
+        with self.assertRaises(ValueError) as cm:
+            self.on(a, ui, share=nowhere)
+        self.assertEqual(str(cm.exception), t('encrypt_share_unreachable', dir=nowhere))
+        self.assertEqual((ui.shown, ui.asked, self.key(a), crypto.is_encrypted(a.db)), ([], [], None, False))
+        self.assertTrue(self.on(a)['done'])  # once the folder is back
 
     def test_on_share_blocked_by_an_own_batch_that_is_broken(self):
         a = self.a
@@ -272,6 +312,30 @@ class EncryptTest(unittest.TestCase):
         self.assertFalse(os.path.exists(a.db + '.cg-new'))
         self.assertIsNotNone(self.key(a))  # the key is kept: the next run goes on from here
         self.assertTrue(self.on(a)['done'])
+
+    def test_a_write_that_lands_after_the_export_stops_the_swap(self):  # a chat takes none of encrypt's locks: its forget must not be lost
+        a = self.a
+        real_link, writer = os.link, {}
+
+        def link(src, dst):  # right after the export a chat opens the plain index
+            real_link(src, dst)
+            w = sqlite3.connect(src, isolation_level=None)
+            w.execute('SELECT count(*) FROM forgotten').fetchone()
+            writer['conn'] = w
+
+        def sleep(seconds):  # the swap waits for the file; the chat commits its forget and lets go
+            w = writer.pop('conn', None)
+            if w:
+                w.execute("INSERT INTO forgotten VALUES('conv-x', 'owner', 'h', 1)")
+                w.close()
+
+        forgotten = lambda: a.conn.execute("SELECT count(*) FROM forgotten WHERE conv = 'conv-x'").fetchone()[0]
+        with mock.patch('os.link', link), mock.patch('time.sleep', sleep), self.assertRaises(ValueError) as cm:
+            self.on(a)
+        self.assertEqual(str(cm.exception), t('encrypt_busy'))
+        self.assertEqual((crypto.is_encrypted(a.db), os.path.exists(a.db + '.cg-new'), forgotten()), (False, False, 1))
+        self.assertTrue(self.on(a)['done'])  # the repeat exports again, with the forget
+        self.assertEqual((crypto.is_encrypted(a.db), forgotten()), (True, 1))
 
     def test_on_waits_for_a_file_that_is_in_use(self):
         a = self.a
@@ -513,6 +577,28 @@ class EncryptTest(unittest.TestCase):
             self.cmd(encrypt.off, a, ui)
         self.assertEqual(str(cm.exception), t('key_missing'))
         self.assertEqual((ui.asked, crypto.is_encrypted(a.db), cgsync.generation(self.own(a)).cipher), ([], True, 'sqlcipher'))
+
+    def test_off_after_a_reinstall_leaves_the_own_history_in_the_share(self):
+        a = self.a
+        ui = FakeUI()
+        self.assertTrue(self.on(a, ui)['done'])
+        self.reinstall(a)
+        again = FakeUI()
+        res = self.cmd(encrypt.off, a, again)
+        self.assertEqual(again.asked, [])  # no question about deleting the old data: it is not old data yet
+        self.assert_own_history_left(a, res, ui.shown[0])
+
+    def test_off_before_the_join_has_read_the_own_history_back_leaves_it(self):
+        a = self.a
+        ui = FakeUI()
+        self.assertTrue(self.on(a, ui)['done'])
+        self.reinstall(a)
+        self.assertTrue(self.join(a, ui.shown[0], seconds=0)['done'])  # no time to read: the new index holds nothing of its history yet
+        self.assertEqual(a.rows(), 0)
+        again = FakeUI()
+        res = self.cmd(encrypt.off, a, again)
+        self.assertEqual(again.asked, [])
+        self.assert_own_history_left(a, res, ui.shown[0])
 
     def test_off_converts_the_backup_too(self):
         a = self.a

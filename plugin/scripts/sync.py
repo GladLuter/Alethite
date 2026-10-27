@@ -139,8 +139,9 @@ def start_generation(conn, machine_dir, machine, cipher, key):
 def _own_generation(conn, own, machine, cipher, key, pull):
     """The generation of our folder we write into: the current one when it is of our (cipher, key), else a new one (`cipher` and `key` both
     None for an open one). With no key we do not leave an encrypted share by ourselves: only `encrypt off` does, by meta.share_plain.
-    A generation we leave and can read is taken in first with `pull(gen)`: a fresh index holds of our records only what it has read back,
-    and the new generation sends everything of ours again. None: that is not all read yet (a broken batch, the time cap); nothing starts."""
+    A generation we leave is first all in the index here (a fresh index holds of our records only what it has read back, and the new
+    generation sends everything of ours again): one we can read is taken in with `pull(gen)`. None: that is not all read yet (a broken
+    batch, the time cap); nothing starts. One we cannot read (no key, another key, no package) and have not all read is `own_share_unread`."""
     gen = generation(own)
     if (gen.cipher, gen.fingerprint) == (cipher, crypto.fingerprint(key) if key else None):
         row = conn.execute('SELECT gen FROM peers WHERE machine = ?', (machine,)).fetchone()
@@ -151,11 +152,14 @@ def _own_generation(conn, own, machine, cipher, key, pull):
         return gen
     if not key and gen.cipher and memdb.meta(conn, 'share_plain') != '1':
         raise ValueError(t('share_needs_join', machine=machine))
-    if not _refusal(gen, key, machine, False):  # our own open history is ours to read, key or none
+    unreadable = _refusal(gen, key, machine, False)
+    if not unreadable:  # our own open history is ours to read, key or none
         pull(gen)
-        last = conn.execute('SELECT last_batch FROM peers WHERE machine = ?', (machine,)).fetchone()
-        if (last or (0,))[0] < max(_batches(gen.path, crypto.EXT[gen.cipher]), default=0):
-            return None
+    row = conn.execute('SELECT gen, last_batch FROM peers WHERE machine = ?', (machine,)).fetchone()
+    if max(_batches(gen.path, crypto.EXT[gen.cipher]), default=0) > (row[1] if row and row[0] == gen.n else 0):
+        if unreadable:
+            raise ValueError(t('own_share_unread', machine=machine, path=gen.path))
+        return None
     return start_generation(conn, own, machine, cipher, key)
 
 

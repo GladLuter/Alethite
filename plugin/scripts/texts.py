@@ -95,6 +95,8 @@ EN = {
     # encrypt.py: the commands that turn encryption on and off, and the windows they ask in
     'encrypt_unsupported': 'encryption of the index and the sync folder works on Windows only for now',
     'encrypt_use_join': '{machine} already shares encrypted under a key this computer does not have: do not start another one, enter its recovery code with /cg-encrypt join',
+    'encrypt_share_unreachable': 'the sync folder {dir} cannot be reached. A new key is made only when this computer can see whether another one already has a key. Repeat when the folder is back',
+    'own_share_unread': 'the history of this computer ({machine}) in the sync folder is not all in the index here, and this computer cannot read what is missing. Enter its recovery code with /cg-encrypt join. If the code is lost, nobody can read that history, and the folder {path} can be deleted by hand. Nothing was synchronized',
     'share_cipher_bad': 'the setting shareCipher is "{value}", but the choices are "sqlcipher" and "cryptography": fix it in the settings file',
     'encrypt_busy': 'the index files are in use by another program or another run of the mod; nothing was lost, try again in a minute',
     'encrypt_copy_differs': 'the copy of {path} does not match the original; nothing was replaced, try again',
@@ -203,6 +205,8 @@ RU = {
 
     'encrypt_unsupported': 'шифрование индекса и папки синхронизации пока работает только в Windows',
     'encrypt_use_join': '{machine} уже выкладывает зашифрованное под ключом, которого на этом компьютере нет: не начинайте другой, введите его код восстановления командой /cg-encrypt join',
+    'encrypt_share_unreachable': 'папка синхронизации {dir} недоступна. Новый ключ создаётся только тогда, когда этот компьютер видит, есть ли уже ключ на другом. Повторите, когда папка снова будет доступна',
+    'own_share_unread': 'история этого компьютера ({machine}) в папке синхронизации есть в индексе здесь не вся, и прочитать недостающее этот компьютер не может. Введите её код восстановления командой /cg-encrypt join. Если код потерян, эту историю не прочитает никто, и папку {path} можно удалить вручную. Ничего не синхронизировалось',
     'share_cipher_bad': 'в настройке shareCipher стоит «{value}», а допустимы «sqlcipher» и «cryptography»: исправьте её в файле настроек',
     'encrypt_busy': 'файлы индекса заняты другой программой или другим запуском мода; ничего не потеряно, повторите через минуту',
     'encrypt_copy_differs': 'копия {path} не совпала с оригиналом; ничего не заменено, повторите',
@@ -311,6 +315,8 @@ UK = {
 
     'encrypt_unsupported': 'шифрування індексу й теки синхронізації поки працює лише у Windows',
     'encrypt_use_join': "{machine} уже викладає зашифроване під ключем, якого на цьому комп'ютері немає: не починайте інший, введіть його код відновлення командою /cg-encrypt join",
+    'encrypt_share_unreachable': "тека синхронізації {dir} недоступна. Новий ключ створюється лише тоді, коли цей комп'ютер бачить, чи є вже ключ на іншому. Повторіть, коли тека знову буде доступна",
+    'own_share_unread': "історія цього комп'ютера ({machine}) у теці синхронізації є в індексі тут не вся, і прочитати відсутнє цей комп'ютер не може. Введіть її код відновлення командою /cg-encrypt join. Якщо код втрачено, цю історію не прочитає ніхто, і теку {path} можна видалити вручну. Нічого не синхронізувалось",
     'share_cipher_bad': 'у налаштуванні shareCipher стоїть «{value}», а припустимі «sqlcipher» і «cryptography»: виправте його у файлі налаштувань',
     'encrypt_busy': 'файли індексу зайняті іншою програмою або іншим запуском мода; нічого не втрачено, повторіть за хвилину',
     'encrypt_copy_differs': 'копія {path} не збіглася з оригіналом; нічого не замінено, повторіть',

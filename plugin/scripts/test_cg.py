@@ -317,6 +317,27 @@ class CgTest(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(os.path.join(share, 'M', 'gen-0001'))), ['batch-00000001.sqlcipher', 'generation.json'])
 
     @unittest.skipUnless(os.name == 'nt', 'DPAPI is Windows only')
+    def test_status_shows_an_unfinished_share(self):  # the one reminder after a run that left the old data in the folder, or did not finish
+        self.write('P/S1.jsonl', [owner_line('вопрос про ёжика'), claude_line('ответ')])
+        self.run_cg('index')
+        share = self.share_dir()
+        on = ('--lang', 'ru', 'encrypt', 'on', '--sync-dir', share, '--machine', 'M', '--memory-dir', os.path.join(self.tmp, 'no-memory'))
+        notes = lambda: self.main_json('--lang', 'ru', 'status')[1]['encryption']['notes']
+        self.addCleanup(gc.collect)
+        with mock.patch('urllib.request.build_opener', side_effect=OSError):  # no Ollama to ask
+            self.main_json('--lang', 'ru', 'sync', '--sync-dir', share, '--machine', 'M')  # an open history in the folder, for `on` to leave
+            with mock.patch('dialogs.WindowsUI', lambda: FakeUI([True, True, False])):  # code saved, the open copy goes, the old data stays
+                self.assertEqual(self.main_json(*on)[1]['notes'], [t('note_old_share_kept')])
+            self.assertEqual(notes(), [t('note_old_share_kept')])
+            conn = memdb.connect(self.db)
+            conn.execute("INSERT OR REPLACE INTO meta VALUES('share_unfinished', 'pending')")  # what a run cut short leaves
+            conn.close()
+            self.assertEqual(notes(), [t('note_share_pending')])
+            with mock.patch('dialogs.WindowsUI', lambda: FakeUI()):  # the repeat deletes the old data
+                self.assertEqual(self.main_json(*on)[1]['done'], True)
+            self.assertEqual(notes(), [])
+
+    @unittest.skipUnless(os.name == 'nt', 'DPAPI is Windows only')
     def test_what_the_job_seals_with_after_encrypt_is_the_cipher_encrypt_was_given(self):
         self.write('P/S1.jsonl', [owner_line('вопрос про ёжика'), claude_line('ответ')])
         self.run_cg('index')

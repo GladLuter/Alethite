@@ -84,10 +84,20 @@ def _remove(path):
             os.remove(p)
 
 
-def _replace(new, path):
-    """Windows will not replace a file another process has open: wait up to 10 s for it, then say it is busy."""
+def _stamp(path):
+    """The start of a database file as it is: every commit rewrites page 1 (the change counter of an open file, fresh ciphertext of an encrypted one)."""
+    with open(path, 'rb') as f:
+        return f.read(4096)
+
+
+def _replace(new, path, stamp):
+    """Windows will not replace a file another process has open: wait up to 10 s for it, then say it is busy. A chat takes none of our locks,
+    so a commit may land in `path` after the copy was made (`stamp` is its start then): the copy lacks it, and the repeat copies again."""
     for _ in range(100):
         try:
+            if _stamp(path) != stamp:
+                raise ValueError(t('encrypt_busy'))
+            # shortcut: a commit between this compare and the replace (microseconds) still goes; only a lock held across the replace would stop it
             return os.replace(new, path)
         except PermissionError:
             time.sleep(0.1)
@@ -108,6 +118,7 @@ def _convert(path, was, now, keep=None):
             src.execute('BEGIN IMMEDIATE')
             src.execute("SELECT sqlcipher_export('target')")
             want = _counts(src)
+            stamp = _stamp(path)  # under the lock: what the copy holds is what this file was
             src.execute('COMMIT')
         finally:
             src.close()
@@ -120,7 +131,7 @@ def _convert(path, was, now, keep=None):
             raise ValueError(t('encrypt_copy_differs', path=path))
         if keep:
             os.link(path, keep)
-        _replace(new, path)
+        _replace(new, path, stamp)
     except BaseException:
         _remove(new)
         raise
@@ -223,10 +234,12 @@ def on(db, sync_dir, cipher, machine, ui, model=MODEL, memory_dir=None, project_
     _can(cipher)
     settings, key = _key(db)
     machine = machine or sync.machine_name()
-    for peer, gen in _shared(sync_dir).items():  # another computer is encrypted already: its key is ours to join, not a second one to make
-        if peer != machine and gen.cipher and (key is None or gen.fingerprint != crypto.fingerprint(key)):
+    for peer, gen in _shared(sync_dir).items():  # a computer is encrypted already, this one too after a reinstall: its key is ours to join, not a second one to make
+        if gen.cipher and (key is None or gen.fingerprint != crypto.fingerprint(key)):
             raise ValueError(t('encrypt_use_join', machine=peer))
     if key is None:
+        if sync_dir and not os.path.isdir(sync_dir):  # the check above saw nothing: another key may be in there
+            raise ValueError(t('encrypt_share_unreachable', dir=sync_dir))
         key = secrets.token_bytes(32)
         ui.show_code(crypto.make_code(key))
         if not ui.confirm(t('dlg_code_saved')):

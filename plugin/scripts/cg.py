@@ -52,6 +52,9 @@ def _status(a):
     out = memdb.status(conn)
     out['sync'] = sync.status(conn, a.machine)
     out['encryption'] = encrypt.status(a.db)
+    note = {'pending': 'note_share_pending', 'old': 'note_old_share_kept'}.get(memdb.meta(conn, 'share_unfinished'))  # set by `encrypt`, in the index
+    if note:
+        out['encryption']['notes'].append(texts.t(note))
     out['job'] = json.loads(memdb.meta(conn, 'job_last') or 'null')  # the background job's last run (stage 4), for /cg-health
     if a.cwd:  # the scope of «в этом проекте»: a key that matches no conversation makes the project search find nothing
         key = project_key(a.cwd)
