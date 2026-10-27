@@ -152,10 +152,11 @@ def _cipher(s, flag=None):
 
 def _key(a):
     """The key beside the index, None when there is none. A settings file that cannot be read shows none, as it does to memdb.connect: the
-    index it opened is plain then, and a sync refuses an encrypted share (share_needs_join) rather than write open data into it."""
+    index it opened is plain then, and a sync refuses an encrypted share (share_needs_join) rather than write open data into it. The same
+    for a file that cannot be opened (an editor holds it, no right to read it): `_settings` lives with that too."""
     try:
         return crypto.load_key(crypto.settings_path(a.db))
-    except crypto.SettingsBroken:
+    except (crypto.SettingsBroken, OSError):
         return None
 
 

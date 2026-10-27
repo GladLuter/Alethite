@@ -289,7 +289,7 @@ def status(db):
     notes = []
     try:
         key = 'ok' if crypto.load_key(crypto.settings_path(db)) else 'missing'
-    except ValueError as e:  # a key that cannot be opened, or a settings file that is broken; the text says which
+    except (ValueError, OSError) as e:  # a key that cannot be opened, a settings file that is broken or cannot be opened; the text says which
         key = 'unreadable'
         notes.append(str(e))
     state = 'none' if not _size(db) else 'encrypted' if crypto.is_encrypted(db) else 'plain'

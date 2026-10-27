@@ -254,13 +254,14 @@ class CgTest(unittest.TestCase):
     # stage 5: encryption
 
     def main_json(self, *args):
-        """cg.main in this process, where a window can be faked: (exit code, what it printed as JSON, the text itself)."""
-        out = io.TextIOWrapper(io.BytesIO(), encoding='utf-8')
-        with mock.patch.object(sys, 'stdout', out):
+        """cg.main in this process, where a window can be faked: (exit code, what it printed as JSON, everything it wrote: stdout and stderr)."""
+        out, err = (io.TextIOWrapper(io.BytesIO(), encoding='utf-8') for _ in range(2))
+        with mock.patch.object(sys, 'stdout', out), mock.patch.object(sys, 'stderr', err):
             code = cg.main(['--db', self.db, '--projects', self.projects, *args])
         out.flush()
+        err.flush()
         text = out.buffer.getvalue().decode('utf-8')
-        return code, json.loads(text), text
+        return code, json.loads(text), text + err.buffer.getvalue().decode('utf-8')
 
     def share_dir(self, name='share'):
         path = os.path.join(self.tmp, name)
@@ -406,6 +407,23 @@ class CgTest(unittest.TestCase):
         self.assertEqual([e['where'] for e in out['errors']], ['sync'])
         self.assertIn('shareCipher', out['errors'][0]['error'])
 
+    def test_a_settings_file_that_cannot_be_opened_stops_neither_status_nor_sync_of_a_plain_index(self):  # encryption off: all as before stage 5
+        self.write('P/S1.jsonl', [owner_line('вопрос'), claude_line('ответ')])
+        self.run_cg('index')
+        os.mkdir(crypto.settings_path(self.db))  # a folder cannot be opened: the OSError of every system, as an editor's lock or a refused right
+        share = self.share_dir()
+        code, out = self.run_cg('status')
+        self.assertEqual((code, out['encryption']['key'], out['encryption']['db']), (0, 'unreadable', 'plain'))
+        code, out = self.run_cg('sync', '--sync-dir', share, '--machine', 'M')
+        self.assertEqual((code, out['errors']), (0, []))
+
+    @unittest.skipUnless(os.name == 'nt', 'DPAPI is Windows only')
+    def test_a_settings_file_that_cannot_be_opened_does_not_open_an_encrypted_index(self):
+        self.encrypted_index()
+        os.remove(crypto.settings_path(self.db))
+        os.mkdir(crypto.settings_path(self.db))
+        self.assertEqual(self.run_cg('status')[0], 1)
+
     def test_a_broken_settings_file_stops_no_sync_of_a_plain_index(self):
         memdb.connect(self.db).close()
         with open(crypto.settings_path(self.db), 'w') as f:
@@ -443,7 +461,8 @@ class DialogsTest(unittest.TestCase):
             self.assertFalse(dialogs.WindowsUI().confirm('?'))
         calls = [c[0] for c in user32.MessageBoxW.call_args_list]
         self.assertIn('CG1-AAAA', calls[0][1])
-        self.assertEqual([c[3] for c in calls[:2]], [0x40000 | 0x10000, 0x40000 | 0x10000 | 0x4 | 0x30])  # topmost, foreground; Yes/No, warning sign
+        # topmost, foreground; Yes/No with No the default (a held Enter must not say Yes), warning sign
+        self.assertEqual([c[3] for c in calls[:2]], [0x40000 | 0x10000, 0x40000 | 0x10000 | 0x4 | 0x30 | 0x100])
 
     def test_a_window_that_cannot_open_says_what_failed_not_what_it_held(self):
         user32 = mock.Mock()
@@ -460,7 +479,13 @@ class DialogsTest(unittest.TestCase):
             with mock.patch.dict(sys.modules, {'tkinter': None}), mock.patch('subprocess.run', return_value=ran) as run:
                 self.assertEqual(dialogs.WindowsUI().ask_code(), want)
             args, kw = run.call_args
-            self.assertEqual((args[0][0], kw['stdout'], kw['creationflags']), (sys.executable, subprocess.PIPE, 0x10))
+            self.assertEqual((args[0][:3], kw['stdout'], kw['creationflags']), ([sys.executable, '-I', '-c'], subprocess.PIPE, 0x10))  # -I: no modules of the folder it runs from
+        ran = SimpleNamespace(returncode=0, stdout=b'')
+        # a window-less Python gets no console from CREATE_NEW_CONSOLE: the python.exe beside it runs the entry
+        with mock.patch.dict(sys.modules, {'tkinter': None}), mock.patch('subprocess.run', return_value=ran) as run, \
+                mock.patch.object(sys, 'executable', 'C:\\Py\\Pythonw.exe'):
+            dialogs.WindowsUI().ask_code()
+        self.assertEqual(run.call_args[0][0][0], 'C:\\Py\\python.exe')
 
 
 if __name__ == '__main__':

@@ -2,12 +2,13 @@
 takes never leaves it: a failure says what failed (the system's error number), never the text of the window, and a typed code comes
 back only as the return value, never in a message, a printed line or an exception."""
 import ctypes
+import os
 import subprocess
 import sys
 
 from texts import t
 
-MB_YESNO, MB_ICONWARNING, MB_SETFOREGROUND, MB_TOPMOST, IDYES = 0x4, 0x30, 0x10000, 0x40000, 6
+MB_YESNO, MB_ICONWARNING, MB_DEFBUTTON2, MB_SETFOREGROUND, MB_TOPMOST, IDYES = 0x4, 0x30, 0x100, 0x10000, 0x40000, 6
 CREATE_NEW_CONSOLE = 0x10
 # the console entry: getpass reads the console itself, so it works with the output going to a pipe; the code goes out through the pipe only
 _GETPASS = 'import getpass, sys; sys.stdout.buffer.write(getpass.getpass(sys.argv[1]).encode())'
@@ -51,8 +52,11 @@ def _window_code(tkinter, root):
 
 def _console_code():
     """The code typed in a console of its own, for a Python without tkinter: closing it or Ctrl+C ends the child with an error, which is a
-    cancel; the child's own errors go nowhere."""
-    r = subprocess.run([sys.executable, '-c', _GETPASS, t('dlg_ask_code') + ' '], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    cancel; the child's own errors go nowhere. -I: with -c the folder this runs from would be searched for modules first, and a getpass.py
+    there would be handed the code. pythonw.exe gets no console of its own, so the python.exe beside it runs the entry."""
+    head, tail = os.path.split(sys.executable)
+    python = os.path.join(head, 'python.exe') if tail.lower() == 'pythonw.exe' else sys.executable
+    r = subprocess.run([python, '-I', '-c', _GETPASS, t('dlg_ask_code') + ' '], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                        creationflags=CREATE_NEW_CONSOLE)
     return r.stdout.decode('utf-8') if r.returncode == 0 else None
 
@@ -64,7 +68,8 @@ class WindowsUI:
         _box(t('dlg_code', code=code), 0)
 
     def confirm(self, text):
-        return _box(text, MB_YESNO | MB_ICONWARNING) == IDYES
+        # No is the default button: an Enter held down to close the box before closes this one too, and must never answer Yes
+        return _box(text, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES
 
     def ask_code(self):
         try:
