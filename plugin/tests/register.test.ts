@@ -456,7 +456,7 @@ test('session.start: a refused registration leaves the status line, the timers a
   expect(statuses.at(-1)!.startsWith(T.statusError(''))).toBe(true) // ...and the refusal is the last word
   expect(statuses.at(-1)).toContain('schema refused')
   expect(store.get('lastError')).toMatchObject({ where: 'register', msg: expect.stringContaining('schema refused') })
-  expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats', 'cg-sync', 'cg-lessons', 'cg-job'], tools: ['recall', 'recall_more', 'lesson_save'] }) // every tool was tried, the commands went through
+  expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats', 'cg-sync', 'cg-lessons', 'cg-job', 'cg-encrypt'], tools: ['recall', 'recall_more', 'lesson_save'] }) // every tool was tried, the commands went through
   await clock.advance(30_000) // the timers run
   expect(statuses.at(-1)).toMatch(/^ctx /)
 })
@@ -814,7 +814,7 @@ test('/cg-sync: the folder, the model, the auto-memory folder and the project ro
   const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')), [], () => withMemory)
   const { text } = await ($ as any).command.run({ command: 'cg-sync', args: '' })
   const [run] = ofCg(m, 'sync')
-  expect(run).toEqual({ argv: ['sync', `--sync-dir=${SHARE}`, '--model', 'embeddinggemma', '--max-seconds', '60', '--memory-dir=C:/mem/memory', '--project-cwd=C:/w'], timeoutMs: 120_000 })
+  expect(run).toEqual({ argv: ['sync', `--sync-dir=${SHARE}`, '--model', 'embeddinggemma', '--max-seconds', '60', '--memory-dir=C:/mem/memory', '--project-cwd=C:/w', '--share-cipher=sqlcipher'], timeoutMs: 120_000 })
   expect(text.split('\n')).toEqual([
     T.cgSyncDone({ pushed: 3, pulled: 5, vectors: { pushed: 3, pulled: 5 } }),
     T.cgSyncPeers('MTLAPTOP 2'),
@@ -827,6 +827,12 @@ test('/cg-sync: a folder pasted with Explorer\'s quotes is the folder', { option
   const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')))
   await ($ as any).command.run({ command: 'cg-sync', args: '' })
   expect(ofCg(m, 'sync')[0]!.argv[1]).toBe(`--sync-dir=${SHARE}`)
+})
+
+test('/cg-sync: the cipher of the sync folder is the setting', { options: { syncDir: SHARE, shareCipher: 'cryptography' } }, async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')))
+  await ($ as any).command.run({ command: 'cg-sync', args: 'skip MTLAPTOP 12' })
+  expect(ofCg(m, 'sync')[0]!.argv.slice(-4)).toEqual(['--share-cipher=cryptography', '--skip-batch', 'MTLAPTOP', '12'])
 })
 
 test('/cg-sync: no auto-memory folder in this chat: no memory step, and the reply says so', { options: { syncDir: SHARE } }, async ($, on) => {
@@ -1181,4 +1187,46 @@ test('lesson_save: a refusal is told as a refused save, not as a failed search',
   const r = await ($ as any).tool.call({ tool: 'mcp__cacheguard__lesson_save', action: 'a', symptom: 's' })
   expect(r).toEqual({ deny: T.lessonSaveFailed('ValueError: the lesson needs: cause') })
   expect(m.toasts).toEqual([T.toast(T.failed('lesson_save', 'ValueError: the lesson needs: cause'))])
+})
+
+// ---- encryption (stage 5) ----
+const encrypted = { on: true, db: 'encrypted', key: 'ok', notes: [] }
+
+test('/cg-encrypt: on, join and off point to the window first, wait as long as the host allows and tell how it ended; the folder and the cipher are the settings', { options: { syncDir: SHARE, shareCipher: 'cryptography' } }, async ($, on) => {
+  const seen: number[] = [] // the toasts there were when cg.py was started
+  const m = await started($, on, a => (a[0] === 'encrypt' ? (seen.push(m.toasts.length), ran(JSON.stringify({ action: a[1], done: a[1] !== 'join', notes: a[1] === 'join' ? ['n1'] : [] }))) : ran('{}')))
+  const run = async (args: string) => (await ($ as any).command.run({ command: 'cg-encrypt', args })).text
+  expect(await run('on')).toBe(T.encryptDone('on'))
+  expect(await run('join')).toBe([T.encryptUnfinished, 'n1'].join('\n'))
+  expect(await run('off')).toBe(T.encryptDone('off'))
+  expect(ofCg(m, 'encrypt')[0]).toEqual({ argv: ['encrypt', 'on', `--sync-dir=${SHARE}`, '--share-cipher=cryptography', '--model', 'embeddinggemma'], timeoutMs: 600_000 })
+  expect(ofCg(m, 'encrypt').map(r => [r.argv[1], r.timeoutMs])).toEqual([['on', 600_000], ['join', 600_000], ['off', 600_000]])
+  expect(seen).toEqual([1, 2, 3])
+  expect(m.toasts).toEqual(Array(3).fill(T.toast(T.encryptWindow)))
+})
+
+test('/cg-encrypt: the state asks no window and shows the health lines; a word it does not know says how to ask and runs nothing', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'encrypt' ? ran(JSON.stringify({ ...encrypted, on: false, db: 'plain', key: 'missing', notes: ['n1'] })) : ran('{}')))
+  const run = async (args: string) => (await ($ as any).command.run({ command: 'cg-encrypt', args })).text
+  expect(await run('')).toBe([T.healthEncryptionOff, 'n1'].join('\n'))
+  expect(await run('status')).toBe([T.healthEncryptionOff, 'n1'].join('\n'))
+  expect(await run('join now')).toBe(T.cgEncryptUsage)
+  expect(ofCg(m, 'encrypt')).toEqual([{ argv: ['encrypt', 'status'], timeoutMs: 120_000 }, { argv: ['encrypt', 'status'], timeoutMs: 120_000 }])
+  expect(m.toasts).toEqual([])
+})
+
+test('/cg-encrypt: cg.py fails: a toast with its words, a short reply, the error kept for /cg-health', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'encrypt' ? failed('ValueError: the recovery code is not right') : ran('{}')))
+  expect((await ($ as any).command.run({ command: 'cg-encrypt', args: 'join' })).text).toBe(T.cgEncryptFailed)
+  expect(m.toasts).toEqual([T.toast(T.encryptWindow), T.toast(T.failed('cg-encrypt', 'ValueError: the recovery code is not right'))])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-encrypt', msg: 'ValueError: the recovery code is not right' })
+})
+
+test('/cg-health: the encryption line, from what cg.py status reports', async ($, on) => {
+  wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) =>
+    e.argv.includes('status') ? ran(JSON.stringify({ db: 'd', convs: 0, rows: 0, size_mb: 0, encryption: { ...encrypted, notes: ['n1'] } })) : noTurn(),
+  )
+  on('session.root', () => ({ value: 'C:/w' }))
+  const lines = (await ($ as any).command.run({ command: 'cg-health', args: '' })).text.split('\n')
+  expect(lines[lines.indexOf(T.healthEncryptionOn('sqlcipher')) + 1]).toBe('n1')
 })

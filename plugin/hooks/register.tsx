@@ -7,6 +7,8 @@ import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './mem
 import type { Compression } from './memory'
 import { FOLDER, flush, notePath, SUMMARY_PATH, summaryNote } from './notes'
 import type { Note } from './notes'
+import { encryptArgs, encryptHealth, encryptReply } from './encrypt'
+import type { EncryptResult, EncryptStatus } from './encrypt'
 import { healthLines, message, parseCg } from './py'
 import type { LastError } from './py'
 import { jobArgs, jobHealth } from './job'
@@ -88,15 +90,15 @@ const guarded = async ($: EngineInterface, where: string, work: () => Promise<un
 
 // One sync with the other computers through the shared folder, for the current project's short memory too (none known, none synced).
 // cg.py stops itself after 60 s and leaves the rest for the next run.
-const runSync = async ($: EngineInterface, python: string, syncDir: string, model: string, skip: string[] = []) => {
+const runSync = async ($: EngineInterface, python: string, syncDir: string, model: string, shareCipher: string, skip: string[] = []) => {
   const [dir, root] = await Promise.all([memoryDir($), $.session.root()])
-  return (await runCg($, python, syncArgs(syncDir, model, dir, root, skip), 120_000)) as unknown as SyncResult
+  return (await runCg($, python, syncArgs(syncDir, model, dir, root, skip, shareCipher), 120_000)) as unknown as SyncResult
 }
 
 // Three seconds into a session: bring the index up to date, give the records without vectors up to 2 minutes of the embedding model
 // (the rest waits for the next start), then push our new records and take in the other computers'.
 // Returns the steps that failed, if any did.
-const catchUp = async ($: EngineInterface, python: string, model: string, syncDir: string) => {
+const catchUp = async ($: EngineInterface, python: string, model: string, syncDir: string, shareCipher: string) => {
   const isIndexed = await guarded($, 'index', async () => indexErrors($, 'index', (await runCg($, python, ['index'], 600_000)).errors as IndexError[], false))
   if (!isIndexed) return 'index' // the same database would fail the same way, and the first cause must stay in /cg-health
   const isEmbedded = await guarded($, 'embed', async () => {
@@ -107,7 +109,7 @@ const catchUp = async ($: EngineInterface, python: string, model: string, syncDi
   const isSynced =
     syncDir === '' ||
     (await guarded($, 'sync', async () => {
-      const [first] = (await runSync($, python, syncDir, model)).errors
+      const [first] = (await runSync($, python, syncDir, model, shareCipher)).errors
       if (first) throw new Error(first.error)
     }))
   const failed = [...(isEmbedded ? [] : ['embed']), ...(isSynced ? [] : ['sync'])]
@@ -268,11 +270,12 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
 
 export const register: Register = (on, options) => {
   // the settings: /config's values now, the mod's own file over them once session.start has read it
-  let syncDir: string, minTokens: number, idleMinutes: number, showLimits: boolean, python: string, embedModel: string, compression: Compression
+  let syncDir: string, shareCipher: string, minTokens: number, idleMinutes: number, showLimits: boolean, python: string, embedModel: string, compression: Compression
   let isLessonsOn: boolean, lessonsMinScore: number
   const apply = (o: Record<string, unknown>) => {
     setLanguage(o.language as string)
     syncDir = (o.syncDir as string).trim().replace(/^"(.*)"$/, '$1') // Explorer's "Copy as path" puts quotes around it
+    shareCipher = o.shareCipher as string // sqlcipher or cryptography; anything else is refused by cg.py, not turned into the other
     minTokens = o.bandMinTokens as number
     idleMinutes = o.bandIdleMinutes as number
     showLimits = o.showLimits as boolean
@@ -320,7 +323,7 @@ export const register: Register = (on, options) => {
     $.clock.after(
       3_000,
       () =>
-        void catchUp($, python, embedModel, syncDir).then(async failed => {
+        void catchUp($, python, embedModel, syncDir, shareCipher).then(async failed => {
           if (failed && !isCatchUpToasted) toast($, T.catchUpFailed(failed))
           if (failed) isCatchUpToasted = true
           lessonList = await lessonsOr($, python, lessonList) // the sync may have brought the other computer's
@@ -338,6 +341,7 @@ export const register: Register = (on, options) => {
       () => $.command.register({ name: 'cg-sync', description: T.cgSyncDescription, argumentHint: T.cgSyncHint }),
       () => $.command.register({ name: 'cg-lessons', description: T.cgLessonsDescription, argumentHint: T.cgLessonsHint }),
       () => $.command.register({ name: 'cg-job', description: T.cgJobDescription, argumentHint: T.cgJobHint }),
+      () => $.command.register({ name: 'cg-encrypt', description: T.cgEncryptDescription, argumentHint: T.cgEncryptHint }),
       () =>
         $.tool.register({
           name: 'recall',
@@ -431,7 +435,7 @@ export const register: Register = (on, options) => {
       const counts = ((await $.store.get('lessonCounts')) as Record<string, number> | undefined) ?? {}
       const lessons = { count: lessonList.length, shown: counts.shown ?? 0, chars: counts.chars ?? 0, stopped: counts.stopped ?? 0, on: isLessonsOn }
       return {
-        text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile, lessons }).join('\n'),
+        text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile, shareCipher, lessons }).join('\n'),
       }
     } catch (err) {
       await fail($, 'cg-health', err)
@@ -455,7 +459,7 @@ export const register: Register = (on, options) => {
     const skip = skipArgs(e.args)
     if (skip === null) return { text: T.cgSyncSkipUsage }
     try {
-      const r = await runSync($, python, syncDir, embedModel, skip)
+      const r = await runSync($, python, syncDir, embedModel, shareCipher, skip)
       lessonList = await lessonsOr($, python, lessonList) // the other computer's lessons, if it brought any
       if (r.errors.length) {
         // the reply lists them all; the toast and /cg-health keep the first one for when the reply has scrolled away
@@ -466,6 +470,23 @@ export const register: Register = (on, options) => {
     } catch (err) {
       await fail($, 'cg-sync', err)
       return { text: T.cgSyncFailed }
+    }
+  })
+
+  // on, join and off open windows in the Python process (the recovery code, the questions) and can run long: the locks alone wait up to
+  // 6 minutes, the owner has the windows, then the push to the sync folder takes up to 10. The host allows a process.run 10 minutes at
+  // most (1_800_000 is refused outright); a run cut there is safe to repeat. The state asks nothing.
+  on('command.run', { command: 'cg-encrypt' }, async ($, e) => {
+    const args = encryptArgs(e.args, syncDir, shareCipher, embedModel)
+    if (args === null) return { text: T.cgEncryptUsage }
+    const isState = args[1] === 'status'
+    try {
+      if (!isState) toast($, T.encryptWindow)
+      const r = await runCg($, python, args, isState ? 120_000 : 600_000)
+      return { text: isState ? encryptHealth(r as unknown as EncryptStatus, shareCipher).join('\n') : encryptReply(r as unknown as EncryptResult) }
+    } catch (err) {
+      await fail($, 'cg-encrypt', err)
+      return { text: T.cgEncryptFailed }
     }
   })
 

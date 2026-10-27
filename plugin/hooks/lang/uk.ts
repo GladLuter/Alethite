@@ -198,4 +198,20 @@ export const uk: Partial<Texts> = {
   jobLast: (at: string, did: string, errors: number) => `Фонове завдання, останній запуск ${at}: ${did}${errors ? `; помилок: ${errors}` : ''}`,
   jobError: (where: string, error: string) => `Помилка фонового завдання (${where}): ${error}`,
   jobNever: 'Фонове завдання: запусків ще не було (/cg-job on).',
+
+  // encryption of the index and the sync folder (stage 5)
+  cgEncryptDescription: "Шифрування індексу й теки синхронізації: on, join (за кодом відновлення з іншого комп'ютера), off або стан",
+  cgEncryptHint: '[on | join | off | status]',
+  cgEncryptUsage: "Так: /cg-encrypt (стан), /cg-encrypt on, /cg-encrypt join (за кодом відновлення з іншого комп'ютера), /cg-encrypt off.",
+  encryptWindow: 'дивіться вікно Claude-CacheGuard, воно може бути за іншими вікнами',
+  encryptDone: (action: string) =>
+    action === 'off'
+      ? "Шифрування вимкнено: індекс і те, що цей комп'ютер кладе до теки синхронізації, знову відкриті."
+      : action === 'join'
+        ? "Цей комп'ютер приєднався до шифрування: ключ у нього тепер є, індекс і те, що він кладе до теки синхронізації, зашифровані."
+        : "Шифрування ввімкнено: індекс і те, що цей комп'ютер кладе до теки синхронізації, зашифровані.",
+  encryptUnfinished: 'cg-encrypt: не завершено. Команду можна безпечно повторити: вона продовжить з того місця, де зупинилась.',
+  cgEncryptFailed: 'cg-encrypt: не вийшло, причина — у сповіщенні.',
+  healthEncryptionOn: (cipher: string) => `Шифрування: ввімкнено (${cipher})`,
+  healthEncryptionOff: 'Шифрування: вимкнено',
 }

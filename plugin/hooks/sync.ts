@@ -25,7 +25,8 @@ export type SyncStatus = {
 }
 
 // Values go as `--flag=value`: a folder that starts with `-` must not be read as a flag. No memory folder known, no memory step.
-export const syncArgs = (syncDir: string, model: string, memoryDir: string | null, root: string, skip: string[] = []) => [
+// shareCipher: how the folder is sealed once the index has a key (the setting); cg.py ignores it while there is none.
+export const syncArgs = (syncDir: string, model: string, memoryDir: string | null, root: string, skip: string[], shareCipher: string) => [
   'sync',
   `--sync-dir=${syncDir}`,
   '--model',
@@ -34,6 +35,7 @@ export const syncArgs = (syncDir: string, model: string, memoryDir: string | nul
   '60',
   ...(memoryDir ? [`--memory-dir=${memoryDir}`] : []),
   `--project-cwd=${root}`,
+  `--share-cipher=${shareCipher}`,
   ...(skip.length ? ['--skip-batch', ...skip] : []),
 ]
 

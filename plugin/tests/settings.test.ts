@@ -15,6 +15,12 @@ test('settings file: its values over the options; a key that is no field or of a
   expect(r.bad).toEqual(['bandMinTokens', 'colour'])
 })
 
+test('settings file: the key cg.py keeps there is no option and is not reported as a bad key', () => {
+  const r = withFile(options, '{"language": "ru", "encryptionKey": "dpapi:AAAA"}')
+  expect(r.options).toEqual({ ...options, language: 'ru' })
+  expect(r.bad).toEqual([])
+})
+
 test('settings file: broken JSON or not one object is an error', () => {
   expect(() => withFile(options, '{ "language": "ru", }')).toThrow()
   expect(() => withFile(options, '["ru"]')).toThrow(T.settingsNotObject)

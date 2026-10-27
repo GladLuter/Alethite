@@ -197,6 +197,22 @@ export const en = {
   jobLast: (at: string, did: string, errors: number) => `Background job, last run ${at}: ${did}${errors ? `; errors: ${errors}` : ''}`,
   jobError: (where: string, error: string) => `Background job error (${where}): ${error}`,
   jobNever: 'Background job: no run yet (/cg-job on).',
+
+  // encryption of the index and the sync folder (stage 5)
+  cgEncryptDescription: 'Encryption of the index and the sync folder: on, join (with the recovery code of another computer), off, or its state',
+  cgEncryptHint: '[on | join | off | status]',
+  cgEncryptUsage: 'Use: /cg-encrypt (the state), /cg-encrypt on, /cg-encrypt join (with the recovery code of another computer), /cg-encrypt off.',
+  encryptWindow: 'look for the Claude-CacheGuard window: it may be behind other windows',
+  encryptDone: (action: string): string =>
+    action === 'off'
+      ? 'Encryption is off: the index and what this computer puts in the sync folder are open again.'
+      : action === 'join'
+        ? 'This computer joined the encryption: it has the key now, and the index and what it puts in the sync folder are encrypted.'
+        : 'Encryption is on: the index and what this computer puts in the sync folder are encrypted.',
+  encryptUnfinished: 'cg-encrypt: not finished. Repeating the command is safe: it goes on from where it stopped.',
+  cgEncryptFailed: 'cg-encrypt: did not work, the reason is in the toast.',
+  healthEncryptionOn: (cipher: string) => `Encryption: on (${cipher})`,
+  healthEncryptionOff: 'Encryption: off',
 }
 
 export type Texts = typeof en

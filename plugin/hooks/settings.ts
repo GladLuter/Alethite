@@ -4,11 +4,14 @@ import { T } from './text'
 
 export const settingsPath = (home: string) => [home, '.claude', 'cacheguard', 'settings.json'].join(home.includes('/') ? '/' : '\\')
 
+// Keys cg.py writes into the file itself (the encryption key under DPAPI): no option, never reported, never shown.
+const SILENT = ['encryptionKey']
+
 // The options with the file's values over them, and the file's keys that are not a field or not of the field's type, left out.
 export const withFile = (options: Record<string, unknown>, text: string) => {
   const file: unknown = JSON.parse(text.replace(/^﻿/, '')) // Windows editors and PowerShell save UTF-8 with a BOM
   if (typeof file !== 'object' || file === null || Array.isArray(file)) throw new Error(T.settingsNotObject)
   const isField = ([k, v]: [string, unknown]) => k in options && typeof v === typeof options[k]
   const entries = Object.entries(file)
-  return { options: { ...options, ...Object.fromEntries(entries.filter(isField)) }, bad: entries.filter(e => !isField(e)).map(([k]) => k) }
+  return { options: { ...options, ...Object.fromEntries(entries.filter(isField)) }, bad: entries.filter(e => !isField(e) && !SILENT.includes(e[0])).map(([k]) => k) }
 }

@@ -195,4 +195,20 @@ export const ru: Partial<Texts> = {
   jobLast: (at: string, did: string, errors: number) => `Фоновая задача, последний запуск ${at}: ${did}${errors ? `; ошибок: ${errors}` : ''}`,
   jobError: (where: string, error: string) => `Ошибка фоновой задачи (${where}): ${error}`,
   jobNever: 'Фоновая задача: запусков ещё не было (/cg-job on).',
+
+  // encryption of the index and the sync folder (stage 5)
+  cgEncryptDescription: 'Шифрование индекса и папки синхронизации: on, join (по коду восстановления с другого компьютера), off или состояние',
+  cgEncryptHint: '[on | join | off | status]',
+  cgEncryptUsage: 'Так: /cg-encrypt (состояние), /cg-encrypt on, /cg-encrypt join (по коду восстановления с другого компьютера), /cg-encrypt off.',
+  encryptWindow: 'смотрите окно Claude-CacheGuard, оно может быть за другими окнами',
+  encryptDone: (action: string) =>
+    action === 'off'
+      ? 'Шифрование выключено: индекс и то, что этот компьютер кладёт в папку синхронизации, снова открыты.'
+      : action === 'join'
+        ? 'Этот компьютер присоединился к шифрованию: ключ у него теперь есть, индекс и то, что он кладёт в папку синхронизации, зашифрованы.'
+        : 'Шифрование включено: индекс и то, что этот компьютер кладёт в папку синхронизации, зашифрованы.',
+  encryptUnfinished: 'cg-encrypt: не закончено. Команду можно безопасно повторить: она продолжит с того места, где остановилась.',
+  cgEncryptFailed: 'cg-encrypt: не получилось, причина — в уведомлении.',
+  healthEncryptionOn: (cipher: string) => `Шифрование: включено (${cipher})`,
+  healthEncryptionOff: 'Шифрование: выключено',
 }

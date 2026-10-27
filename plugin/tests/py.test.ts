@@ -53,3 +53,13 @@ test('health: records the model could not embed are counted; none, no line', () 
   expect(lines(3)).toContain(T.vectorsFailed(3))
   expect(lines(0).join(' ')).not.toContain(T.vectorsFailed(0))
 })
+test('health: the encryption line comes after the settings file, when cg.py reports it; none otherwise', () => {
+  const encryption = { on: true, db: 'encrypted', key: 'ok', notes: ['n1'] }
+  const lines = healthLines({ version: '2.1.295', index: { encryption }, memory: null, root: 'C:/w', embedCmd: cmd, settingsFile: 'C:/h/settings.json', shareCipher: 'cryptography' })
+  const at = lines.indexOf(T.healthEncryptionOn('cryptography'))
+  expect(at).toBeGreaterThan(lines.indexOf(T.healthSettings('C:/h/settings.json')))
+  expect(lines[at + 1]).toBe('n1')
+  expect(healthLines({ version: '2.1.295', index: { encryption: { ...encryption, on: false, db: 'plain', key: 'missing', notes: [] } }, memory: null, root: 'C:/w', embedCmd: cmd }).join(' ')).toContain(T.healthEncryptionOff)
+  expect(healthLines({ version: '2.1.295', index: {}, memory: null, root: 'C:/w', embedCmd: cmd }).join(' ')).not.toContain(T.healthEncryptionOff)
+  expect(healthLines({ version: '2.1.295', index: 'OperationalError: x', memory: null, root: 'C:/w', embedCmd: cmd }).join(' ')).not.toContain(T.healthEncryptionOff)
+})

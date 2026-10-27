@@ -3,8 +3,8 @@ import { skipArgs, syncArgs, syncHealth, syncReport } from '../hooks/sync'
 import type { SyncResult, SyncStatus } from '../hooks/sync'
 import { T } from '../hooks/text'
 
-test('sync args: each value one item, so a folder starting with - is no flag; no memory folder, no memory step; a skip at the end', () => {
-  expect(syncArgs('\\\\NAS\\cg', 'embeddinggemma', 'C:/mem', 'C:/w')).toEqual([
+test('sync args: each value one item, so a folder starting with - is no flag; no memory folder, no memory step; the cipher; a skip at the end', () => {
+  expect(syncArgs('\\\\NAS\\cg', 'embeddinggemma', 'C:/mem', 'C:/w', [], 'sqlcipher')).toEqual([
     'sync',
     '--sync-dir=\\\\NAS\\cg',
     '--model',
@@ -13,8 +13,21 @@ test('sync args: each value one item, so a folder starting with - is no flag; no
     '60',
     '--memory-dir=C:/mem',
     '--project-cwd=C:/w',
+    '--share-cipher=sqlcipher',
   ])
-  expect(syncArgs('-x', 'm', null, 'C:/w', ['MTLAPTOP', '3'])).toEqual(['sync', '--sync-dir=-x', '--model', 'm', '--max-seconds', '60', '--project-cwd=C:/w', '--skip-batch', 'MTLAPTOP', '3'])
+  expect(syncArgs('-x', 'm', null, 'C:/w', ['MTLAPTOP', '3'], 'cryptography')).toEqual([
+    'sync',
+    '--sync-dir=-x',
+    '--model',
+    'm',
+    '--max-seconds',
+    '60',
+    '--project-cwd=C:/w',
+    '--share-cipher=cryptography',
+    '--skip-batch',
+    'MTLAPTOP',
+    '3',
+  ])
 })
 
 test('skip args: none for a plain run, the computer and the number for a skip, null for anything else', () => {
