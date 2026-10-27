@@ -110,9 +110,10 @@ def _open(path):
         return sqlite3.connect(path, isolation_level=None, timeout=30)
     try:
         key = crypto.load_key(crypto.settings_path(path))
-    except crypto.SettingsBroken:
-        # a broken settings file shows no key: a new index is then what it was before stage 5 (the job reports the file); an encrypted one
-        # needs the key. A key that is set but unreadable (key_unreadable) is no reason for a plain index either: it is not caught
+    except (crypto.SettingsBroken, OSError):
+        # a broken settings file, or one that cannot be opened, shows no key: a new index is then what it was before stage 5 (the job reports
+        # the file); an encrypted one needs the key. A key that is set but unreadable (key_unreadable) is no reason for a plain index either:
+        # it is not caught
         if crypto.is_encrypted(path):
             raise
         key = None

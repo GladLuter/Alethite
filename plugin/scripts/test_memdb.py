@@ -117,6 +117,23 @@ class EncryptedIndexTest(unittest.TestCase):
             connect(self.db)
         self.assertEqual(str(cm.exception), t('settings_broken', path=self.settings))
 
+    def test_a_settings_file_that_cannot_be_opened_is_one_that_shows_no_key(self):
+        os.mkdir(self.settings)  # a folder cannot be opened: the OSError of every system, as an editor's lock or a refused right
+        connect(self.db).close()  # no index yet: a plain one, as before stage 5
+        self.assertFalse(crypto.is_encrypted(self.db))
+        os.remove(self.db)
+        open(self.db, 'wb').close()  # an empty file is no index yet either
+        connect(self.db).close()
+        self.assertFalse(crypto.is_encrypted(self.db))
+        os.remove(self.db)
+        c = crypto.open_db(self.db, KEY)
+        c.execute('CREATE TABLE x(y)')
+        c.close()
+        before = hashlib.sha1(self.raw()).hexdigest()
+        with self.assertRaises(OSError):  # an encrypted index needs the key: it is refused, never guessed at
+            connect(self.db)
+        self.assertEqual(hashlib.sha1(self.raw()).hexdigest(), before)
+
     @dpapi
     def test_an_empty_file_is_a_new_index(self):  # sqlite makes the file only on the first write: a crash before it must not leave a plain index
         crypto.save_key(self.settings, KEY)

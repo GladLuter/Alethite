@@ -424,6 +424,29 @@ class CgTest(unittest.TestCase):
         os.mkdir(crypto.settings_path(self.db))
         self.assertEqual(self.run_cg('status')[0], 1)
 
+    @unittest.skipUnless(os.name == 'nt', 'DPAPI is Windows only')
+    def test_a_settings_file_lost_after_the_index_opened_makes_no_open_sync_of_an_encrypted_index(self):
+        share = self.share_dir()
+        self.encrypted_index(syncDir=share)
+        self.addCleanup(gc.collect)
+        for fail in (lambda: PermissionError(13, 'Permission denied'), lambda: crypto.SettingsBroken('broken')):  # made anew: an error keeps the frames, and so the locks, of its run
+            real, calls = crypto.load_key, []
+
+            def load_key(path):  # the first read is the open of the index; the file is gone for the read of the sync
+                calls.append(path)
+                if len(calls) > 1:
+                    raise fail()
+                return real(path)
+
+            with mock.patch.object(crypto, 'load_key', load_key):
+                self.assertEqual(self.main_json('sync', '--sync-dir', share, '--machine', 'M')[0], 1)  # said, not swallowed
+            self.assertEqual(len(calls), 2)
+            del calls[:]
+            with mock.patch.object(crypto, 'load_key', load_key):
+                out = self.maintain()
+            self.assertEqual([e['where'] for e in out['errors']], ['sync'])
+            self.assertEqual([f for _, _, files in os.walk(share) for f in files], [])  # no open batch, no label: nothing went out
+
     def test_a_broken_settings_file_stops_no_sync_of_a_plain_index(self):
         memdb.connect(self.db).close()
         with open(crypto.settings_path(self.db), 'w') as f:
