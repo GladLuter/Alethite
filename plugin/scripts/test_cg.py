@@ -635,6 +635,15 @@ class CgTest(unittest.TestCase):
         code, out, _ = self.main_home('status')  # the next run tries again, and what it merges takes the note away
         self.assertEqual((code, out['rows'], out['index_notice'], out['index_dir']['notes']), (0, 2, t('index_merged', dir=far, home=home, n=2), []))
 
+    def test_a_pending_merge_of_plain_indexes_never_reads_the_key(self):  # a key that cannot be read stops no plain index, merges included
+        far, home = self.temporary_index()
+        with open(os.path.join(home, 'settings.json'), 'w', encoding='utf-8') as f:
+            json.dump({'indexDir': far, 'encryptionKey': 'junk'}, f)  # a key that is set but cannot be read
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, out.get('error'), out.get('index_notice')), (0, None, t('index_merged', dir=far, home=home, n=2)))
+        self.assertEqual(out['rows'], 2)
+        self.assertEqual([os.path.exists(os.path.join(home, n)) for n in ('index.db', indexdir.MARK)], [False, False])
+
 
 @unittest.skipUnless(os.name == 'nt', 'user32 is Windows only')
 class DialogsTest(unittest.TestCase):

@@ -457,7 +457,10 @@ def main(argv):
             if a.where.configured:  # the settings of an index in that folder are still the home ones
                 crypto.INDEX_DIRS.add(crypto.norm(a.where.configured))
         # the folder is back and the home folder has a temporary index: it is merged first, and its locks are given back before the command
-        merged = a.where and a.where.merge_from and indexdir.merge_back(a.where, crypto.load_key(crypto.settings_path(a.db)))
+        # a plain pair never reads the key (memdb._open): a key that cannot be read must not stop it
+        pending = a.where and a.where.merge_from
+        enc = pending and (crypto.is_encrypted(a.where.db) or crypto.is_encrypted(a.where.merge_from))
+        merged = pending and indexdir.merge_back(a.where, crypto.load_key(crypto.settings_path(a.db)) if enc else None)
         out, code = a.fn(a), 0
         note = merged or indexdir.notice(a.where)
         if note and isinstance(out, dict):
