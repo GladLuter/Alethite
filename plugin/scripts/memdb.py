@@ -128,7 +128,11 @@ def lock(db, name, wait):
     """One `name` run per index at a time, whichever chat or terminal started it: an exclusive transaction on a lock file beside the
     index, which the OS drops with the process. Hold the result while the run lasts; sqlite3.OperationalError after `wait` seconds."""
     conn = sqlite3.connect('%s.%s.lock' % (db, name), timeout=wait, isolation_level=None)
-    conn.execute('BEGIN EXCLUSIVE')
+    try:
+        conn.execute('BEGIN EXCLUSIVE')
+    except BaseException:  # a try that failed keeps no file open: Windows will not delete the lock file of a connection that lives on in a traceback
+        conn.close()
+        raise
     return conn
 
 

@@ -122,7 +122,10 @@ EN = {
     'index_fallback_no_space': 'the index folder {dir} is not available and there is no index in {home}. A new one needs 2 GB free there, and {free} GB is free. Nothing was created. Connect {dir} again or free some space',
     'index_fallback': 'the index in {dir} is not available, working with {home} for now. What is saved meanwhile is merged back when the folder is available again',
     'index_old_copy': 'an old copy of the index is still in {dir}',
-    'index_merge_failed': 'the records saved in the standard folder while the index folder was away could not be merged back yet: {e}. Nothing was lost, the next run tries again',
+    'index_merge_failed': 'the records saved in {home} while the index folder {dir} was away could not be merged back yet: {e}. Nothing was lost, both indexes are in place and the next run tries again',
+    'index_merged': 'the index folder {dir} is available again: what was saved in {home} meanwhile is merged into it (records: {n}), and the temporary index in {home} is deleted',
+    'index_merge_differs': 'the merged index does not hold everything the temporary one had, so the merge was undone',
+    'index_merge_mixed': 'the index in the index folder is not encrypted and the temporary one is: run /cg-encrypt on, then the merge goes through',
 }
 
 RU = {
@@ -238,7 +241,10 @@ RU = {
     'index_fallback_no_space': 'папка индекса {dir} недоступна, а в {home} индекса нет. Для нового там нужно 2 ГБ свободного места, а свободно {free} ГБ. Ничего не создано. Подключите {dir} снова или освободите место',
     'index_fallback': 'индекс в {dir} недоступен, сейчас работаю с {home}. Что сохранится за это время, вольётся обратно, когда папка снова будет доступна',
     'index_old_copy': 'старая копия индекса лежит в {dir}',
-    'index_merge_failed': 'записи, сохранённые в стандартной папке, когда папки индекса не было, влить обратно пока не удалось: {e}. Ничего не потеряно, следующий запуск попробует снова',
+    'index_merge_failed': 'записи, сохранённые в {home}, пока папки индекса {dir} не было, влить обратно пока не удалось: {e}. Ничего не потеряно, оба индекса на месте, следующий запуск попробует снова',
+    'index_merged': 'папка индекса {dir} снова доступна: то, что сохранилось за это время в {home}, влито в неё (записей: {n}), временный индекс в {home} удалён',
+    'index_merge_differs': 'в слитом индексе нет всего, что было во временном, поэтому слияние отменено',
+    'index_merge_mixed': 'индекс в папке индекса не зашифрован, а временный зашифрован: выполните /cg-encrypt on, после этого слияние пройдёт',
 }
 
 UK = {
@@ -354,7 +360,10 @@ UK = {
     'index_fallback_no_space': 'тека індексу {dir} недоступна, а в {home} індексу немає. Для нового там потрібно 2 ГБ вільного місця, а вільно {free} ГБ. Нічого не створено. Підключіть {dir} знову або звільніть місце',
     'index_fallback': 'індекс у {dir} недоступний, зараз працюю з {home}. Що збережеться за цей час, влиється назад, коли тека знову буде доступна',
     'index_old_copy': 'стара копія індексу лежить у {dir}',
-    'index_merge_failed': 'записи, збережені в стандартній теці, коли теки індексу не було, влити назад поки не вдалося: {e}. Нічого не втрачено, наступний запуск спробує знову',
+    'index_merge_failed': 'записи, збережені в {home}, поки теки індексу {dir} не було, влити назад поки не вдалося: {e}. Нічого не втрачено, обидва індекси на місці, наступний запуск спробує знову',
+    'index_merged': 'тека індексу {dir} знову доступна: те, що збереглося за цей час у {home}, влито в неї (записів: {n}), тимчасовий індекс у {home} видалено',
+    'index_merge_differs': 'у злитому індексі немає всього, що було в тимчасовому, тому злиття скасовано',
+    'index_merge_mixed': 'індекс у теці індексу не зашифрований, а тимчасовий зашифрований: виконайте /cg-encrypt on, після цього злиття пройде',
 }
 
 TABLES = {'en': EN, 'ru': RU, 'uk': UK}

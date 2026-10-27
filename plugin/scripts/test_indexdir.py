@@ -1,15 +1,25 @@
 import json
 import os
+import secrets
 import sqlite3
 import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest import mock
 import crypto
+import encrypt
 import indexdir
-from indexdir import MARK, MIN_FREE, Where, resolve
+import lessons
+import memdb
+import sync as cgsync
+import texts
+from indexdir import MARK, MIN_FREE, Where, absorb, merge_back, resolve
+from test_memdb import claude_line, owner_line
+from test_sync import Computer
 from test_texts import use_lang
+from test_vectors import fake
 from texts import t
+from vectors import DIMS, MODEL, embed_pending, pack
 
 GB = 2 ** 30
 
@@ -58,6 +68,13 @@ class ResolveTest(unittest.TestCase):
             self.settings(indexDir=spelling)
             self.assertEqual(self.where(), Where(self.db, None, False, None), spelling)
         self.assertFalse(os.path.exists(self.mark))
+
+    def test_an_empty_indexdir_is_not_set(self):  # a hand-emptied value means no folder: no fallback, no mark, no notice
+        for value in ('', '   ', ' \t'):
+            self.settings(indexDir=value)
+            self.assertEqual(self.where(), Where(self.db, None, False, None), repr(value))
+        self.assertEqual(os.listdir(self.home), ['settings.json'])
+        self.assertEqual(self.asked, [])
 
     def test_a_folder_with_the_index_is_where_it_is_and_nothing_is_written(self):
         self.touch(self.far_db)
@@ -165,13 +182,434 @@ class StatusTest(unittest.TestCase):
         self.meta(old_copy='C:\\old', merge_error='диск занят')
         out = indexdir.status(self.conn, Where('H\\index.db', 'D:\\x', True, None))
         self.assertEqual(out, {'configured': 'D:\\x', 'fallback': True, 'notes': [
-            t('index_fallback', dir='D:\\x', home='H'), t('index_old_copy', dir='C:\\old'), t('index_merge_failed', e='диск занят')]})
+            t('index_fallback', dir='D:\\x', home='H'), t('index_old_copy', dir='C:\\old'),
+            t('index_merge_failed', dir='D:\\x', home='H', e='диск занят')]})
         self.assertIn('C:\\old', out['notes'][1])
         self.assertIn('диск занят', out['notes'][2])
+        self.assertIn('H', out['notes'][2])
+
+    def test_a_failed_merge_names_the_folder_of_the_temporary_index(self):  # db is in the index folder then, the temporary one is merge_from
+        self.meta(merge_error='диск занят')
+        out = indexdir.status(self.conn, Where('D:\\x\\index.db', 'D:\\x', False, 'H\\index.db'))
+        self.assertEqual(out['notes'], [t('index_merge_failed', dir='D:\\x', home='H', e='диск занят')])
 
     def test_the_notes_of_the_index_itself_show_without_a_where(self):  # a run with --db has none
-        self.meta(old_copy='C:\\old')
+        self.meta(old_copy='C:\\old', merge_error='диск занят')  # a failed merge needs both folders to be told, and a run with --db knows neither
         self.assertEqual(indexdir.status(self.conn, None)['notes'], [t('index_old_copy', dir='C:\\old')])
+
+
+HOME = 'C:\\Users\\x'  # the home the project keys are made against
+REAL, OTHER = (pack(fake([w])[0]) for w in ('alpha', 'omega'))  # two vectors of the length an index keeps
+
+
+def texts_of(conn):
+    return sorted(r[0] for r in conn.execute('SELECT text FROM chunks'))
+
+
+def key_of(conn, text):
+    return conn.execute('SELECT k.conv, k.cls, k.hash, k.n FROM keys k JOIN chunks c ON c.rowid = k.id WHERE c.text = ?', (text,)).fetchone()
+
+
+def put(conn, conv, text, kind='owner', pos=1, n=0, vec=None, **marks):
+    """A record with its key, and a vector (bytes, b'' is the empty one of a record that failed to embed) when given; `marks`: origin, pushed, vec_pushed."""
+    rid = conn.execute('INSERT INTO chunks(text, conv, pos, ts, kind) VALUES(?, ?, ?, ?, ?)', (text, conv, pos, '2026-10-13T10:00:00.000Z', kind)).lastrowid
+    conn.execute('INSERT INTO keys(id, conv, cls, hash, n, origin, pushed, vec_pushed) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',
+                 (rid, conv, memdb.cls_of(kind), memdb.text_hash(text), n, marks.get('origin'), marks.get('pushed', 0), marks.get('vec_pushed', 0)))
+    if vec is not None:
+        conn.execute('INSERT INTO vecs VALUES(?, 0, ?, ?)', (rid, conv, vec))
+    return rid
+
+
+class MergeTest(unittest.TestCase):
+    """The temporary index in the standard folder (home) and the index in its folder (far), made here from synthetic transcripts."""
+
+    def setUp(self):
+        use_lang(self, 'en')
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.addCleanup(self.close)  # first of the two to run: Windows will not remove a folder with an open file in it
+        self.home, self.far, self.projects = (os.path.join(d.name, n) for n in ('home', 'far', 'projects'))
+        self.src, self.db = os.path.join(self.home, 'index.db'), os.path.join(self.far, 'index.db')
+        self.mark = os.path.join(self.home, MARK)
+        self.where = Where(self.db, self.far, False, self.src)
+        self.open = []
+        os.makedirs(self.home)
+        with open(self.mark, 'w', encoding='utf-8') as f:
+            f.write(self.far)
+
+    def close(self):
+        for conn in self.open:
+            conn.close()
+        self.open.clear()
+
+    def index(self, path, key=None):
+        """The index at `path` (made when it is not there, encrypted with `key` as memdb makes it), open until `close`."""
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if key:
+            conn = crypto.open_db(path, key, page=crypto.INDEX_PAGE)
+            conn.executescript(memdb._SCHEMA)
+        else:
+            conn = memdb.connect(path)
+        self.open.append(conn)
+        return conn
+
+    def say(self, conv, *texts, mode='wb'):
+        """The transcript of `conv`: the texts are lines, the owner's and the answer's by turns; `mode` 'ab' adds lines to it."""
+        path = os.path.join(self.projects, 'P', conv + '.jsonl')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        lines = [(owner_line if i % 2 == 0 else claude_line)(text) for i, text in enumerate(texts)]
+        with open(path, mode) as f:
+            f.write(''.join(json.dumps(o, ensure_ascii=False) + '\n' for o in lines).encode('utf-8'))
+
+    def read(self, conn):
+        return memdb.update(conn, self.projects, home=HOME)
+
+    def embed(self, conn):
+        return embed_pending(conn, MODEL, fake)
+
+    def merge(self, key=None):
+        self.close()
+        return merge_back(self.where, key)
+
+    def free(self):
+        """Every lock either index has can be taken: nothing is held."""
+        for path in (self.db, self.src):
+            for name in indexdir.LOCKS:
+                memdb.lock(path, name, 0).close()
+
+    def two(self, key=None, other=None):
+        """Both indexes read the same two lines, the temporary one also reads two more (and has vectors for all); the pair is closed."""
+        self.say('S1', 'alpha one', 'beta two')
+        d = self.index(self.db, key)
+        self.read(d)
+        self.embed(d)
+        c = self.index(self.src, other)
+        self.read(c)
+        self.say('S1', 'gamma three', 'delta four', mode='ab')
+        self.read(c)
+        self.embed(c)
+        self.close()
+
+    def test_what_the_temporary_index_has_comes_over_what_it_forgot_goes_and_it_is_deleted(self):
+        self.say('S1', 'alpha one', 'beta two')
+        d = self.index(self.db)
+        self.read(d)
+        self.embed(d)
+        d.execute("INSERT INTO meta VALUES('merge_error', 'the disk was busy')")  # a try before this one failed
+        c = self.index(self.src)
+        self.read(c)  # the standard folder began empty and read every transcript again
+        self.say('S1', 'gamma three', 'delta four', mode='ab')
+        self.read(c)
+        lesson = lessons.save(c, 'proj', {'action': 'did a', 'symptom': 'saw b', 'cause': 'because c'})['text']
+        self.embed(c)
+        key = key_of(c, 'beta two')
+        self.assertEqual(memdb.forget(c, key[0], c.execute('SELECT pos FROM chunks WHERE text = ?', ('beta two',)).fetchone()[0]), 1)
+        line = json.dumps({'type': 'forget', 'key': list(key)}, ensure_ascii=False)
+        self.assertEqual(c.execute('SELECT line FROM outbox').fetchall(), [(line,)])
+        self.assertEqual(self.merge(), t('index_merged', dir=self.far, home=self.home, n=3))
+        d = self.index(self.db)
+        self.assertEqual(texts_of(d), sorted(['alpha one', 'gamma three', 'delta four', lesson]))
+        self.assertEqual(d.execute('SELECT count(*) FROM chunks c WHERE NOT EXISTS (SELECT 1 FROM vecs v WHERE v.chunk = c.rowid AND length(v.vec) = ?)',
+                                   (4 * DIMS,)).fetchone(), (0,))  # every record has its vector, the new ones from the temporary index
+        self.assertEqual(d.execute('SELECT count(*) FROM vecs').fetchone(), (4,))  # and none is left of the forgotten one
+        self.assertEqual(d.execute('SELECT conv, cls, hash, n FROM forgotten').fetchall(), [key])
+        self.assertEqual(d.execute('SELECT line FROM outbox').fetchall(), [(line,)])  # for the other computers
+        self.assertIsNone(memdb.meta(d, 'merge_error'))
+        self.assertEqual([os.path.exists(p) for p in (self.src, self.src + '-journal', self.mark)], [False] * 3)
+        self.free()
+
+    def test_a_record_forgotten_here_after_the_copy_was_taken_does_not_come_back(self):
+        self.say('S1', 'alpha one', 'beta two')
+        d, c = self.index(self.db), self.index(self.src)
+        for conn in (d, c):
+            self.read(conn)
+            self.embed(conn)
+        key = key_of(d, 'beta two')
+        self.assertEqual(memdb.forget(d, key[0], d.execute('SELECT pos FROM chunks WHERE text = ?', ('beta two',)).fetchone()[0]), 1)
+        line = d.execute('SELECT line FROM outbox').fetchone()
+        self.assertEqual(self.merge(), t('index_merged', dir=self.far, home=self.home, n=0))
+        d = self.index(self.db)
+        self.assertEqual(texts_of(d), ['alpha one'])
+        self.assertEqual(d.execute('SELECT chunk FROM vecs').fetchall(), [(d.execute('SELECT rowid FROM chunks').fetchone()[0],)])
+        self.assertEqual(d.execute('SELECT conv, cls, hash, n FROM forgotten').fetchall(), [key])
+        self.assertEqual(d.execute('SELECT line FROM outbox').fetchall(), [line])  # its own line, once
+        self.assertFalse(os.path.exists(self.src))
+
+    def test_a_lock_that_is_taken_leaves_everything_as_it_was_and_none_is_kept(self):
+        self.two()
+        before = {}
+        for p in (self.db, self.src):
+            with open(p, 'rb') as f:
+                before[p] = f.read()
+        for path, name in ((self.src, 'embed'), (self.db, 'sync'), (self.db, 'maintain'), (self.src, 'sync')):
+            held = memdb.lock(path, name, 0)
+            self.assertIsNone(merge_back(self.where, None), (path, name))
+            held.close()
+            self.free()  # the ones the refused try took before it met the busy one are given back
+        for p, data in before.items():
+            with open(p, 'rb') as f:
+                self.assertEqual(f.read(), data)
+        self.assertTrue(os.path.exists(self.mark))
+        self.assertEqual(self.merge(), t('index_merged', dir=self.far, home=self.home, n=2))  # and once nothing is taken it goes through
+
+    def test_a_changed_stamp_keeps_the_temporary_index_and_the_next_run_merges_nothing_and_deletes_it(self):
+        self.two()
+        with mock.patch.object(encrypt, '_stamp', side_effect=[b'before', b'after']):  # a run that began earlier wrote to it meanwhile
+            self.assertIsNone(merge_back(self.where, None))
+        self.assertTrue(os.path.exists(self.src) and os.path.exists(self.mark))
+        self.assertEqual(texts_of(self.index(self.db)), ['alpha one', 'beta two', 'delta four', 'gamma three'])  # what was there is merged already
+        self.assertEqual(self.merge(), t('index_merged', dir=self.far, home=self.home, n=0))
+        self.assertEqual([os.path.exists(p) for p in (self.src, self.mark)], [False, False])
+
+    def test_the_read_marks_of_the_transcripts_come_over_so_the_next_update_adds_no_twin(self):
+        self.two()
+        self.assertEqual(self.merge(), t('index_merged', dir=self.far, home=self.home, n=2))
+        d = self.index(self.db)
+        self.say('S1', 'epsilon five', mode='ab')
+        self.assertEqual(self.read(d)['rows'], 1)  # gamma and delta are not read again as new
+        self.assertEqual(texts_of(d), ['alpha one', 'beta two', 'delta four', 'epsilon five', 'gamma three'])
+
+    def test_the_handoffs_written_beside_the_temporary_index_go_to_the_folder_that_stays(self):
+        self.two()
+        old, new = (os.path.join(p, 'handoffs') for p in (self.home, self.far))
+        os.makedirs(old)
+        os.makedirs(new)
+        for folder, name, text in ((old, 'S1.md', 'new'), (old, 'S2.md', 'taken'), (new, 'S2.md', 'kept'), (new, 'S3.md', 'there')):
+            with open(os.path.join(folder, name), 'w') as f:
+                f.write(text)
+        self.assertEqual(self.merge(), t('index_merged', dir=self.far, home=self.home, n=2))
+        self.assertEqual(sorted(os.listdir(new)), ['S1.md', 'S2.md', 'S3.md'])
+        for name, text in (('S1.md', 'new'), ('S2.md', 'kept')):  # what D: has is not written over
+            with open(os.path.join(new, name)) as f:
+                self.assertEqual(f.read(), text)
+        self.assertEqual(os.listdir(old), ['S2.md'])
+
+    def check_pair(self, db_key, src_key):
+        self.two(db_key, src_key)
+        self.assertEqual(self.merge(db_key or src_key), t('index_merged', dir=self.far, home=self.home, n=2))
+        d = self.index(self.db, db_key)
+        self.assertEqual(texts_of(d), ['alpha one', 'beta two', 'delta four', 'gamma three'])
+        self.assertEqual(d.execute('SELECT count(*) FROM vecs WHERE length(vec) = ?', (4 * DIMS,)).fetchone(), (4,))
+        self.assertEqual(crypto.is_encrypted(self.db), bool(db_key))
+        self.assertFalse(os.path.exists(self.src))
+
+    def test_an_encrypted_pair_merges_with_its_key_and_its_16_kb_pages(self):
+        key = secrets.token_bytes(32)
+        self.check_pair(key, key)
+        d = self.index(self.db, key)
+        self.assertEqual(d.execute('PRAGMA cipher_page_size').fetchone(), ('16384',))
+        with self.assertRaises(ValueError):
+            crypto.open_db(self.db, key)  # the default page does not open it: the merge kept the pages it has
+
+    def test_an_encrypted_index_takes_in_an_open_temporary_one(self):
+        self.check_pair(secrets.token_bytes(32), None)
+
+    def test_two_open_indexes_need_no_key(self):
+        self.check_pair(None, None)
+
+    def test_an_open_index_and_an_encrypted_temporary_one_is_a_failed_merge_that_changes_nothing(self):
+        key = secrets.token_bytes(32)
+        self.two(None, key)
+        why = t('index_merge_mixed')
+        self.assertEqual(self.merge(key), t('index_merge_failed', dir=self.far, home=self.home, e=why))
+        d = self.index(self.db)
+        self.assertEqual((memdb.meta(d, 'merge_error'), texts_of(d)), (why, ['alpha one', 'beta two']))
+        self.assertTrue(all(os.path.exists(p) for p in (self.src, self.mark)))
+        self.free()
+
+    def test_the_failed_merge_text_names_both_folders_and_the_reason_in_every_language(self):
+        for lang in texts.TABLES:
+            with mock.patch.object(texts, 'lang', lang):
+                text = t('index_merge_failed', dir='THE-DIR', home='THE-HOME', e='THE-WHY')
+            self.assertTrue(all(word in text for word in ('THE-DIR', 'THE-HOME', 'THE-WHY')), lang)
+
+    def test_an_error_is_told_and_kept_in_the_index_and_goes_when_a_try_succeeds(self):
+        self.two()
+        with mock.patch.object(indexdir, 'absorb', side_effect=OSError('the disk is gone')):
+            self.assertEqual(merge_back(self.where, None), t('index_merge_failed', dir=self.far, home=self.home, e='the disk is gone'))
+        self.assertEqual(memdb.meta(self.index(self.db), 'merge_error'), 'the disk is gone')
+        self.assertTrue(os.path.exists(self.src))
+        self.assertEqual(self.merge(), t('index_merged', dir=self.far, home=self.home, n=2))
+        self.assertIsNone(memdb.meta(self.index(self.db), 'merge_error'))
+
+    def test_a_temporary_index_that_cannot_be_deleted_is_a_failed_merge_and_the_next_run_deletes_it(self):
+        self.two()
+        with mock.patch.object(encrypt, '_remove', side_effect=PermissionError('in use')):
+            self.assertEqual(merge_back(self.where, None), t('index_merge_failed', dir=self.far, home=self.home, e='in use'))
+        self.assertEqual(memdb.meta(self.index(self.db), 'merge_error'), 'in use')
+        self.assertEqual(self.merge(), t('index_merged', dir=self.far, home=self.home, n=0))
+        self.assertIsNone(memdb.meta(self.index(self.db), 'merge_error'))
+
+    def test_a_mark_that_cannot_be_deleted_is_no_failed_merge_once_the_temporary_index_is_gone(self):  # a note that nothing would ever take away
+        self.two()
+        remove = os.remove
+
+        def refuse_the_mark(path):
+            if path == self.mark:
+                raise PermissionError('in use')
+            remove(path)
+
+        with mock.patch('os.remove', refuse_the_mark):
+            self.assertEqual(merge_back(self.where, None), t('index_merged', dir=self.far, home=self.home, n=2))
+        self.assertEqual([os.path.exists(self.src), os.path.exists(self.mark)], [False, True])
+        self.assertIsNone(memdb.meta(self.index(self.db), 'merge_error'))
+
+    def test_a_missing_or_wrong_key_is_a_failed_merge_that_changes_nothing(self):
+        key = secrets.token_bytes(32)
+        self.two(key, key)
+        for wrong, why in ((None, 'key_missing'), (secrets.token_bytes(32), 'key_wrong')):
+            self.assertEqual(merge_back(self.where, wrong), t('index_merge_failed', dir=self.far, home=self.home, e=t(why)))
+            self.assertTrue(all(os.path.exists(p) for p in (self.src, self.mark)))
+        self.assertEqual(self.merge(key), t('index_merged', dir=self.far, home=self.home, n=2))
+
+
+class AbsorbTest(unittest.TestCase):
+    """absorb on indexes with hand-made rows: what each step does. `a` is the index in its folder, `b` the temporary one."""
+
+    def setUp(self):
+        use_lang(self, 'en')
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.db, self.src = (os.path.join(d.name, n, 'index.db') for n in ('far', 'home'))
+        self.a, self.b = memdb.connect(self.db), memdb.connect(self.src)
+        for conn in (self.a, self.b):
+            self.addCleanup(conn.close)
+
+    def absorb(self):
+        return absorb(self.db, self.src, None)
+
+    def model(self, a, b):
+        for conn, name in ((self.a, a), (self.b, b)):
+            if name:
+                conn.execute("INSERT INTO meta VALUES('embed_model', ?)", (name,))
+
+    def test_new_records_come_with_their_marks_and_vectors_and_a_second_run_adds_nothing(self):
+        self.model('m1', 'm1')
+        put(self.a, 'S', 'shared', vec=REAL)
+        put(self.b, 'S', 'shared', vec=REAL)
+        put(self.b, 'S', 'fresh', pos=5, vec=OTHER, origin='OTHER-PC', pushed=1, vec_pushed=1)
+        put(self.b, 'S', 'unsent', pos=6)
+        self.assertEqual(self.absorb(), {'records': 2, 'vectors': 1, 'forgets': 0})
+        rows = self.a.execute('SELECT c.text, c.pos, c.kind, k.origin, k.pushed, k.vec_pushed FROM chunks c JOIN keys k ON k.id = c.rowid ORDER BY c.pos').fetchall()
+        self.assertEqual(rows, [('shared', 1, 'owner', None, 0, 0), ('fresh', 5, 'owner', 'OTHER-PC', 1, 1), ('unsent', 6, 'owner', None, 0, 0)])
+        self.assertEqual(self.a.execute('SELECT c.text, v.vec FROM vecs v JOIN chunks c ON c.rowid = v.chunk ORDER BY c.pos').fetchall(), [('shared', REAL), ('fresh', OTHER)])
+        self.assertEqual(self.absorb(), {'records': 0, 'vectors': 0, 'forgets': 0})
+        self.assertEqual(self.a.execute('SELECT count(*) FROM chunks').fetchone(), (3,))
+
+    def test_vectors_of_another_model_stay_behind(self):
+        self.model('m1', 'm2')
+        put(self.b, 'S', 'fresh', vec=REAL)
+        self.assertEqual(self.absorb(), {'records': 1, 'vectors': 0, 'forgets': 0})
+        self.assertEqual((self.a.execute('SELECT count(*) FROM vecs').fetchone(), memdb.meta(self.a, 'embed_model')), ((0,), 'm1'))
+
+    def test_an_index_with_no_model_takes_the_one_of_the_vectors_it_gets(self):
+        self.model(None, 'm2')
+        put(self.b, 'S', 'fresh', vec=REAL)
+        self.assertEqual(self.absorb(), {'records': 1, 'vectors': 1, 'forgets': 0})
+        self.assertEqual((self.a.execute('SELECT count(*) FROM vecs').fetchone(), memdb.meta(self.a, 'embed_model')), ((1,), 'm2'))
+
+    def test_a_vector_the_index_lacks_comes_in_place_of_the_empty_one_and_a_real_one_stays(self):
+        self.model('m1', 'm1')
+        lacking = put(self.a, 'S', 'lacking', pos=1, vec=b'')  # it failed to embed here
+        put(self.b, 'S', 'lacking', pos=1, vec=REAL, vec_pushed=1)
+        kept = put(self.a, 'S', 'kept', pos=2, vec=OTHER)
+        put(self.b, 'S', 'kept', pos=2, vec=REAL)
+        self.assertEqual(self.absorb(), {'records': 0, 'vectors': 1, 'forgets': 0})
+        self.assertEqual(self.a.execute('SELECT chunk, part, vec FROM vecs ORDER BY chunk').fetchall(), [(lacking, 0, REAL), (kept, 0, OTHER)])
+        self.assertEqual(self.a.execute('SELECT vec_pushed FROM keys WHERE id = ?', (lacking,)).fetchone(), (1,))
+
+    def test_a_forget_of_the_temporary_index_is_done_here_a_forget_here_stays_and_the_outbox_is_not_doubled(self):
+        put(self.a, 'S', 'gone here', pos=1, vec=REAL)
+        put(self.b, 'S', 'gone here', pos=1)
+        put(self.a, 'S', 'gone there', pos=2)
+        put(self.b, 'S', 'gone there', pos=2)  # forgotten here, and the temporary index still has it
+        self.assertEqual((memdb.forget(self.b, 'S', 1), memdb.forget(self.a, 'S', 2)), (1, 1))
+        self.assertEqual(self.absorb(), {'records': 0, 'vectors': 0, 'forgets': 1})
+        count = lambda table: self.a.execute('SELECT count(*) FROM ' + table).fetchone()[0]
+        self.assertEqual([count(n) for n in ('chunks', 'keys', 'vecs', 'forgotten', 'outbox')], [0, 0, 0, 2, 2])  # an own line and the temporary one's
+        lines = sorted(self.a.execute('SELECT line FROM outbox').fetchall())
+        self.assertEqual(self.absorb()['forgets'], 0)
+        self.assertEqual(sorted(self.a.execute('SELECT line FROM outbox').fetchall()), lines)
+
+    def test_a_report_of_the_temporary_index_replaces_the_one_here(self):
+        put(self.a, 'AG', 'first', kind='sub', pos=1)
+        put(self.a, 'AG', 'last', kind='report', pos=2)
+        put(self.b, 'AG', 'first', kind='sub', pos=1)
+        put(self.b, 'AG', 'last', kind='sub', pos=2)
+        put(self.b, 'AG', 'newest', kind='report', pos=3)
+        self.assertEqual(self.absorb()['records'], 1)
+        self.assertEqual(self.a.execute('SELECT text, kind FROM chunks ORDER BY pos').fetchall(), [('first', 'sub'), ('last', 'sub'), ('newest', 'report')])
+
+    def test_conversations_projects_memory_files_peers_and_read_marks_merge_the_way_sync_takes_them_in(self):
+        a, b = self.a, self.b
+        a.executemany('INSERT INTO convs VALUES(?, ?, ?, ?)', [('S', '', '2026-10-02', '2026-10-05')])
+        b.executemany('INSERT INTO convs VALUES(?, ?, ?, ?)', [('S', '', '2026-10-01', '2026-10-04'), ('T', 'S', '2026-10-06', '2026-10-07')])
+        a.execute("INSERT INTO conv_projects VALUES('S', '~p1')")
+        b.executemany('INSERT INTO conv_projects VALUES(?, ?)', [('S', '~p1'), ('S', '~p2')])
+        a.execute("INSERT INTO mem_files VALUES('proj', 'f.md', 'A', 'f.md', 'h1')")
+        b.executemany('INSERT INTO mem_files VALUES(?, ?, ?, ?, ?)', [('proj', 'f.md', 'B', 'f.md', 'h2'), ('proj', 'g.md', 'B', 'g.md', 'h3')])
+        a.executemany('INSERT INTO peers(machine, last_batch, gen) VALUES(?, ?, ?)', [('M1', 3, 0), ('M2', 1, 1), ('M3', 4, 0)])
+        b.executemany('INSERT INTO peers(machine, last_batch, skipped, gen) VALUES(?, ?, ?, ?)', [('M1', 5, '[4]', 0), ('M2', 9, '[]', 0), ('M4', 2, '[]', 0)])
+        a.executemany('INSERT INTO files VALUES(?, ?, ?)', [('p1', 100, 100), ('p2', 50, 50)])
+        b.executemany('INSERT INTO files VALUES(?, ?, ?)', [('p1', 200, 190), ('p2', 40, 40), ('p3', 10, 10)])
+        self.absorb()
+        self.assertEqual(a.execute('SELECT * FROM convs ORDER BY conv').fetchall(), [('S', '', '2026-10-01', '2026-10-05'), ('T', 'S', '2026-10-06', '2026-10-07')])
+        self.assertEqual(a.execute('SELECT * FROM conv_projects ORDER BY project').fetchall(), [('S', '~p1'), ('S', '~p2')])
+        self.assertEqual(a.execute('SELECT project, name, source, hash FROM mem_files ORDER BY name').fetchall(), [('proj', 'f.md', 'A', 'h1'), ('proj', 'g.md', 'B', 'h3')])
+        self.assertEqual(a.execute('SELECT machine, last_batch, skipped, gen FROM peers ORDER BY machine').fetchall(),
+                         [('M1', 5, '[4]', 0), ('M2', 1, '[]', 1), ('M3', 4, '[]', 0), ('M4', 2, '[]', 0)])  # the one that has gone further, a new generation beats a long run
+        self.assertEqual(a.execute('SELECT * FROM files ORDER BY path').fetchall(), [('p1', 200, 190), ('p2', 50, 50), ('p3', 10, 10)])
+
+    def test_a_key_that_did_not_come_over_is_no_merge_at_all(self):
+        put(self.b, 'S', 'good', pos=1)
+        put(self.b, 'S', 'broken', pos=2)
+        self.b.execute("DELETE FROM chunks WHERE text = 'broken'")  # a key with no record: it cannot come over
+        with self.assertRaises(ValueError) as e:
+            self.absorb()
+        self.assertEqual(str(e.exception), t('index_merge_differs'))
+        self.assertEqual([self.a.execute('SELECT count(*) FROM ' + n).fetchone()[0] for n in ('chunks', 'keys')], [0, 0])  # the good one is undone too
+
+
+class OwnBatchTest(unittest.TestCase):
+    """The batches the temporary index put out (as the same computer) are the next ones of the index in its folder: no error, no twin."""
+
+    def test_the_index_in_its_folder_goes_on_with_the_batch_after_the_temporary_ones(self):
+        use_lang(self, 'en')
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        root, share = d.name, os.path.join(d.name, 'share')
+        os.makedirs(share)
+        digest = lambda m: None
+        c = Computer(root, share, 'AIJ-HP')  # the standard folder: its index is the temporary one
+        self.addCleanup(c.close)
+        far = os.path.join(root, 'far', 'index.db')
+        c.say('conv-a', 'first question', 'first answer')
+        d1 = memdb.connect(far, home=c.home)  # the index in its folder, before the disk went away: it put out batch 1
+        memdb.update(d1, c.projects, home=c.home)
+        self.assertEqual(cgsync.sync(d1, share, c.name, MODEL, 60, None, c.cwd, c.home, digest=digest)['own_batch'], 1)
+        d1.close()
+        c.say('conv-a', 'second question', 'second answer', mode='ab')  # the disk is away: the standard folder reads, takes batch 1 as its own, puts out batch 2
+        c.index()
+        out = c.sync(memory=False)
+        self.assertEqual((out['errors'], out['pushed'], out['own_batch']), ([], 2, 2))
+        c.close()
+        with open(os.path.join(os.path.dirname(c.db), MARK), 'w') as f:
+            f.write(os.path.dirname(far))
+        self.assertEqual(merge_back(Where(far, os.path.dirname(far), False, c.db), None),
+                         t('index_merged', dir=os.path.dirname(far), home=os.path.dirname(c.db), n=2))
+        d2 = memdb.connect(far, home=c.home)
+        self.addCleanup(d2.close)
+        self.assertEqual(d2.execute('SELECT last_batch FROM peers WHERE machine = ?', (c.name,)).fetchone(), (2,))
+        c.say('conv-a', 'third question', 'third answer', mode='ab')
+        self.assertEqual(memdb.update(d2, c.projects, home=c.home)['rows'], 2)  # the new lines only
+        out = cgsync.sync(d2, share, c.name, MODEL, 60, None, c.cwd, c.home, digest=digest)
+        self.assertEqual((out['errors'], out['pushed'], out['pulled'], out['own_batch']), ([], 2, 0, 3))
+        rows = d2.execute('SELECT text FROM chunks').fetchall()
+        self.assertEqual((len(rows), len(set(rows))), (6, 6))
+        b = Computer(root, share, 'MTLAPTOP')  # another computer reads all three batches: no record twice
+        self.addCleanup(b.close)
+        self.assertEqual(b.sync(memory=False)['errors'], [])
+        self.assertEqual(b.texts(), sorted(r[0] for r in rows))
 
 
 if __name__ == '__main__':

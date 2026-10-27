@@ -456,8 +456,10 @@ def main(argv):
             a.db = a.where.db
             if a.where.configured:  # the settings of an index in that folder are still the home ones
                 crypto.INDEX_DIRS.add(crypto.norm(a.where.configured))
+        # the folder is back and the home folder has a temporary index: it is merged first, and its locks are given back before the command
+        merged = a.where and a.where.merge_from and indexdir.merge_back(a.where, crypto.load_key(crypto.settings_path(a.db)))
         out, code = a.fn(a), 0
-        note = indexdir.notice(a.where)
+        note = merged or indexdir.notice(a.where)
         if note and isinstance(out, dict):
             out['index_notice'] = note
     except _Help as h:

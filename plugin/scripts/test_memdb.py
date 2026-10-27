@@ -51,6 +51,18 @@ class LockTest(unittest.TestCase):
             gc.collect()  # the lock that did not open stays in the traceback of its error until collected, and Windows will not remove its file
             memdb.lock(db, 'sync', 0).close()
 
+    def test_a_lock_that_was_busy_does_not_keep_its_file_open(self):  # a later task deletes the lock files, and Windows refuses an open one
+        with tempfile.TemporaryDirectory() as d:
+            db = os.path.join(d, 'index.db')
+            held = memdb.lock(db, 'sync', 0)
+            try:
+                memdb.lock(db, 'sync', 0)
+            except sqlite3.OperationalError as e:
+                refused = e  # its traceback keeps the frame of lock(), and the connection in it, alive
+            held.close()
+            os.remove(db + '.sync.lock')
+            self.assertTrue(refused)
+
 
 class EncryptedIndexTest(unittest.TestCase):
     def setUp(self):

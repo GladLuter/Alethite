@@ -594,6 +594,47 @@ class CgTest(unittest.TestCase):
             out = cg.maintain(a, battery=lambda: True, digest=lambda m: None)
         self.assertEqual((out['errors'], out['sync']['pushed'], texts.lang), ([], 2, 'uk'))
 
+    def temporary_index(self):
+        """The folder is back with an empty index, and the standard folder has the temporary one, marked, with two records: (far, home)."""
+        far = os.path.join(self.tmp, 'far')
+        home = self.home_dir(indexDir=far)
+        self.write('P/S1.jsonl', [owner_line('вопрос'), claude_line('ответ')])
+        memdb.connect(os.path.join(far, 'index.db')).close()
+        conn = memdb.connect(os.path.join(home, 'index.db'))
+        memdb.update(conn, self.projects)
+        conn.close()
+        with open(os.path.join(home, indexdir.MARK), 'w', encoding='utf-8') as f:
+            f.write(far)
+        return far, home
+
+    def test_a_temporary_index_is_merged_before_the_command_and_the_answer_says_so_once(self):
+        far, home = self.temporary_index()
+        share = self.share_dir()
+        code, out, _ = self.main_home('sync', '--sync-dir', share, '--machine', 'M', '--max-seconds', '5')  # takes the lock a merge holds meanwhile
+        self.assertEqual((code, out['errors'], out['pushed'], out['index_notice']), (0, [], 2, t('index_merged', dir=far, home=home, n=2)))
+        self.assertEqual([os.path.exists(os.path.join(home, n)) for n in ('index.db', indexdir.MARK)], [False, False])
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, out['db'], out['rows']), (0, os.path.join(far, 'index.db'), 2))
+        self.assertNotIn('index_notice', out)
+
+    def test_a_merge_that_waits_for_a_lock_says_nothing_and_the_command_works_on_the_index_in_its_folder(self):
+        far, home = self.temporary_index()
+        held = memdb.lock(os.path.join(home, 'index.db'), 'maintain', 0)  # the background job is running on the temporary one
+        self.addCleanup(held.close)
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, out['db'], out['rows'], out['index_dir']), (0, os.path.join(far, 'index.db'), 0, {'configured': far, 'fallback': False, 'notes': []}))
+        self.assertNotIn('index_notice', out)
+        self.assertTrue(os.path.exists(os.path.join(home, 'index.db')))
+
+    def test_a_merge_that_fails_says_why_the_command_still_runs_and_health_shows_it_too(self):
+        far, home = self.temporary_index()
+        with mock.patch.object(indexdir, 'absorb', side_effect=OSError('диск занят')):
+            code, out, _ = self.main_home('status')
+        want = t('index_merge_failed', dir=far, home=home, e='диск занят')
+        self.assertEqual((code, out['db'], out['index_notice'], out['index_dir']['notes']), (0, os.path.join(far, 'index.db'), want, [want]))
+        code, out, _ = self.main_home('status')  # the next run tries again, and what it merges takes the note away
+        self.assertEqual((code, out['rows'], out['index_notice'], out['index_dir']['notes']), (0, 2, t('index_merged', dir=far, home=home, n=2), []))
+
 
 @unittest.skipUnless(os.name == 'nt', 'user32 is Windows only')
 class DialogsTest(unittest.TestCase):
