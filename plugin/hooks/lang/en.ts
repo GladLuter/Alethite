@@ -210,6 +210,7 @@ export const en = {
         ? 'This computer joined the encryption: it has the key now, and the index and what it puts in the sync folder are encrypted.'
         : 'Encryption is on: the index and what this computer puts in the sync folder are encrypted.',
   encryptUnfinished: 'cg-encrypt: not finished. Repeating the command is safe: it goes on from where it stopped.',
+  encryptTimeout: (action: string) => `cg-encrypt ${action} did not finish in 10 minutes and was stopped. Every step is safe to repeat: run /cg-encrypt ${action} again, or check /cg-encrypt status.`,
   cgEncryptFailed: 'cg-encrypt: did not work, the reason is in the toast.',
   healthEncryptionOn: (cipher: string) => `Encryption: on (${cipher})`,
   healthEncryptionOff: 'Encryption: off',

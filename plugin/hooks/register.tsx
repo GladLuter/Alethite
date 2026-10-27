@@ -7,7 +7,7 @@ import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './mem
 import type { Compression } from './memory'
 import { FOLDER, flush, notePath, SUMMARY_PATH, summaryNote } from './notes'
 import type { Note } from './notes'
-import { encryptArgs, encryptHealth, encryptReply } from './encrypt'
+import { encryptArgs, encryptHealth, encryptReply, isTimeout } from './encrypt'
 import type { EncryptResult, EncryptStatus } from './encrypt'
 import { healthLines, message, parseCg } from './py'
 import type { LastError } from './py'
@@ -473,9 +473,9 @@ export const register: Register = (on, options) => {
     }
   })
 
-  // on, join and off open windows in the Python process (the recovery code, the questions) and can run long: the locks alone wait up to
-  // 6 minutes, the owner has the windows, then the push to the sync folder takes up to 10. The host allows a process.run 10 minutes at
-  // most (1_800_000 is refused outright); a run cut there is safe to repeat. The state asks nothing.
+  // on, join and off open windows in the Python process (the recovery code, the questions), and the owner's time in them counts. The host
+  // cuts a process.run at 10 minutes (1_800_000 is refused outright), so cg.py keeps its own waits near 190 s of locks and 120 s of push
+  // (ENCRYPT_WAITS, ENCRYPT_PUSH_SECONDS); a run cut all the same is safe to repeat. The state asks nothing.
   on('command.run', { command: 'cg-encrypt' }, async ($, e) => {
     const args = encryptArgs(e.args, syncDir, shareCipher, embedModel)
     if (args === null) return { text: T.cgEncryptUsage }
@@ -485,8 +485,10 @@ export const register: Register = (on, options) => {
       const r = await runCg($, python, args, isState ? 120_000 : 600_000)
       return { text: isState ? encryptHealth(r as unknown as EncryptStatus, shareCipher).join('\n') : encryptReply(r as unknown as EncryptResult) }
     } catch (err) {
-      await fail($, 'cg-encrypt', err)
-      return { text: T.cgEncryptFailed }
+      // cut at the time limit: not "Python did not start" (what runCg says of any failure of the process), but what to do
+      const cut = !isState && isTimeout(message(err)) ? T.encryptTimeout(args[1]!) : undefined
+      await fail($, 'cg-encrypt', cut ?? err)
+      return { text: cut ?? T.cgEncryptFailed }
     }
   })
 

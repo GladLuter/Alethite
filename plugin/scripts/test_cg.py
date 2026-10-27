@@ -367,6 +367,8 @@ class CgTest(unittest.TestCase):
             self.main_json('encrypt', 'on', '--sync-dir', '', '--share-cipher', 'sqlcipher')  # given on the line: the line wins
             code, out, _ = self.main_json('encrypt', 'on', '--share-cipher', 'rot13')
         self.assertEqual([(a[1], a[2]) for a, _ in calls], [(share, 'cryptography'), ('', 'sqlcipher')])
+        self.assertEqual([kw['seconds'] for _, kw in calls], [120, 120])  # the push is short: the mod gives the whole command 600 s at most
+        self.assertLess(sum(cg.ENCRYPT_WAITS.values()) + cg.ENCRYPT_PUSH_SECONDS, 400)  # and the owner is left the rest, 200 s and more, in the windows
         self.assertEqual(code, 1)
         self.settings(shareCipher='rot13')
         with mock.patch.object(encrypt, 'on', side_effect=AssertionError):

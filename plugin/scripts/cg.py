@@ -278,7 +278,11 @@ def _sync(a):
                      key=_key(a), cipher=cipher)
 
 
-ENCRYPT_WAITS = {'maintain': 300, 'embed': 10, 'sync': 60}  # how long encrypt waits for each lock of the background job, in the job's order
+ENCRYPT_WAITS = {'maintain': 120, 'embed': 10, 'sync': 60}  # how long encrypt waits for each lock of the background job, in the job's order
+# How long encrypt pushes to the sync folder. The mod gives the whole command 600 s at most (the host's cap on a process); the locks (190 s at
+# worst) and this leave about 290 s for the owner in the windows. What a big push leaves undone ends as note_share_pending: a repeat or the job
+# finishes it.
+ENCRYPT_PUSH_SECONDS = 120
 
 
 def _encrypt(a):
@@ -288,7 +292,7 @@ def _encrypt(a):
         return encrypt.status(a.db)  # from the files alone: no lock, no connection
     s, _ = _settings(crypto.settings_path(a.db))
     sync_dir = _sync_dir(s) if a.sync_dir is None else a.sync_dir
-    kw = dict(model=a.model, memory_dir=_memory_dir(a.memory_dir), project_cwd=a.project_cwd)
+    kw = dict(model=a.model, memory_dir=_memory_dir(a.memory_dir), project_cwd=a.project_cwd, seconds=ENCRYPT_PUSH_SECONDS)
     os.makedirs(os.path.dirname(a.db), exist_ok=True)  # the lock files lie there; memdb.connect would open the index (and refuse an encrypted one)
     locks = []
     try:

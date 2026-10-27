@@ -1222,6 +1222,18 @@ test('/cg-encrypt: cg.py fails: a toast with its words, a short reply, the error
   expect(m.store.get('lastError')).toMatchObject({ where: 'cg-encrypt', msg: 'ValueError: the recovery code is not right' })
 })
 
+test('/cg-encrypt: a run the host stopped at its time limit says so and what to do, not that Python did not start; a start failure still says the latter', async ($, on) => {
+  let why = 'aborted: still running after 600000ms'
+  const m = await started($, on, a => (a[0] === 'encrypt' ? { deny: why } : ran('{}')))
+  const run = async (args: string) => (await ($ as any).command.run({ command: 'cg-encrypt', args })).text
+  expect(await run('join')).toBe(T.encryptTimeout('join'))
+  expect(m.toasts).toEqual([T.toast(T.encryptWindow), T.toast(T.failed('cg-encrypt', T.encryptTimeout('join')))])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-encrypt', msg: T.encryptTimeout('join') })
+  why = 'failed to start: ENOENT'
+  expect(await run('on')).toBe(T.cgEncryptFailed)
+  expect(m.toasts.at(-1)).toContain(T.pythonMissing('python'))
+})
+
 test('/cg-health: the encryption line, from what cg.py status reports', async ($, on) => {
   wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) =>
     e.argv.includes('status') ? ran(JSON.stringify({ db: 'd', convs: 0, rows: 0, size_mb: 0, encryption: { ...encrypted, notes: ['n1'] } })) : noTurn(),

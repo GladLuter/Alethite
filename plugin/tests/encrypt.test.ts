@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { encryptArgs, encryptHealth, encryptReply } from '../hooks/encrypt'
+import { encryptArgs, encryptHealth, encryptReply, isTimeout } from '../hooks/encrypt'
 import { T } from '../hooks/text'
 
 test('encrypt args: nothing or status is the state; on, join and off carry the folder, the cipher and the model', () => {
@@ -35,4 +35,14 @@ test('encrypt health: a key with an index that is still open is not "on"; its no
 test('encrypt health: a key that cannot be read is told by cg.py in the notes, nothing else is added', () => {
   expect(encryptHealth({ on: true, db: 'encrypted', key: 'unreadable', notes: ['the key cannot be opened'] }, 'cryptography')).toEqual([T.healthEncryptionOn('cryptography'), 'the key cannot be opened'])
   expect(encryptHealth({ on: true, db: 'plain', key: 'unreadable', notes: ['the key cannot be opened'] }, 'sqlcipher')).toEqual([T.healthEncryptionOff, 'the key cannot be opened'])
+})
+
+// the engine words it as `<plugin>: $.process.run(<command>) aborted: still running after <N>ms`; runCg puts it in brackets at the end of its own text
+test('encrypt timeout: the words of the engine at the end of the message, and no other text', () => {
+  const lead = `${T.pythonMissing('python')} (cacheguard: $.process.run(python)`
+  expect(isTimeout(`${lead} aborted: still running after 600000ms)`)).toBe(true)
+  expect(isTimeout(`${lead} failed to start: ENOENT: no such file or directory)`)).toBe(false)
+  expect(isTimeout(`${lead} aborted)`)).toBe(false) // stopped by the session, not by the clock
+  expect(isTimeout('ValueError: the push aborted: still running after 5ms of nothing')).toBe(false)
+  expect(isTimeout('')).toBe(false)
 })
