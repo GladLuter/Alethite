@@ -67,6 +67,27 @@ class SettingsTest(unittest.TestCase):
     def test_settings_path_is_beside_the_db(self):
         self.assertEqual(crypto.settings_path(os.path.join('x', 'index.db')), os.path.join('x', 'settings.json'))
 
+    def test_settings_path_is_home_for_a_registered_dir(self):
+        with mock.patch.object(crypto, 'HOME_DIR', 'H'), mock.patch.object(crypto, 'INDEX_DIRS', {crypto.norm('d:/x/')}):
+            self.assertEqual(crypto.settings_path('D:\\X\\index.db'), os.path.join('H', 'settings.json'))  # written one way, asked another
+            self.assertEqual(crypto.settings_path('d:/x/index.db'), os.path.join('H', 'settings.json'))
+            self.assertEqual(crypto.settings_path('D:\\Y\\index.db'), os.path.join('D:\\Y', 'settings.json'))  # not registered: beside the db
+
+    def test_set_fields_keeps_the_others(self):
+        self.write('\ufeff{"encryptionKey": "dpapi:abc", "language": "ru"}')
+        crypto.set_fields(self.path, {'indexDir': 'D:\\X'})
+        with open(self.path, encoding='utf-8-sig') as f:
+            self.assertEqual(json.load(f), {'encryptionKey': 'dpapi:abc', 'language': 'ru', 'indexDir': 'D:\\X'})
+        crypto.set_fields(self.path, {'indexDir': None, 'nothing': None})  # None takes a key out, one that is not there is no error
+        with open(self.path, encoding='utf-8-sig') as f:
+            self.assertEqual(json.load(f), {'encryptionKey': 'dpapi:abc', 'language': 'ru'})
+        self.assertFalse(os.path.exists(self.path + '.cg-tmp'))
+        self.write('[1]')
+        with self.assertRaises(crypto.SettingsBroken):  # a file that cannot be read is not written over
+            crypto.set_fields(self.path, {'indexDir': 'D:\\X'})
+        self.assertEqual(self.raw(), b'[1]')
+        self.assertFalse(os.path.exists(self.path + '.cg-tmp'))
+
     @dpapi
     def test_dpapi_roundtrip(self):
         blob = crypto.protect(KEY)

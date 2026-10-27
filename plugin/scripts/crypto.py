@@ -25,9 +25,18 @@ INDEX_PAGE = 16384  # the encrypted index only: the vector read of recall is 0.2
 _MODULE = {'sqlcipher': 'sqlcipher3', 'cryptography': 'cryptography.hazmat.primitives.ciphers.aead'}
 
 
+HOME_DIR = os.path.join(os.path.expanduser('~'), '.claude', 'cacheguard')  # the mod's own folder: the settings, and the index unless moved
+INDEX_DIRS = set()  # norm() of every other folder an index lives in: the settings of such an index are still the home ones, the key is there
+
+
+def norm(path):
+    return os.path.normcase(os.path.abspath(path))
+
+
 def settings_path(db):
-    """The mod's settings file lies beside the database, as cg.py reads it."""
-    return os.path.join(os.path.dirname(db), 'settings.json')
+    """The mod's settings file lies beside the database, as cg.py reads it; but an index in a registered folder uses the home one."""
+    d = os.path.dirname(db)
+    return os.path.join(HOME_DIR if norm(d) in INDEX_DIRS else d, 'settings.json')
 
 
 def _check(key):
@@ -123,20 +132,27 @@ def load_key(settings):
     return key
 
 
-def save_key(settings, key, cipher=None):
-    """Puts the key into the settings file (None takes it out) and, if given, shareCipher beside it, in one write; the other fields as they were.
-    The background job reads the cipher from this file only, so it must hold the one the sync folder was switched to."""
+def set_fields(settings, updates):
+    """Writes `updates` into the settings file in one atomic write (a None value takes its key out); the other fields as they were."""
     s = _read(settings)
-    if key is None:
-        s.pop(KEY_FIELD, None)
-    else:
-        s[KEY_FIELD] = PREFIX + base64.b64encode(protect(key)).decode()
-    if cipher is not None:
-        s['shareCipher'] = cipher
+    for k, v in updates.items():
+        if v is None:
+            s.pop(k, None)
+        else:
+            s[k] = v
     tmp = settings + '.cg-tmp'
     with open(tmp, 'wb') as f:
         f.write(json.dumps(s, ensure_ascii=False, indent=2).encode('utf-8'))
     os.replace(tmp, settings)
+
+
+def save_key(settings, key, cipher=None):
+    """Puts the key into the settings file (None takes it out) and, if given, shareCipher beside it, in one write; the other fields as they were.
+    The background job reads the cipher from this file only, so it must hold the one the sync folder was switched to."""
+    up = {KEY_FIELD: None if key is None else PREFIX + base64.b64encode(protect(key)).decode()}
+    if cipher is not None:  # none given, none taken: set_fields would read None as "remove"
+        up['shareCipher'] = cipher
+    set_fields(settings, up)
 
 
 def need(cipher):

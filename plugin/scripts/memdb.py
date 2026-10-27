@@ -11,7 +11,7 @@ from redact import redact
 from texts import t
 from transcripts import lp, project_key, read_records
 
-DB_PATH = os.path.join(os.path.expanduser('~'), '.claude', 'cacheguard', 'index.db')
+DB_PATH = os.path.join(crypto.HOME_DIR, 'index.db')
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, size INTEGER, offset INTEGER);
 CREATE TABLE IF NOT EXISTS convs(conv TEXT PRIMARY KEY, parent TEXT, first_ts TEXT, last_ts TEXT);
@@ -122,6 +122,14 @@ def _open(path):
     if crypto.is_encrypted(path):  # never a new index over the one that is there
         raise ValueError(t('key_missing'))
     return sqlite3.connect(path, isolation_level=None, timeout=30)
+
+
+def lock(db, name, wait):
+    """One `name` run per index at a time, whichever chat or terminal started it: an exclusive transaction on a lock file beside the
+    index, which the OS drops with the process. Hold the result while the run lasts; sqlite3.OperationalError after `wait` seconds."""
+    conn = sqlite3.connect('%s.%s.lock' % (db, name), timeout=wait, isolation_level=None)
+    conn.execute('BEGIN EXCLUSIVE')
+    return conn
 
 
 def connect(path=DB_PATH, home=None):

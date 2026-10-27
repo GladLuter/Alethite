@@ -96,11 +96,8 @@ def _compress(a):  # the owner's preview of a level: cg.py compress --level ultr
 
 
 def _alone(a, name, wait):
-    """One `name` run per index at a time, whichever chat or terminal started it: an exclusive transaction on a lock file beside the
-    index, which the OS drops with the process. Hold the result while the run lasts; sqlite3.OperationalError after `wait` seconds."""
-    lock = sqlite3.connect('%s.%s.lock' % (a.db, name), timeout=wait, isolation_level=None)
-    lock.execute('BEGIN EXCLUSIVE')
-    return lock
+    """memdb.lock of the index in `a.db`."""
+    return memdb.lock(a.db, name, wait)
 
 
 def _embed(a):

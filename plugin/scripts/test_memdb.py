@@ -1,3 +1,4 @@
+import gc
 import hashlib
 import json
 import os
@@ -37,6 +38,18 @@ class LockTest(unittest.TestCase):
             conn = connect(os.path.join(d, 'index.db'))
             self.assertEqual(conn.execute('PRAGMA busy_timeout').fetchone()[0], 30000)
             conn.close()
+
+    def test_lock_is_one_per_name_and_index_and_ends_with_its_connection(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = os.path.join(d, 'index.db')
+            held = memdb.lock(db, 'sync', 0)
+            with self.assertRaisesRegex(sqlite3.OperationalError, 'locked'):
+                memdb.lock(db, 'sync', 0)
+            memdb.lock(db, 'embed', 0).close()  # another name is another lock
+            memdb.lock(os.path.join(d, 'other.db'), 'sync', 0).close()  # and another index
+            held.close()
+            gc.collect()  # the lock that did not open stays in the traceback of its error until collected, and Windows will not remove its file
+            memdb.lock(db, 'sync', 0).close()
 
 
 class EncryptedIndexTest(unittest.TestCase):
