@@ -71,6 +71,15 @@ def resolve(home=None, free=None):
     return Where(db, d, True, None)
 
 
+def remark(where):
+    """A run that stands in for the folder gives the home index its mark again if a merge by another run deleted both between its resolve and its
+    open: that index is new then, and without the mark nobody would merge it."""
+    mark = os.path.join(os.path.dirname(where.db), MARK)
+    if where.fallback and os.path.isfile(where.db) and not os.path.isfile(mark):
+        with open(mark, 'w', encoding='utf-8') as f:
+            f.write(where.configured)
+
+
 def notice(where):
     """What the owner is told when the index is not where indexDir says; None when it is."""
     if where and where.fallback:

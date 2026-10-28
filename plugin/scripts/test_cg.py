@@ -586,6 +586,25 @@ class CgTest(unittest.TestCase):
         self.assertEqual(self.main_home('status')[1]['index_dir'], {'configured': far, 'fallback': True, 'notes': [want]})
         self.assertFalse(os.path.exists(far))
 
+    def test_a_run_that_chose_the_home_index_just_before_a_merge_deleted_it_leaves_the_new_one_marked(self):
+        far = os.path.join(self.tmp, 'far')
+        home = self.home_dir(indexDir=far)
+        mark = os.path.join(home, indexdir.MARK)
+        open(os.path.join(home, 'index.db'), 'wb').close()
+        real = indexdir.resolve
+
+        def resolve():  # the folder is back and another run merges the home index and deletes it, after this run chose it and before it opens it
+            where = real()
+            os.remove(where.db)
+            os.remove(mark)
+            return where
+
+        with mock.patch.object(indexdir, 'resolve', resolve):
+            code, out, _ = self.main_home('status')
+        self.assertEqual((code, os.path.isfile(os.path.join(home, 'index.db'))), (0, True), out)
+        with open(mark, encoding='utf-8') as f:  # so the next run merges it and the records it got are not lost
+            self.assertEqual(f.read(), far)
+
     def test_no_room_for_a_new_index_is_one_error_that_makes_nothing(self):
         far = os.path.join(self.tmp, 'far')
         home = self.home_dir(indexDir=far)
@@ -661,6 +680,27 @@ class CgTest(unittest.TestCase):
         code, out, _ = self.main_home('status')
         self.assertEqual((code, out['db'], out['rows']), (0, os.path.join(far, 'index.db'), 2))
         self.assertNotIn('index_notice', out)
+
+    def test_the_forgets_a_merge_brought_in_are_kept_even_when_the_command_after_it_fails(self):
+        far, home = self.temporary_index()
+        with contextlib.closing(memdb.connect(os.path.join(home, 'index.db'))) as conn:  # forgotten on C: during the outage
+            pos = conn.execute('SELECT pos FROM chunks ORDER BY pos').fetchone()[0]
+            self.assertEqual(memdb.forget(conn, 'S1', pos), 1)
+        with mock.patch.object(cg, '_status', side_effect=RuntimeError('boom')):
+            code, out, _ = self.main_home('status')
+        self.assertEqual((code, out), (1, {'error': 'RuntimeError: boom'}))
+        self.assertFalse(os.path.exists(os.path.join(home, 'index.db')))  # the merge was done, the index on C: is gone
+        with open(os.path.join(home, indexdir.FORGETS), encoding='utf-8') as f:  # so a new index on C: in a second outage forgets it too
+            self.assertEqual(len(json.load(f)), 1)
+
+    def test_the_prompt_hooks_lessons_match_does_not_open_the_index_again_to_keep_forgets(self):
+        far = os.path.join(self.tmp, 'far')
+        self.home_dir(indexDir=far)
+        memdb.connect(os.path.join(far, 'index.db')).close()
+        for cmd, calls in ((('lessons-match', '--text', 'some message to match'), 0), (('status',), 1)):
+            with mock.patch.object(indexdir, 'keep_forgets') as keep:
+                self.assertEqual(self.main_home(*cmd)[0], 0)
+            self.assertEqual(keep.call_count, calls, cmd)
 
     def test_a_merge_that_waits_for_a_lock_says_nothing_and_the_command_works_on_the_index_in_its_folder(self):
         far, home = self.temporary_index()
@@ -783,6 +823,44 @@ class CgTest(unittest.TestCase):
         self.assertEqual((code, out.get('error'), out.get('index_notice')), (0, None, t('index_merged', dir=far, home=home, n=2)))
         self.assertEqual(out['rows'], 2)
         self.assertEqual([os.path.exists(os.path.join(home, n)) for n in ('index.db', indexdir.MARK)], [False, False])
+
+    def encrypted_temporary_index(self):
+        """temporary_index() with the key set before both indexes are made: the pair is encrypted. (far, home, settings path)"""
+        far = os.path.join(self.tmp, 'far')
+        home = self.home_dir(indexDir=far)
+        settings = os.path.join(home, 'settings.json')
+        crypto.save_key(settings, secrets.token_bytes(32))
+        crypto.INDEX_DIRS.add(crypto.norm(far))
+        self.write('P/S1.jsonl', [owner_line('вопрос'), claude_line('ответ')])
+        memdb.connect(os.path.join(far, 'index.db')).close()
+        conn = memdb.connect(os.path.join(home, 'index.db'))
+        memdb.update(conn, self.projects)
+        conn.close()
+        with open(os.path.join(home, indexdir.MARK), 'w', encoding='utf-8') as f:
+            f.write(far)
+        self.assertTrue(crypto.is_encrypted(os.path.join(far, 'index.db')) and crypto.is_encrypted(os.path.join(home, 'index.db')))
+        return far, home, settings
+
+    def test_a_pending_merge_of_encrypted_indexes_reads_the_key_and_merges(self):
+        far, home, _ = self.encrypted_temporary_index()
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, out.get('error'), out.get('index_notice'), out.get('rows')), (0, None, t('index_merged', dir=far, home=home, n=2), 2))
+        self.assertEqual([os.path.exists(os.path.join(home, n)) for n in ('index.db', indexdir.MARK)], [False, False])
+
+    def test_a_pending_merge_of_encrypted_indexes_with_a_key_that_cannot_be_read_is_told_and_changes_nothing(self):
+        far, home, settings = self.encrypted_temporary_index()
+        broken = crypto.SettingsBroken(t('settings_broken', path=settings))
+        for fail, want in ((None, 'ValueError: ' + t('key_unreadable')), (broken, 'SettingsBroken: ' + str(broken))):
+            if fail is None:
+                with open(settings, 'w', encoding='utf-8') as f:
+                    json.dump({'indexDir': far, 'encryptionKey': 'junk'}, f)
+                ctx = contextlib.nullcontext()
+            else:
+                ctx = mock.patch.object(crypto, 'load_key', side_effect=fail)
+            with ctx:
+                code, out, _ = self.main_home('status')
+            self.assertEqual((code, out), (1, {'error': want}))
+            self.assertEqual([os.path.exists(os.path.join(home, n)) for n in ('index.db', indexdir.MARK)], [True, True])
 
     # index-dir: the move, as the mod runs it
 

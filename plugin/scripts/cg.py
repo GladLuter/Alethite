@@ -21,6 +21,7 @@ from transcripts import find_session, last_usage, project_key
 
 
 INDEX_FREE = ('last-turn', 'compress', 'handoff')  # the commands that read no index: no merge waits for them, and they still work when the index cannot be used
+SHORT = (*INDEX_FREE, 'lessons-match')  # the runs that do not merge, and (it reads the index, writes no forget) do not open it again to keep forgets
 
 
 class _Help(Exception):
@@ -492,16 +493,20 @@ def main(argv):
         # the folder is back and the home folder has a temporary index: it is merged first, and its locks are given back before the command
         # a plain pair never reads the key (memdb._open): a key that cannot be read must not stop it
         # a merge of a big index takes seconds: not in a run that needs no index, nor in the prompt hook's lessons-match, which has eight
-        pending = a.cmd not in (*INDEX_FREE, 'lessons-match') and a.where and a.where.merge_from  # the path of the temporary index, or nothing
+        pending = a.cmd not in SHORT and a.where and a.where.merge_from  # the path of the temporary index, or nothing
         enc = pending and (crypto.is_encrypted(a.where.db) or crypto.is_encrypted(a.where.merge_from))
         merged = pending and indexdir.merge_back(a.where, crypto.load_key(crypto.settings_path(a.db)) if enc else None)
         if pending and not os.path.exists(pending):  # merged and deleted just now: the command is not to see it as still to merge
             a.where = a.where._replace(merge_from=None)
         if a.where and (a.where.fallback or a.where.settings_error) and a.cmd not in INDEX_FREE:  # before anything is read from a transcript
             indexdir.apply_forgets(a.db)
-        out, code = a.fn(a), 0
-        if a.where and a.where.configured and not a.where.fallback and a.cmd not in INDEX_FREE:  # this run may have made forgets, or taken some in
-            indexdir.keep_forgets(a.db)
+        try:
+            out, code = a.fn(a), 0
+        finally:
+            if a.where:
+                indexdir.remark(a.where)
+                if a.where.configured and not a.where.fallback and a.cmd not in SHORT:  # this run, or the merge before it, may have made forgets or taken some in
+                    indexdir.keep_forgets(a.db)
         note = merged or indexdir.notice(a.where)
         if note and isinstance(out, dict):
             out['index_notice'] = note
