@@ -254,6 +254,45 @@ class VectorsTest(unittest.TestCase):
         r = embed_pending(self.conn, model='other', embed_fn=fake)  # the new model may well cope with that record
         self.assertEqual((r['done'], r['errors'], vector_status(self.conn)['failed']), (self.records, [], 0))
 
+    def traced(self):
+        sql = []
+        self.conn.set_trace_callback(sql.append)
+        self.addCleanup(self.conn.set_trace_callback, None)
+        return sql
+
+    def test_embed_pending_reads_each_row_once(self):
+        self.write('P1/Many.jsonl', [owner_line('запись %d' % i) for i in range(40)])
+        update(self.conn, self.projects)
+        n = self.q("SELECT count(*) FROM chunks WHERE kind != 'tool'")
+        sql = self.traced()
+        embed_pending(self.conn, embed_fn=fake, batch=16)
+        reads = [x for x in sql if x.startswith('SELECT rowid, text')]
+        self.assertEqual(len(reads), -(-n // 16) + 1)  # the batches and the empty one that ends the run
+        marks = [int(re.search(r'rowid > (\d+)', x).group(1)) for x in reads]  # each read starts after the last row of the batch before
+        self.assertEqual(marks[0], 0)
+        self.assertEqual(marks, sorted(set(marks)))
+        self.assertEqual(marks[-1], self.q('SELECT max(rowid) FROM chunks WHERE kind != "tool"'))
+
+    def test_embed_pending_row_changed_midbatch(self):
+        def rebuilds_s2(texts, model):
+            with mock.patch.object(memdb, 'redact', lambda t: t.replace('другом', 'ином')):
+                update(self.conn, self.projects, rebuild=True)
+            return fake(texts)
+
+        r = embed_pending(self.conn, embed_fn=rebuilds_s2, batch=1000)
+        self.assertEqual((r['pending'], r['errors'], self.q("SELECT count(*) FROM vecs WHERE conv = 'S2'")), (1, [], 0))
+        self.assertEqual(r['done'], self.records)  # the run ends; the changed record waits for the next one
+        self.assertEqual(embed_pending(self.conn, embed_fn=fake)['done'], 1)
+
+    def test_vector_status_scans_once(self):
+        embed_pending(self.conn, embed_fn=fake, batch=2)
+        self.write('P1/Late.jsonl', [owner_line('ещё без вектора')])
+        update(self.conn, self.projects)
+        sql = self.traced()
+        st = vector_status(self.conn)
+        self.assertEqual((st['with_vectors'], st['total']), (self.records, self.records + 1))
+        self.assertEqual(len([x for x in sql if 'FROM chunks' in x]), 1)
+
     def test_wrong_number_of_vectors_writes_nothing(self):
         r = embed_pending(self.conn, embed_fn=lambda texts, model: fake(texts)[:-1], batch=1000)
         self.assertEqual((r['done'], r['pending']), (0, self.records))

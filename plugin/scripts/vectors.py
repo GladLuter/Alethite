@@ -85,11 +85,13 @@ def embed_pending(conn, model=MODEL, embed_fn=ollama_embed, max_seconds=120, bat
     changed = memdb.meta(conn, 'embed_model') != model
     todo = lambda: _RECORDS if changed else _PENDING  # until then every record is to be done again
     fmt = lambda e: '%s: %s' % (type(e).__name__, e)
-    is_out = False
+    is_out, last = False, 0
     while not is_out:
-        rows = conn.execute('SELECT rowid, text, conv, pos ' + todo() + ' ORDER BY rowid LIMIT ?', (batch,)).fetchall()
+        # after the last row of the previous batch: a row that changed meanwhile (and so got no vector) waits for the next run
+        rows = conn.execute('SELECT rowid, text, conv, pos ' + todo() + ' AND rowid > ? ORDER BY rowid LIMIT ?', (last, batch)).fetchall()
         if not rows:
             break
+        last = rows[-1][0]
         stored, bad, ok = [], [], len(rows)
         try:
             stored = _embed(rows, model, embed_fn, batch)
@@ -151,8 +153,8 @@ def search_vectors(conn, qvec, project, limit=50):
 
 
 def vector_status(conn):
-    total = conn.execute('SELECT count(*) ' + _RECORDS).fetchone()[0]
-    return {'model': memdb.meta(conn, 'embed_model'), 'with_vectors': total - conn.execute('SELECT count(*) ' + _PENDING).fetchone()[0],
+    total, pending = conn.execute('SELECT count(*), count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM vecs WHERE chunk = chunks.rowid)) ' + _RECORDS).fetchone()
+    return {'model': memdb.meta(conn, 'embed_model'), 'with_vectors': total - pending,
             'total': total, 'failed': conn.execute('SELECT count(*) FROM vecs WHERE length(vec) = 0').fetchone()[0],  # sentinels, see embed_pending
             'updated': memdb.meta(conn, 'vec_updated')}
 
