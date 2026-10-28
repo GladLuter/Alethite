@@ -129,8 +129,9 @@ def _items(o, sub):
     return out
 
 
-def read_records(path, start=0):
+def read_records(path, start=0, only=None):
     """Records from the whole lines at byte offset `start` on, and the offset right after the last '\\n'."""
+    # with `only`, lines without that substring are not parsed
     with open(lp(path), 'rb') as f:
         f.seek(start)
         data = f.read()
@@ -139,7 +140,7 @@ def read_records(path, start=0):
     recs, pos = [], start
     for raw in data[:end].split(b'\n')[:-1]:
         at, pos = pos, pos + len(raw) + 1
-        o = _load(raw)
+        o = _load(raw) if only is None or only in raw else None
         for kind, text, edit in _items(o, sub) if o else ():
             # a lone surrogate (\ud83d of a cut emoji) cannot be stored or written as UTF-8 and would fail the whole file every time
             text = text.encode('utf-8', 'replace').decode('utf-8')
@@ -168,11 +169,19 @@ def find_session(projects, session_id):
 
 
 def last_usage(path):
-    """Prompt+output tokens of the last API call in the last 256 KB of a main transcript, or None."""
+    """Prompt+output tokens of the last API call of a main transcript, or None. The window of 256 KB at the end doubles until it holds one."""
     with open(lp(path), 'rb') as f:
         f.seek(0, 2)
-        f.seek(max(0, f.tell() - _TAIL))
-        data = f.read()
+        size, window = f.tell(), _TAIL
+        while True:
+            f.seek(max(0, size - window))
+            best = _last_usage(f.read())
+            if best or window >= size:
+                return best
+            window *= 2
+
+
+def _last_usage(data):
     best = None
     for raw in data.split(b'\n'):  # a line cut by the window is not valid JSON and is skipped
         o = _load(raw)

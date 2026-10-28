@@ -28,6 +28,7 @@ EN = {
     'handoff_commits': 'Latest commits:',
     'handoff_git_timeout': 'git did not answer in {s} s',
     'bad_session': 'not a session id: {id}',
+    'session_not_found': 'session {id} not found in {dir}',
 
     # stats.py: the measurement note written into the vault
     'stats_weekly_base': '70% in 4.5 days (2026-10-13)',
@@ -171,6 +172,7 @@ RU = {
     'handoff_commits': 'Последние коммиты:',
     'handoff_git_timeout': 'git не ответил за {s} с',
     'bad_session': 'это не id сессии: {id}',
+    'session_not_found': 'сессия {id} не найдена в {dir}',
 
     'stats_weekly_base': '70% за 4,5 дня (2026-10-13)',
     'stats_usd': '$ на сообщение владельца',
@@ -308,6 +310,7 @@ UK = {
     'handoff_commits': 'Останні коміти:',
     'handoff_git_timeout': 'git не відповів за {s} с',
     'bad_session': 'це не id сесії: {id}',
+    'session_not_found': 'сесію {id} не знайдено в {dir}',
 
     'stats_weekly_base': '70% за 4,5 дня (2026-10-13)',
     'stats_usd': '$ на повідомлення власника',

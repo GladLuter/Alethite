@@ -221,8 +221,12 @@ class TranscriptsTest(unittest.TestCase):
         self.assertEqual(find_session(self.dir.name, 'W'), (None, [w1, w2]))
         self.assertEqual([r['kind'] for r in read_records(w2)[0]], ['task'])
         self.assertEqual(last_usage(main), {'tokens': 1 + 2 + 3 + 4, 'at': at, 'model': 'claude-opus-5-5'})
-        old = self.write('P/T.jsonl', [a([text('один')], usage=u1), u('x' * 300000)])
-        self.assertIsNone(last_usage(old))  # the only call is outside the last 256 KB
+
+    def test_last_usage_beyond_tail(self):
+        at = '2026-10-13T10:00:00.000Z'
+        usage = {'input_tokens': 1, 'output_tokens': 2}
+        far = self.write('P/F.jsonl', [a([text('один')], usage=usage, ts=at, model='m'), u('x' * 300000), u('y' * 300000)])
+        self.assertEqual(last_usage(far), {'tokens': 3, 'at': at, 'model': 'm'})
 
 
 if __name__ == '__main__':

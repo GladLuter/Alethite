@@ -54,11 +54,17 @@ def _repos(dirs):
     return blocks
 
 
+def changed_files(recs, subs):
+    """Files edited in the main chat and its subagents, newest first, 30 at most."""
+    edits = sorted((r for r in recs + [x for p in subs for x in read_records(p, only=b'tool_use')[0]] if 'edit' in r), key=lambda r: r['ts'])
+    return list(dict.fromkeys(r['edit'] for r in reversed(edits)))[:30]
+
+
 def build_handoff(projects, session_id, today, memory_dir=None, level='off'):
     """The handoff text; the quotes of the conversation are compressed at `level` (stage 3), the rest is left as it is."""
     main, subs = find_session(projects, session_id)
     if not main:
-        raise ValueError('session %s not found in %s' % (session_id, projects))
+        raise ValueError(t('session_not_found', id=session_id, dir=projects))
     recs = read_records(main)[0]
     owner = [r for r in recs if r['kind'] == 'owner']
     turns, fresh = [], True  # Claude's replies: all its texts from one owner message to the next
@@ -89,8 +95,7 @@ def build_handoff(projects, session_id, today, memory_dir=None, level='off'):
 
     # the edited files only lead to their repositories: a list of them is no task for the next chat, which may well be about something
     # else (the owner, stage 4); recall finds them when it is not
-    edits = sorted((r for r in recs + [x for p in subs for x in read_records(p)[0]] if 'edit' in r), key=lambda r: r['ts'])
-    files = list(dict.fromkeys(r['edit'] for r in reversed(edits)))[:30]  # newest first
+    files = changed_files(recs, subs)
     cwd = next((r['cwd'] for r in reversed(recs) if r['cwd']), '')
     git = _repos([cwd] + [os.path.dirname(f) for f in files])  # the work may have happened outside the chat's folder
 

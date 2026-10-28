@@ -7,10 +7,11 @@ import unittest
 from unittest import mock
 
 import handoff
+import transcripts
 from handoff import build_handoff
 from test_texts import use_lang
 from test_transcripts import a, jsonl, text, tool, u
-from transcripts import strip_handoff
+from transcripts import find_session, read_records, strip_handoff
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
 LATER = '2026-10-13T11:00:00.000Z'
@@ -186,8 +187,21 @@ class HandoffTest(unittest.TestCase):
         self.assertLess(len(t), len(self.build()))
 
     def test_unknown_session(self):
-        with self.assertRaises(ValueError):
-            build_handoff(self.projects, 'нет', '2026-10-13')
+        for lang, word in (('ru', 'не найдена'), ('uk', 'не знайдено'), ('en', 'not found')):
+            use_lang(self, lang)
+            with self.assertRaisesRegex(ValueError, word):
+                build_handoff(self.projects, 'нет', '2026-10-13')
+
+    def test_subagent_lines_without_tool_use_are_not_parsed(self):
+        f = os.path.join(self.tmp, 'a.txt')
+        self.write('P/S.jsonl', [u('сделай')])
+        self.write('P/S/subagents/agent-a1.jsonl', [u('сделай Y'), a([text('готово')]), a([tool('Edit', file_path=f)], ts=LATER)])
+        main, subs = find_session(self.projects, 'S')
+        recs, real, seen = read_records(main)[0], transcripts._load, []
+        with mock.patch.object(transcripts, '_load', lambda raw: seen.append(raw) or real(raw)):
+            files = handoff.changed_files(recs, subs)
+        self.assertEqual(files, [f])
+        self.assertEqual(len(seen), 1)  # only the tool_use line
 
     def test_cli_saves_text_before_answering(self):
         self.write('P/S.jsonl', [u('вопрос про ёжика'), a([text('ответ')])])
