@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
-"""Audit where tokens and API-equivalent dollars go in Claude Code sessions, from local transcripts.
+"""Where tokens and API-equivalent dollars go in Claude Code sessions, from local transcripts (the part of the token audit the mod runs).
 
-Python 3.8+, stdlib only. Usage: python cc_token_audit.py [--projects DIR] [--since YYYY-MM-DD] [--out DIR] [--selftest]
-Output holds counts, token/char numbers, category/model names, project folder slugs and dates only -
-never message text, prompt text, file contents, commands or paths from inside transcripts.
-"""
-import argparse
+Python 3.8+, stdlib only. Counts and token/char numbers only, never message text."""
 import json
 import os
 import re
@@ -15,6 +11,8 @@ import tempfile
 import time
 from collections import Counter, defaultdict
 from datetime import datetime
+
+from transcripts import lp
 
 CHARS_PER_TOKEN = 3.5  # estimate: used only to split the first prompt (baseline) and the growth between calls
 IMAGE_CHARS = 6000     # image blocks count as this many chars (base64 length is not used)
@@ -59,14 +57,6 @@ KEPT_UNSURE = {
 }
 # user text that Claude Code injects without isMeta (task notifications, local command output, reminders)
 INJECTED = re.compile(r'\s*<(task-notification|local-command-|system-reminder)')
-NONLETTER, NONCYR = re.compile(r'[\W\d_]+'), re.compile(r'[^\u0400-\u04FF]+')
-
-
-def lp(p):
-    """Absolute path; the \\\\?\\ prefix lifts the 260-char Windows limit (nested subagent paths exceed it)."""
-    p = os.path.abspath(os.path.expanduser(p))
-    # shortcut: UNC paths (\\server\share) are left as is, they need \\?\UNC\ if they ever hit the limit
-    return '\\\\?\\' + p if os.name == 'nt' and not p.startswith('\\\\') else p
 
 
 def price(model, pt):
@@ -114,13 +104,7 @@ def result_chars(c):
     return n
 
 
-def letters(txt, ch, who):
-    s = NONLETTER.sub('', txt)
-    ch[who + '_letters'] += len(s)
-    ch[who + '_cyr'] += len(NONCYR.sub('', s))
-
-
-def read_chain(path, ctx):
+def read_chain(path, ctx, visit=None):
     """One transcript file -> ordered events: ('i', category, chars) | ('c', call) | ('k',) compaction; plus chain counters."""
     ev, calls, tools, ch = [], {}, {}, Counter()
     with open(lp(path), encoding='utf-8', errors='replace') as fh:
@@ -134,6 +118,8 @@ def read_chain(path, ctx):
             if not isinstance(o, dict):
                 ctx['lines_skipped'] += 1
                 continue
+            if visit:
+                visit(path, o)
             t = o.get('type')
             if t == 'assistant':
                 m = o.get('message') or {}
@@ -155,7 +141,6 @@ def read_chain(path, ctx):
                         tools[b.get('id')] = tool_cat(b.get('name'))
                     elif b.get('type') == 'text' and isinstance(b.get('text'), str) and hash(b['text']) not in c['seen']:
                         c['seen'].add(hash(b['text']))
-                        letters(b['text'], ch, 'a')
             elif t == 'user':
                 if o.get('isCompactSummary'):
                     continue
@@ -169,8 +154,6 @@ def read_chain(path, ctx):
                     if bt == 'text' and isinstance(b.get('text'), str):
                         cat = 'injected_meta' if o.get('isMeta') or INJECTED.match(b['text']) else 'user_prompt'
                         ev.append(('i', cat, len(b['text'])))
-                        if cat == 'user_prompt':
-                            letters(b['text'], ch, 'u')
                     elif bt == 'image':
                         ev.append(('i', 'image', IMAGE_CHARS))
                     elif bt == 'tool_result':
@@ -189,8 +172,6 @@ def read_chain(path, ctx):
                     p = a.get('prompt')
                     cat = 'injected_meta' if a.get('isMeta') else 'user_prompt'
                     chars = len(p) if isinstance(p, str) else len(json.dumps(a, ensure_ascii=False))
-                    if cat == 'user_prompt' and isinstance(p, str):
-                        letters(p, ch, 'u')
                 else:
                     cat, chars = 'att:' + at, len(json.dumps(a, ensure_ascii=False))
                 ev.append(('i', cat, chars))
@@ -208,7 +189,7 @@ def fit(parts, total):
     return {k: v * f for k, v in parts.items()}, max(0, total - s * f)
 
 
-def run_chain(ev, ch, kind, proj, A, since, until=None):
+def run_chain(ev, ch, kind, A, since, until=None):
     comp, base, pend, touched = {}, {}, Counter(), set()
     prev_pt = prev_vis = prev_model = prev_ts = None
     reset = False
@@ -310,7 +291,7 @@ def run_chain(ev, ch, kind, proj, A, since, until=None):
         row['fast'] += u.get('speed') not in (None, 'standard')
         if first_call:
             row['baseline'] = pt
-        for key in (('kind', kind), ('model', c['model']), ('project', proj), ('month', c['ts'][:7] or 'unknown')):
+        for key in (('kind', kind), ('model', c['model'])):
             g = A['g'][key[0]][key[1]]
             if key not in touched:
                 touched.add(key)
@@ -323,7 +304,6 @@ def run_chain(ev, ch, kind, proj, A, since, until=None):
             g['cost_by_category'].update(costs)
     if row['pts']:
         A['rows'].append(row)
-        A['cyr'][kind].update({k: v for k, v in ch.items() if k.endswith(('_letters', '_cyr'))})
 
 
 def med(xs):
@@ -360,31 +340,29 @@ def grp_out(gd, total):
     return out
 
 
-def analyze(projects, since=None, progress=False, until=None):
+def analyze(projects, since=None, until=None, visit=None):
+    """visit(path, obj) is called for every parsed line of every transcript read (not for files older than `since`)."""
     t0 = time.time()
     root = lp(projects)
     if not os.path.isdir(root):
         raise SystemExit('projects dir not found: ' + str(projects))
     files = sorted(os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs if f.endswith('.jsonl'))
     A = {'calls': 0, 'cost': 0.0, 'dup_cost': 0.0, 'first': '', 'last': '', 'rows': [], 'cat': defaultdict(lambda: [0.0, 0.0]),
-         'ttype': Counter(), 'cyr': defaultdict(Counter), 'odd': Counter(), 'unpriced': Counter(),
+         'ttype': Counter(), 'odd': Counter(), 'unpriced': Counter(),
          'rw': {c: {'main': [0, 0.0], 'subagent': [0, 0.0], 'gaps': []} for c in REWRITE_CAUSES},
          'g': {k: defaultdict(lambda: {'chains': 0, 'calls': 0, 'cost_usd': 0.0, 'prompt_tokens': 0, 'cache_read_tokens': 0,
                                       'output_tokens': 0, 'cost_by_category': Counter()})
-               for k in ('kind', 'model', 'project', 'month')}}
+               for k in ('kind', 'model')}}
     ctx, seen_ids = Counter(), set()
-    for i, p in enumerate(files):
-        if progress and i % 100 == 0:
-            print('  ...%d/%d files' % (i, len(files)), file=sys.stderr)
+    for p in files:
         # entries are never newer than the file mtime, so an older file cannot hold calls on/after --since
         if since and time.strftime('%Y-%m-%d', time.gmtime(os.path.getmtime(p))) < since:
             ctx['files_skipped_before_since'] += 1
             continue
         parts = re.split(r'[\\/]', p[len(root):].strip('\\/'))
-        proj = parts[0] if len(parts) > 1 else '(root)'
         kind = 'subagent' if 'subagents' in parts[:-1] else 'main'
         try:
-            ev, ch = read_chain(p, ctx)
+            ev, ch = read_chain(p, ctx, visit)
         except Exception as e:  # a line of an unexpected shape too: one file must not stop the whole measure
             ctx['files_unreadable'] += 1
             print('  unreadable file (%s)' % type(e).__name__, file=sys.stderr)
@@ -395,7 +373,7 @@ def analyze(projects, since=None, progress=False, until=None):
                 e[1]['dup'] = e[1]['id'] in seen_ids  # resumed/forked sessions replay history; counted in both chains
                 A['odd']['message_ids_also_seen_in_another_chain (counted in both)'] += e[1]['dup']
                 seen_ids.add(e[1]['id'])
-        run_chain(ev, ch, kind, proj, A, since, until)
+        run_chain(ev, ch, kind, A, since, until)
     rows, total = A['rows'], A['cost']
     cats = sorted(({'category': k, 'tokens_added': v[0], 'cost_usd': v[1], 'share': v[1] / total if total else 0}
                    for k, v in A['cat'].items()), key=lambda d: -d['cost_usd'])
@@ -408,11 +386,6 @@ def analyze(projects, since=None, progress=False, until=None):
         return r
     rw = A['rw']
 
-    def cyr(c):
-        return {'user_prompt': c['u_cyr'] / c['u_letters'] if c['u_letters'] else 0,
-                'assistant_visible': c['a_cyr'] / c['a_letters'] if c['a_letters'] else 0,
-                'user_prompt_letters': c['u_letters'], 'assistant_visible_letters': c['a_letters']}
-    top_tools = [c for c in cats if c['category'].startswith('tool:')][:15]
     return {
         'meta': {'date_from': A['first'], 'date_to': A['last'], 'since': since, 'cost_unit': 'API-equivalent USD',
                  'chars_per_token_estimate': CHARS_PER_TOKEN, 'image_chars': IMAGE_CHARS,
@@ -434,122 +407,9 @@ def analyze(projects, since=None, progress=False, until=None):
             'by_cause': {c: rw_rec(rw[c]['main'], rw[c]['subagent'], rw[c]['gaps']) for c in REWRITE_CAUSES}},
         'cost_by_token_type': dict(A['ttype']),
         'by_kind': grp_out(A['g']['kind'], total), 'by_model': grp_out(A['g']['model'], total),
-        'by_project': grp_out(A['g']['project'], total), 'by_month': grp_out(A['g']['month'], total),
         'stats': {'all': stats(rows), 'main': stats([r for r in rows if r['kind'] == 'main']),
                   'subagent': stats([r for r in rows if r['kind'] == 'subagent'])},
-        'cyrillic_share_of_letters': {'all': cyr(sum(A['cyr'].values(), Counter())), 'main': cyr(A['cyr']['main']),
-                                      'subagent': cyr(A['cyr']['subagent'])},
-        'top_tools': top_tools,
     }
-
-
-def fmt(n):
-    for lim, suf in ((1e9, 'B'), (1e6, 'M'), (1e3, 'k')):
-        if abs(n) >= lim:
-            return '%.1f%s' % (n / lim, suf)
-    return '%.0f' % n
-
-
-def usd(x):
-    return '$%s' % format(x, ',.2f')
-
-
-def pc(x):
-    return '%.1f%%' % (100 * x)
-
-
-def table(head, rows):
-    return ['| ' + ' | '.join(head) + ' |', '|' + '---|' * len(head)] + ['| ' + ' | '.join(map(str, r)) + ' |' for r in rows]
-
-
-def grp_table(gd, label, limit=15, chrono=False):
-    items = sorted(gd.items()) if chrono else list(gd.items())
-    rows = []
-    for k, g in items[:limit]:
-        top = next(iter(g['cost_by_category'].items()), ('-', 0))
-        hit = g['cache_read_tokens'] / g['prompt_tokens'] if g['prompt_tokens'] else 0
-        rows.append([k, g['chains'], format(g['calls'], ','), usd(g['cost_usd']), pc(g['share']), pc(hit),
-                     '%s %s' % (top[0], pc(top[1] / g['cost_usd'] if g['cost_usd'] else 0))])
-    out = table([label, 'chains', 'calls', 'API-eq $', 'share', 'cache-read % of prompt', 'top category'], rows)
-    return out + (['', '(+%d more in token_audit.json)' % (len(items) - limit)] if len(items) > limit else [])
-
-
-def render_md(R):
-    m, T, S = R['meta'], R['totals'], R['stats']
-    L = ['# Claude Code token audit', '',
-         'Range %s .. %s (UTC) | chains %d (main %d, subagent %d) | calls %s | **API-equivalent $ %s**' % (
-             m['date_from'], m['date_to'], T['chains'], S['main']['chains'], S['subagent']['chains'],
-             format(T['calls'], ','), format(T['cost_usd'], ',.2f')), '',
-         'API-equivalent $ = tokens at per-model list prices (not what a subscription bills). Each call\'s prompt cost is split '
-         'across the running context composition. Baseline split and per-category growth split are estimates '
-         '(%.1f chars/token); `baseline:tools+other` is the remainder (tool definitions are not in the transcript).' % CHARS_PER_TOKEN,
-         '', '## Cache rewrites (prompt written to cache instead of read)',
-         'Calls with prompt_total > 100k where more than half of the prompt was cache-written. Cost = the cache-write $ of '
-         'those calls; share is of ALL cost. Cause is the first matching rule, in table order.']
-    rw = R['cache_rewrites']
-    cell = lambda x: '%s / %s' % (format(x['calls'], ','), usd(x['cost_usd']))
-    L += table(['cause', 'calls', 'API-eq $', 'share of all cost', 'main calls / $', 'subagent calls / $', 'median gap (min)'],
-               [[c, format(r['calls'], ','), usd(r['cost_usd']), pc(r['share_of_all_cost']), cell(r['main']), cell(r['subagent']),
-                 '-' if r['median_gap_min'] is None else '%.0f' % r['median_gap_min']] for c, r in rw['by_cause'].items()] +
-               [['**total rewrites**', format(rw['total']['calls'], ','), usd(rw['total']['cost_usd']),
-                 pc(rw['total']['share_of_all_cost']), cell(rw['total']['main']), cell(rw['total']['subagent']), '']])
-    L += ['', '## Cost by category']
-    cats = R['categories']
-    L += table(['category', 'tokens added', 'API-eq $', 'share'],
-               [[c['category'], fmt(c['tokens_added']), usd(c['cost_usd']), pc(c['share'])] for c in cats[:25]])
-    if len(cats) > 25:
-        rest = cats[25:]
-        L += ['', '(+%d more categories, %s, %s: see token_audit.json)' % (
-            len(rest), usd(sum(c['cost_usd'] for c in rest)), pc(sum(c['share'] for c in rest)))]
-    tt = R['cost_by_token_type']
-    L += ['', '## Cost by token type'] + table(['type', 'API-eq $', 'share'], [
-        [k, usd(v), pc(v / T['cost_usd'] if T['cost_usd'] else 0)] for k, v in sorted(tt.items(), key=lambda kv: -kv[1])])
-    L += ['', '## By chain kind'] + grp_table(R['by_kind'], 'kind')
-    L += ['', '## By model'] + grp_table(R['by_model'], 'model')
-    L += ['', '## By month'] + grp_table(R['by_month'], 'month', 60, True)
-    L += ['', '## By project (top 15)'] + grp_table(R['by_project'], 'project')
-    L += ['', '## Top 15 tools by cost'] + table(['tool', 'tokens added', 'API-eq $', 'share'], [
-        [c['category'], fmt(c['tokens_added']), usd(c['cost_usd']), pc(c['share'])] for c in R['top_tools']])
-    keys = [('chains', 'chains'), ('calls', 'calls'), ('baseline_tokens_median', 'baseline tokens median'),
-            ('baseline_tokens_p90', 'baseline tokens p90'), ('calls_per_chain_median', 'calls/chain median'),
-            ('calls_per_chain_p90', 'calls/chain p90'), ('prompt_total_median', 'prompt_total median'),
-            ('prompt_total_max', 'prompt_total max'), ('compactions', 'compactions'), ('fast_mode_calls', 'fast-mode calls'),
-            ('avg_skill_listing_chars_per_chain', 'avg skill_listing chars/chain'),
-            ('avg_instructions_chars_per_chain', 'avg CLAUDE.md (instructions) chars/chain'),
-            ('chains_with_instructions', 'chains with instructions'), ('instructions_chars_max', 'instructions chars max')]
-    L += ['', '## Chain stats'] + table(['metric', 'all', 'main', 'subagent'], [
-        [lbl] + [format(round(S[g].get(k, 0)), ',') for g in ('all', 'main', 'subagent')] for k, lbl in keys])
-    L += ['', 'Cyrillic share of letters (user_prompt in subagent chains is the parent agent\'s task text, not typed by the human):']
-    L += table(['chains', 'user_prompt', 'assistant visible text'], [
-        [g, '%s (%s letters)' % (pc(c['user_prompt']), fmt(c['user_prompt_letters'])),
-         '%s (%s letters)' % (pc(c['assistant_visible']), fmt(c['assistant_visible_letters']))]
-        for g, c in R['cyrillic_share_of_letters'].items()])
-    L += ['', '## Run notes',
-          'files parsed %d, skipped by --since %d, unreadable %d, unparsable lines skipped %d, compact_boundary entries %d, runtime %ss' % (
-              m['files_parsed'], m['files_skipped_before_since'], m['files_unreadable'], m['lines_skipped'],
-              m['compact_boundary_entries'], m['runtime_sec']),
-          'context reset = compact_boundary or prompt_total < %.0f%% of the previous call (RESET_BELOW)' % (100 * m['reset_below'])]
-    L += ['- %s: %d' % kv for kv in m['odd'].items()]
-    L += ['- cost of calls whose message_id is already in an earlier chain (double-counted): %s' %
-          usd(m['cost_usd_of_calls_whose_message_id_is_in_an_earlier_chain'])]
-    if m['unpriced_model_calls']:
-        L += ['- unpriced_model_calls (priced as sonnet-5): ' + ', '.join('%s=%d' % kv for kv in m['unpriced_model_calls'].items())]
-    else:
-        L += ['- unpriced_model_calls: 0']
-    L += ['', 'Attachments excluded from the context composition (bookkeeping, not model-visible):']
-    L += ['- %s (%s entries): %s' % (k, format(v['entries'], ','), v['reason']) for k, v in m['attachments_excluded_as_bookkeeping'].items()]
-    L += ['', 'Checked and kept, unsure:'] + ['- %s: %s' % kv for kv in m['attachments_kept_unsure'].items()]
-    return '\n'.join(L) + '\n'
-
-
-def rnd(x):
-    if isinstance(x, float):
-        return round(x, 6)
-    if isinstance(x, dict):
-        return {k: rnd(v) for k, v in x.items()}
-    if isinstance(x, list):
-        return [rnd(v) for v in x]
-    return x
 
 
 def selftest():
@@ -605,7 +465,6 @@ def selftest():
     assert R['meta']['lines_skipped'] == 1 and R['meta']['files_parsed'] == 2
     assert close(R['totals']['cost_usd'], exp) and close(sum(c['cost_usd'] for c in R['categories']), exp)  # cost split sums to total
     assert close(sum(R['cost_by_token_type'].values()), exp)
-    assert close(sum(g['cost_usd'] for g in R['by_month'].values()), exp) and set(R['by_month']) == {'2026-01', '2026-02'}
     assert set(R['by_kind']) == {'main', 'subagent'} and R['by_kind']['subagent']['calls'] == 2
     assert cats['output:visible']['tokens_added'] == 40 + 30 + 10 + 3 + 2 and cats['output:thinking']['tokens_added'] == 10
     assert cats['assistant_output_in_context']['tokens_added'] == 40  # call 1 visible output, delta 95
@@ -614,7 +473,6 @@ def selftest():
     # bookkeeping attachments take no share of the baseline or the growth (the numbers above only add up without them)
     assert not [k for k in cats if k.split(':')[-1] in ('hook_success', 'credential_org', 'command_permissions', 'async_hook_response')], cats.keys()
     assert {k: v['entries'] for k, v in R['meta']['attachments_excluded_as_bookkeeping'].items()} == {k: 2 for k in EXCLUDED}
-    assert 'excluded from the context composition' in render_md(R)
     assert close(cats['baseline:tools+other']['tokens_added'], 1010 - (sa + 5) / 3.5 + 7 - 6 / 3.5)
     assert close(cats['baseline:att:skill_listing']['tokens_added'], sa / 3.5)
     # context tokens added = first prompt (1010) + growth (95) + reset (0) + subagent first prompt (7)
@@ -623,8 +481,6 @@ def selftest():
     assert R['stats']['all']['compactions'] == 1 and R['meta']['compact_boundary_entries'] == 1
     assert R['stats']['main']['baseline_tokens_median'] == 1010 and R['stats']['all']['prompt_total_max'] == 1105
     assert not R['meta']['unpriced_model_calls']
-    json.dumps(rnd(R))
-    assert render_md(R).startswith('# Claude Code token audit')
     assert R['cache_rewrites']['total']['calls'] == 0  # nothing above 100k prompt_total in the chains above
 
     # cache rewrites: one call per cause, plus two near-misses (small cache write; prompt_total < 100k)
@@ -658,33 +514,7 @@ def selftest():
         assert close(r['share_of_all_cost'], r['cost_usd'] / R2['totals']['cost_usd'])
     assert W['total']['calls'] == 6 and close(W['total']['cost_usd'], sum(want) / 1e6)
     assert W['by_cause']['idle >= 60 min']['median_gap_min'] == 90 and W['by_cause']['idle 5-60 min']['median_gap_min'] == 10
-    assert R2['stats']['all']['compactions'] == 1 and 'cache rewrites' in render_md(R2).lower()
+    assert R2['stats']['all']['compactions'] == 1
     cats2 = {c['category'] for c in R2['categories']}
     assert 'baseline:att:async_hook_response' in cats2 and 'baseline:att:hook_success' not in cats2
     print('selftest OK', file=sys.stderr)
-
-
-def main():
-    ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
-    ap.add_argument('--projects', default=os.path.join('~', '.claude', 'projects'), help='default: ~/.claude/projects')
-    ap.add_argument('--since', help='YYYY-MM-DD: only count API calls on/after this UTC date')
-    ap.add_argument('--out', default='token_audit_out', help='output dir for token_audit.json / token_audit.md')
-    ap.add_argument('--selftest', action='store_true')
-    a = ap.parse_args()
-    getattr(sys.stdout, 'reconfigure', lambda **k: None)(encoding='utf-8')
-    if a.selftest:
-        return selftest()
-    if a.since and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', a.since):
-        ap.error('--since must be YYYY-MM-DD')
-    R = analyze(a.projects, a.since, progress=True)
-    os.makedirs(a.out, exist_ok=True)
-    md = render_md(R)
-    with open(os.path.join(a.out, 'token_audit.json'), 'w', encoding='utf-8') as f:
-        json.dump(rnd(R), f, indent=1, ensure_ascii=False)
-    with open(os.path.join(a.out, 'token_audit.md'), 'w', encoding='utf-8') as f:
-        f.write(md)
-    print(md)
-
-
-if __name__ == '__main__':
-    main()
