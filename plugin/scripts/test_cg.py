@@ -399,7 +399,7 @@ class CgTest(unittest.TestCase):
             os.replace(db + '.moved', db)
             for name in ('maintain', 'embed', 'sync'):  # the three locks of the background job, held while the command runs
                 with self.assertRaises(sqlite3.OperationalError):
-                    cg._alone(SimpleNamespace(db=db), name, 0)
+                    memdb.lock(db, name, 0)
             ran.append(db)
             return {'action': 'on', 'done': True, 'notes': []}
 
@@ -407,7 +407,7 @@ class CgTest(unittest.TestCase):
             self.assertEqual(self.main_json('encrypt', 'on')[1]['done'], True)
         self.assertEqual(ran, [self.db])
         for name in ('maintain', 'embed', 'sync'):  # and let go afterwards
-            cg._alone(SimpleNamespace(db=self.db), name, 0).close()
+            memdb.lock(self.db, name, 0).close()
 
     def test_a_busy_index_is_encrypt_busy_and_any_other_database_error_is_not(self):
         import sqlcipher3

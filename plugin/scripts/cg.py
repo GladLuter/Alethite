@@ -95,15 +95,10 @@ def _compress(a):  # the owner's preview of a level: cg.py compress --level ultr
     return {'text': out, 'chars_in': len(text), 'chars_out': len(out)}
 
 
-def _alone(a, name, wait):
-    """memdb.lock of the index in `a.db`."""
-    return memdb.lock(a.db, name, wait)
-
-
 def _embed(a):
     conn = memdb.connect(a.db)  # first: it also makes the folder the lock file lies in
     try:
-        lock = _alone(a, 'embed', 0)  # noqa: F841 (held until the return)
+        lock = memdb.lock(a.db, 'embed', 0)  # noqa: F841 (held until the return)
     except sqlite3.OperationalError as e:  # another chat embeds the same records with the same one Ollama: nothing to add to it
         if 'locked' not in str(e):
             raise
@@ -125,13 +120,9 @@ def _settings(path):
     """The mod's own settings file (%USERPROFILE%\\.claude\\cacheguard\\settings.json): the job runs with what the mod runs with.
     (settings, None), or ({}, why) when the file is broken: the job goes on with the defaults and says so."""
     try:
-        with open(path, encoding='utf-8-sig') as f:  # Windows editors save it with a BOM
-            s = json.load(f)
-    except FileNotFoundError:
-        return {}, None
+        return crypto._read(path), None
     except (ValueError, OSError) as e:  # a broken file, or one that an editor holds or the owner may not read
         return {}, '%s: %s' % (path, e)
-    return (s, None) if isinstance(s, dict) else ({}, path)
 
 
 def _sync_dir(s):
@@ -180,7 +171,7 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
     except ValueError as e:  # an encrypted index and no key that opens it: nowhere to keep the run, /cg-health tells the same from `status`
         return {'errors': [{'where': 'index', 'error': '%s: %s' % (type(e).__name__, e)}]}
     try:
-        lock = _alone(a, 'maintain', 0)  # noqa: F841 (held until the return)
+        lock = memdb.lock(a.db, 'maintain', 0)  # noqa: F841 (held until the return)
     except sqlite3.OperationalError as e:
         if 'locked' not in str(e):
             raise
@@ -206,7 +197,7 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
         out['embed'] = {'skipped': 'battery'}
     else:
         try:
-            held = _alone(a, 'embed', 0)
+            held = memdb.lock(a.db, 'embed', 0)
         except sqlite3.OperationalError as e:
             if 'locked' in str(e):
                 out['embed'] = {'skipped': 'busy'}  # a chat embeds right now
@@ -225,7 +216,7 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
     if sync_dir:
         try:
             key, cipher = _key(a), _cipher(s)  # a key that cannot be read or a cipher that is none fails the sync step only
-            held = _alone(a, 'sync', a.sync_seconds)
+            held = memdb.lock(a.db, 'sync', a.sync_seconds)
             try:
                 r = sync.sync(conn, sync_dir, None, model, a.sync_seconds, digest=digest, key=key, cipher=cipher)
             finally:
@@ -237,10 +228,6 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
             fault('sync', e)
     conn.execute("INSERT OR REPLACE INTO meta VALUES('job_last', ?)", (json.dumps(out, ensure_ascii=False),))
     return out
-
-
-def _maintain(a):
-    return maintain(a)
 
 
 def _job(a):
@@ -274,7 +261,7 @@ def _sync(a):
     # a second sync waits its turn within its own time and then takes in only what is still new
     t0 = time.monotonic()
     conn = memdb.connect(a.db)  # first: it also makes the folder the lock file lies in
-    lock = _alone(a, 'sync', a.max_seconds)  # noqa: F841 (held until the return)
+    lock = memdb.lock(a.db, 'sync', a.max_seconds)  # noqa: F841 (held until the return)
     if a.skip_batch:
         machine, n = a.skip_batch
         sync.skip_batch(conn, machine, int(n) if n.isdigit() else -1)
@@ -305,7 +292,7 @@ def _encrypt(a):
     locks = []
     try:
         for name, wait in ENCRYPT_WAITS.items():
-            locks.append(_alone(a, name, wait))
+            locks.append(memdb.lock(a.db, name, wait))
         ui = dialogs.WindowsUI()
         if a.action == 'off':
             return encrypt.off(a.db, sync_dir, a.machine, ui, **kw)
@@ -332,7 +319,7 @@ def _index_dir(a):
     locks = []
     try:
         for name, wait in ENCRYPT_WAITS.items():
-            locks.append(_alone(a, name, wait))
+            locks.append(memdb.lock(a.db, name, wait))
         out = indexdir.move(where, path, _key(a), ui, locks=locks)
         a.where = None  # `main` adds the notice of where the index was before the command: stale now
         return out
@@ -456,7 +443,7 @@ def _parser():
     s.add_argument('--min-score', type=float, default=0.45)
     s.add_argument('--limit', type=int, default=2)
     s.add_argument('--timeout', type=float, default=5)  # the owner waits for this one: a cold Ollama is skipped, not waited for
-    s = add('maintain', _maintain)
+    s = add('maintain', maintain)
     s.add_argument('--settings')  # the mod's settings file; the index's own by default (the home one for an index in its folder)
     s.add_argument('--embed-seconds', type=float, default=300)
     s.add_argument('--sync-seconds', type=float, default=60)

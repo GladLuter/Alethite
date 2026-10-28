@@ -135,10 +135,10 @@ class MaintainTest(unittest.TestCase):
     def test_one_job_at_a_time_and_a_chat_that_embeds_is_left_alone(self):
         os.makedirs(os.path.dirname(self.db), exist_ok=True)
         memdb.connect(self.db).close()
-        held = cg._alone(SimpleNamespace(db=self.db), 'maintain', 0)
+        held = memdb.lock(self.db, 'maintain', 0)
         self.assertEqual(self.run_job(), {'busy': True})
         held.close()
-        held = cg._alone(SimpleNamespace(db=self.db), 'embed', 0)
+        held = memdb.lock(self.db, 'embed', 0)
         self.assertEqual(self.run_job()['embed'], {'skipped': 'busy'})
         held.close()
 
@@ -185,13 +185,13 @@ class MaintainTest(unittest.TestCase):
         self.assertEqual(json.loads(memdb.meta(conn, 'job_last'))['errors'], [])  # the end of the run overwrites the mark
 
     def test_only_a_locked_embed_lock_is_a_chat_embedding_any_other_error_is_said(self):
-        def alone(a, name, wait):
+        def alone(db, name, wait):
             if name == 'embed':
                 raise sqlite3.OperationalError('unable to open database file')
-            return real(a, name, wait)
+            return real(db, name, wait)
 
-        real = cg._alone
-        with mock.patch.object(cg, '_alone', alone):
+        real = memdb.lock
+        with mock.patch.object(memdb, 'lock', alone):
             out = self.run_job()
         self.assertEqual((out['embed'], [e['where'] for e in out['errors']]), (None, ['embed']))
         self.assertIn('unable to open database file', out['errors'][0]['error'])
