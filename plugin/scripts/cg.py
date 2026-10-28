@@ -372,7 +372,7 @@ def _day(s):  # argparse reports a ValueError from a type function as a bad argu
 
 def _stats(a):
     errors = []
-    m = stats.metrics(a.projects, memdb.connect(a.db), a.since, a.until, errors)
+    m = stats.metrics(a.projects, memdb.connect(a.db), a.since, a.until, errors, a.machine or sync.machine_name())
     return {'metrics': m, 'note': stats.note_markdown(m, a.host, a.today, json.loads(a.limits), a.rule_chars, a.memory_tokens, a.compression),
             'errors': errors}
 
@@ -466,6 +466,7 @@ def _parser():
     s = add('stats', _stats)
     s.add_argument('--since', type=_day, required=True)
     s.add_argument('--until', type=_day)
+    s.add_argument('--machine')  # as for sync: whose owner messages are counted; COMPUTERNAME by default
     s.add_argument('--host', required=True)
     s.add_argument('--today', type=_day, required=True)
     s.add_argument('--limits', required=True)  # JSON: [{"kind", "percentUsed"}, ...]

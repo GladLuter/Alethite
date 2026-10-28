@@ -359,6 +359,7 @@ def expand(conn, conv, pos, radius=6, budget=7000):
     return [dict(zip(('pos', 'ts', 'kind', 'text'), rows[i])) for i in sorted(keep)]
 
 
-def owner_count(conn, since, until=None):
-    return conn.execute("SELECT count(*) FROM chunks WHERE kind = 'owner' AND ts >= ? AND (? IS NULL OR ts < ?)",
-                        (since, until, until)).fetchone()[0]
+def owner_count(conn, since, until=None, machine=None):
+    """Owner messages of this computer only: the cost beside the count is this computer's too (origin is its name in a peer's records)."""
+    return conn.execute("SELECT count(*) FROM chunks JOIN keys k ON k.id = chunks.rowid WHERE chunks.kind = 'owner' AND chunks.ts >= ? "
+                        "AND (? IS NULL OR chunks.ts < ?) AND (k.origin IS NULL OR k.origin = ?)", (since, until, until, machine)).fetchone()[0]

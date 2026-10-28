@@ -539,6 +539,20 @@ class MemdbTest(unittest.TestCase):
         self.assertEqual(owner_count(self.conn, '2026-10-13'), 2)
         self.assertEqual(owner_count(self.conn, '2026-10-12', '2026-10-13'), 1)
 
+    def test_owner_count_skips_other_computers(self):
+        self.write('P/S.jsonl', [owner_line('раз'), owner_line('два'), owner_line('три')])
+        self.update()
+        for i in range(3):  # imported from computer A
+            self.add_imported('A', i)
+        self.assertEqual(owner_count(self.conn, '2026-10-01', machine='B'), 3)
+        self.add_imported('B', 9)  # taken back from our own folder: ours too
+        self.assertEqual(owner_count(self.conn, '2026-10-01', machine='B'), 4)
+
+    def add_imported(self, origin, i):
+        rid = self.conn.execute("INSERT INTO chunks(text, conv, pos, ts, kind) VALUES(?, 'X', ?, '2026-10-14T10:00:00.000Z', 'owner')",
+                                ('чужое%d' % i, 100 + i)).lastrowid
+        self.conn.execute('INSERT INTO keys(id, conv, cls, hash, n, origin) VALUES(?, ?, ?, ?, 0, ?)', (rid, 'X', 'owner', 'h%d' % i, origin))
+
 
 if __name__ == '__main__':
     unittest.main()

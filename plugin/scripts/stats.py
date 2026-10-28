@@ -14,7 +14,7 @@ MOD_TOOLS = ('mcp__cacheguard__recall', 'mcp__cacheguard__recall_more')
 BASELINE = {'usd_per_owner_msg': 5.20, 'rewrite_share': 0.417, 'idle60_share': 0.319, 'median_main_context': 428000}  # weekly limit: t('stats_weekly_base')
 
 
-def metrics(projects, conn, since, until=None, errors=None):
+def metrics(projects, conn, since, until=None, errors=None, machine=None):
     """Figures for the API calls on/after `since` (and before `until`) in the transcripts under `projects`.
     What would make them wrong (unreadable transcripts, models without a price) is appended to the `errors` list, as the index reports its own."""
     errors = [] if errors is None else errors
@@ -26,7 +26,7 @@ def metrics(projects, conn, since, until=None, errors=None):
     if meta['unpriced_model_calls']:
         errors.append({'path': 'audit', 'error': 'unpriced_model_calls: ' + ', '.join('%s=%d' % kv for kv in meta['unpriced_model_calls'].items())})
     cost = R['by_kind'].get('main', {}).get('cost_usd', 0)
-    n = memdb.owner_count(conn, since, until)
+    n = memdb.owner_count(conn, since, until, machine)
     main = R['stats']['main']  # {'chains': 0} when the period holds no main chat
     rw = R['cache_rewrites']
     # what the audit charges to the results of recall and recall_more: their tokens in the context of every later request
