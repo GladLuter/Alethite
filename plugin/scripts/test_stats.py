@@ -105,6 +105,19 @@ class StatsTest(unittest.TestCase):
         self.assertIn('memory_index_tokens: 950', n)
         self.assertIn('recall_share: ', n)  # the summary note reads it
 
+    def test_metrics_reads_each_transcript_once(self):
+        real_open, opened = open, []
+
+        def count(path, *a, **k):
+            if str(path).endswith('.jsonl'):
+                opened.append(str(path))
+            return real_open(path, *a, **k)
+
+        with mock.patch('builtins.open', count), mock.patch('stats.memdb.update', return_value={'errors': []}):  # the index reads on its own
+            metrics(self.projects, self.conn, '2026-10-01')
+        self.assertEqual(sorted(opened), sorted(set(opened)))
+        self.assertEqual(len(opened), 2)
+
     def test_note_without_messages_or_limits(self):
         m = metrics(self.projects, self.conn, '2030-01-01')
         n = note_markdown(m, 'PC-1', '2030-01-02', [], 0)

@@ -1,13 +1,10 @@
 """The success metrics of the design (§9): cost and cache figures from the token audit, owner messages from the index; and what the
 memory takes of the context (stage 3: measure before compressing more)."""
-import json
 import math
-import os
-import time
 import cc_token_audit
 import memdb
 from texts import t
-from transcripts import HANDOFF_END, HANDOFF_START, lp
+from transcripts import HANDOFF_END, HANDOFF_START
 
 MOD_TOOLS = ('mcp__cacheguard__recall', 'mcp__cacheguard__recall_more')
 
@@ -19,7 +16,8 @@ def metrics(projects, conn, since, until=None, errors=None, machine=None):
     What would make them wrong (unreadable transcripts, models without a price) is appended to the `errors` list, as the index reports its own."""
     errors = [] if errors is None else errors
     errors += memdb.update(conn, projects)['errors']  # the owner count comes from the index
-    R = cc_token_audit.analyze(projects, since, until=until)
+    load, visit = memory_load(since, until)
+    R = cc_token_audit.analyze(projects, since, until=until, visit=visit)
     meta = R['meta']
     if meta['files_unreadable']:
         errors.append({'path': 'audit', 'error': 'files_unreadable: %d' % meta['files_unreadable']})
@@ -31,7 +29,6 @@ def metrics(projects, conn, since, until=None, errors=None, machine=None):
     rw = R['cache_rewrites']
     # what the audit charges to the results of recall and recall_more: their tokens in the context of every later request
     tools = next((c for c in R['categories'] if c['category'] == 'tool:mcp:cacheguard'), {'cost_usd': 0, 'share': 0})
-    load = memory_load(projects, since, until)
     return {'since': since, 'until': until, 'cost_main': cost, 'owner_msgs': n, 'usd_per_owner_msg': cost / n if n else None,
             'rewrite_share': rw['total']['share_of_all_cost'], 'idle60_share': rw['by_cause']['idle >= 60 min']['share_of_all_cost'],
             'median_main_context': main.get('prompt_total_median', 0), 'main_calls': main.get('calls', 0),
@@ -40,50 +37,33 @@ def metrics(projects, conn, since, until=None, errors=None, machine=None):
             'handoffs': load['handoffs'], 'handoff_tokens': round(load['handoff_chars'] / cc_token_audit.CHARS_PER_TOKEN)}
 
 
-def memory_load(projects, since, until=None):
-    """What the mod put into the context over the period, from every transcript: the calls of recall and recall_more and the characters
-    they returned, the handoffs sent to new workers and their characters."""
+def memory_load(since, until=None):
+    """What the mod put into the context over the period: the calls of recall and recall_more and the characters they returned, the handoffs
+    sent to new workers and their characters. Returns (counts, visit): the audit calls visit(path, line) for every line of every transcript
+    it reads, so the transcripts are read once."""
     out = {'recall_calls': 0, 'recall_chars': 0, 'handoffs': 0, 'handoff_chars': 0}
-    for dp, _, names in os.walk(lp(projects)):
-        for name in names:
-            if not name.endswith('.jsonl'):
-                continue
-            ours = set()  # tool_use ids of the mod's tools in this transcript
-            path = os.path.join(dp, name)
-            try:
-                # its lines are never newer than the file: one last written before the period holds nothing of it (the audit skips it too)
-                if time.strftime('%Y-%m-%d', time.gmtime(os.path.getmtime(path))) < since:
-                    continue
-                with open(path, encoding='utf-8', errors='replace') as f:
-                    lines = f.readlines()
-            except OSError:  # the audit reports it among files_unreadable
-                continue
-            for line in lines:
-                try:
-                    o = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(o, dict):
-                    continue
-                m = o.get('message')
-                blocks = m.get('content') if isinstance(m, dict) else None
-                blocks = [{'type': 'text', 'text': blocks}] if isinstance(blocks, str) else blocks if isinstance(blocks, list) else []
-                day = str(o.get('timestamp') or '')[:10]
-                inside = day >= since and (until is None or day < until)
-                for b in (b for b in blocks if isinstance(b, dict)):
-                    if o.get('type') == 'assistant' and b.get('type') == 'tool_use' and b.get('name') in MOD_TOOLS:
-                        ours.add(b.get('id'))
-                    elif o.get('type') == 'user' and inside and b.get('type') == 'tool_result' and b.get('tool_use_id') in ours:
-                        out['recall_calls'] += 1
-                        out['recall_chars'] += cc_token_audit.result_chars(b.get('content'))
-                    elif (o.get('type') == 'user' and inside and b.get('type') == 'text' and isinstance(b.get('text'), str)
-                          and b['text'].lstrip().startswith(HANDOFF_START)):  # a message that only mentions the marker is no handoff
-                        text = b['text']
-                        start = text.index(HANDOFF_START)
-                        end = text.find(HANDOFF_END, start)
-                        out['handoffs'] += 1
-                        out['handoff_chars'] += (end + len(HANDOFF_END) if end >= 0 else len(text)) - start
-    return out
+    ours = set()  # (transcript, tool_use id) of the mod's tools
+
+    def visit(path, o):
+        m = o.get('message')
+        blocks = m.get('content') if isinstance(m, dict) else None
+        blocks = [{'type': 'text', 'text': blocks}] if isinstance(blocks, str) else blocks if isinstance(blocks, list) else []
+        day = str(o.get('timestamp') or '')[:10]
+        inside = day >= since and (until is None or day < until)
+        for b in (b for b in blocks if isinstance(b, dict)):
+            if o.get('type') == 'assistant' and b.get('type') == 'tool_use' and b.get('name') in MOD_TOOLS:
+                ours.add((path, b.get('id')))
+            elif o.get('type') == 'user' and inside and b.get('type') == 'tool_result' and (path, b.get('tool_use_id')) in ours:
+                out['recall_calls'] += 1
+                out['recall_chars'] += cc_token_audit.result_chars(b.get('content'))
+            elif (o.get('type') == 'user' and inside and b.get('type') == 'text' and isinstance(b.get('text'), str)
+                  and b['text'].lstrip().startswith(HANDOFF_START)):  # a message that only mentions the marker is no handoff
+                text = b['text']
+                start = text.index(HANDOFF_START)
+                end = text.find(HANDOFF_END, start)
+                out['handoffs'] += 1
+                out['handoff_chars'] += (end + len(HANDOFF_END) if end >= 0 else len(text)) - start
+    return out, visit
 
 
 def _usd(x):
