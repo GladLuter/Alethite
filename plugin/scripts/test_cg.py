@@ -865,6 +865,33 @@ class CgTest(unittest.TestCase):
             memdb.lock(db, name, 0).close()
 
     @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
+    def test_a_refusal_that_changes_nothing_comes_before_the_locks(self):
+        home = self.home_dir()
+        self.home_index(home)
+        self.move_ui()
+        held = memdb.lock(os.path.join(home, 'index.db'), 'embed', 0)  # busy: waiting for it would end in index_dir_busy
+        self.addCleanup(held.close)
+        far = os.path.join(self.tmp, 'far')
+        with mock.patch.object(cg, 'ENCRYPT_WAITS', {'maintain': 0, 'embed': 0, 'sync': 0}), mock.patch.object(indexdir, '_drive_type', lambda root: 4):
+            code, out, _ = self.main_home('index-dir', '--path', far)
+        self.assertEqual((code, out), (1, {'error': 'ValueError: ' + t('index_dir_not_local', dir=far)}))
+
+    @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
+    def test_the_folder_window_does_not_open_for_a_move_that_is_refused_anyway(self):
+        far, home = self.temporary_index()
+        held = memdb.lock(os.path.join(home, 'index.db'), 'maintain', 0)  # no merge this run
+        self.addCleanup(held.close)
+        ui = self.move_ui()
+        ui.pick_folder = mock.Mock(return_value=os.path.join(self.tmp, 'other'))
+        code, out, _ = self.main_home('index-dir')
+        self.assertEqual((code, out), (1, {'error': 'ValueError: ' + t('index_dir_merge_pending', dir=far, home=home)}))
+        ui.pick_folder.assert_not_called()
+        with mock.patch.object(encrypt, 'SUPPORTED', False):
+            code, out, _ = self.main_home('index-dir')
+        self.assertEqual((code, out), (1, {'error': 'ValueError: ' + t('index_dir_windows_only')}))
+        ui.pick_folder.assert_not_called()
+
+    @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
     def test_without_a_path_the_window_chooses_the_folder_and_cancelling_it_changes_nothing(self):
         home = self.home_dir()
         self.home_index(home)

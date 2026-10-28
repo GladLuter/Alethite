@@ -87,7 +87,7 @@ def status(conn, where):
     # It is told while that index is there to merge: a note that nothing would take away is none
     merge = failed and where and where.merge_from and t('index_merge_failed', dir=where.configured, home=os.path.dirname(where.merge_from), e=failed)
     merged = done and t('index_merged', **json.loads(done))  # the last merge, in the language of this run: merge_back stored its figures
-    notes = [n for n in (notice(where), old and t('index_old_copy', dir=old), merge, merged) if n]
+    notes = [n for n in (notice(where), *(t('index_old_copy', dir=d) for d in _old_copies(old)), merge, merged) if n]
     return {'configured': where and where.configured, 'fallback': bool(where and where.fallback), 'notes': notes}
 
 
@@ -217,9 +217,8 @@ def merge_back(where, key):
             return None
         _handoffs(src, db)
         with contextlib.closing(_connect(db, key)) as conn:  # a move may have left src as the old copy of db: its note goes with it
-            old = memdb.meta(conn, 'old_copy')
-            if old and crypto.norm(old) == crypto.norm(fields['home']):
-                conn.execute("DELETE FROM meta WHERE key = 'old_copy'")
+            old = _old_copies(memdb.meta(conn, 'old_copy'))
+            _set_old(conn, [d for d in old if crypto.norm(d) != crypto.norm(fields['home'])])
             # for /cg-health: a merge done by the background job is told nowhere else
             conn.execute("INSERT OR REPLACE INTO meta VALUES('merge_done', ?)", (json.dumps(dict(fields, n=done['records'])),))
         encrypt._remove(src)
@@ -363,40 +362,65 @@ def _delete_old(old):
     return stayed
 
 
-def _drop_old(old, db, ui, notes):
-    """The question about the old copy in the folder `old`, the index in use being `db`: Yes deletes it, No leaves a note (and meta.old_copy of
-    `db`, which /cg-health shows). That note goes when the last file does. A name that is no full path, or is the folder of `db` itself, is
-    no old copy to delete: only its note goes."""
-    if os.path.isabs(old) and crypto.norm(old) != crypto.norm(os.path.dirname(db)):
-        if not ui.confirm(t('dlg_delete_old_index', dir=old)):
-            notes.append(t('index_old_kept', dir=old))
-            return
-        if _delete_old(old):
-            notes.append(t('index_old_busy', dir=old))
-            return
-    with contextlib.closing(memdb.connect(db)) as conn:
+def _old_copies(value):
+    """The folders meta.old_copy holds, one per line (a single folder is a value of one line, as it always was)."""
+    return [d for d in (value or '').split('\n') if d]
+
+
+def _set_old(conn, folders):
+    if folders:
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('old_copy', ?)", ('\n'.join(dict.fromkeys(folders)),))
+    else:
         conn.execute("DELETE FROM meta WHERE key = 'old_copy'")
 
 
-def _switch(out, where, target, key, ui, drive_type, free):
-    """The move up to the switch, with `out` (see `move`) filled in. Every refusal is a ValueError raised before anything is changed; a
-    failure later leaves at most a whole copy in the target, which the repeat takes for its own. Returns (the folder of an old copy, the
-    index that notes it) when the owner is to be asked about deleting it, else None."""
+def _drop_old(olds, db, ui, notes):
+    """The question about each old copy in the folders `olds`, the index in use being `db`: Yes deletes it, No leaves a note (and its line in
+    meta.old_copy of `db`, which /cg-health shows). That line goes when the last file does. A name that is no full path, or is the folder of
+    `db` itself, is no old copy to delete: only its line goes."""
+    done = set()
+    for old in olds:
+        if os.path.isabs(old) and crypto.norm(old) != crypto.norm(os.path.dirname(db)):
+            if not ui.confirm(t('dlg_delete_old_index', dir=old), t('dlg_title_index_dir')):
+                notes.append(t('index_old_kept', dir=old))
+                continue
+            if _delete_old(old):
+                notes.append(t('index_old_busy', dir=old))
+                continue
+        done.add(old)
+    with contextlib.closing(memdb.connect(db)) as conn:
+        _set_old(conn, [d for d in _old_copies(memdb.meta(conn, 'old_copy')) if d not in done])
+
+
+def refuse(where, target=None, drive_type=None):
+    """The refusals of `move` that change nothing and need no lock: not Windows, a merge not done, and (with a `target`) a folder that is no
+    local disk or lies in a cloud folder. A ValueError. cg.py asks before it waits for locks and before the folder window opens."""
     import encrypt
-    src, folder, notes = where.db, out['dir'], out['notes']
-    cur, n, home = os.path.dirname(src), crypto.norm(out['dir']), crypto.norm(crypto.HOME_DIR)
-    settings = os.path.join(crypto.HOME_DIR, 'settings.json')
     if not encrypt.SUPPORTED:
         raise ValueError(t('index_dir_windows_only'))
     if where.merge_from:  # the records saved on C: while the folder was away are not in its index yet, and the old copy is that index
-        raise ValueError(t('index_dir_merge_pending', dir=cur, home=os.path.dirname(where.merge_from)))
-    drive = os.path.splitdrive(folder)[0]
-    if not (os.path.isabs(target) and os.path.splitdrive(target)[0]) or drive.startswith('\\\\') or drive_type(drive + '\\') != DRIVE_FIXED:
+        raise ValueError(t('index_dir_merge_pending', dir=os.path.dirname(where.db), home=os.path.dirname(where.merge_from)))
+    if target is None:
+        return
+    folder = os.path.abspath(target)
+    n, drive = crypto.norm(folder), os.path.splitdrive(folder)[0]
+    if not (os.path.isabs(target) and os.path.splitdrive(target)[0]) or drive.startswith('\\\\') or (drive_type or _drive_type)(drive + '\\') != DRIVE_FIXED:
         raise ValueError(t('index_dir_not_local', dir=folder))
     for var in CLOUD:
         cloud = crypto.norm(os.environ[var]) if os.environ.get(var) else None
         if cloud and (n == cloud or n.startswith(cloud.rstrip(os.sep) + os.sep)):
             raise ValueError(t('index_dir_cloud', dir=folder))
+
+
+def _switch(out, where, target, key, ui, drive_type, free):
+    """The move up to the switch, with `out` (see `move`) filled in. Every refusal is a ValueError raised before anything is changed; a
+    failure later leaves at most a whole copy in the target, which the repeat takes for its own. Returns (the folders of old copies, the
+    index that notes it) when the owner is to be asked about deleting it, else None."""
+    import encrypt
+    src, folder, notes = where.db, out['dir'], out['notes']
+    cur, n, home = os.path.dirname(src), crypto.norm(out['dir']), crypto.norm(crypto.HOME_DIR)
+    settings = os.path.join(crypto.HOME_DIR, 'settings.json')
+    refuse(where, target, drive_type)
     if where.fallback and n == home:  # before "here": the folder C: works in now is the home one, and this makes it the permanent one
         crypto.set_fields(settings, {'indexDir': None})
         _unmark()
@@ -408,7 +432,7 @@ def _switch(out, where, target, key, ui, drive_type, free):
         notes.append(t('index_dir_here', dir=folder))
         if os.path.isfile(src):
             with contextlib.closing(memdb.connect(src)) as conn:
-                old = memdb.meta(conn, 'old_copy')
+                old = _old_copies(memdb.meta(conn, 'old_copy'))
             if old:
                 return old, src
         return None
@@ -416,7 +440,12 @@ def _switch(out, where, target, key, ui, drive_type, free):
         raise ValueError(t('index_dir_plain_left', dir=cur))
     new_db = os.path.join(folder, 'index.db')
     pairs = list(zip(encrypt._files(src), encrypt._files(new_db)))
-    if any(os.path.exists(b) and not _same(a, b) for a, b in pairs):  # one the target has must be a copy of ours, a half-done move of this one
+    # one the target has must be a copy of ours, a half-done move of this one, and no journal lies there (a hot one belongs to some index)
+    if any(os.path.exists(b) and not _same(a, b) or os.path.exists(b + '-journal') for a, b in pairs):
+        if os.path.isfile(src):
+            with contextlib.closing(memdb.connect(src)) as conn:
+                if n in map(crypto.norm, _old_copies(memdb.meta(conn, 'old_copy'))):  # the old copy of this index, left by an earlier move
+                    raise ValueError(t('index_dir_old_copy_there', dir=folder, cur=cur))
         raise ValueError(t('index_dir_foreign', dir=folder))
     pairs = [(a, b) for a, b in pairs if os.path.isfile(a)]
     if key is None and any(crypto.is_encrypted(a) for a, _ in pairs):
@@ -437,9 +466,9 @@ def _switch(out, where, target, key, ui, drive_type, free):
     copies = [b + '.cg-move' for _, b in pairs]
     try:
         stamps = [_copy(a, c, key) for (a, _), c in zip(pairs, copies)]
-        _copy_extras(cur, folder)
         if [encrypt._stamp(a) for a, _ in pairs] != stamps:  # a chat wrote to an index meanwhile, and the copy lacks it
-            raise ValueError(t('index_dir_busy'))
+            raise ValueError(t('index_dir_busy'))  # before the handoffs and job.xml go over: "nothing was changed" stays true
+        _copy_extras(cur, folder)
         for c, (_, b) in zip(copies, pairs):
             os.replace(c, b)
     finally:
@@ -447,13 +476,24 @@ def _switch(out, where, target, key, ui, drive_type, free):
             encrypt._remove(c)
     crypto.set_fields(settings, {'indexDir': field})  # from here every new run of cg.py works in the target
     crypto.INDEX_DIRS.add(n)
-    with contextlib.closing(memdb.connect(new_db)) as conn:
-        conn.execute("INSERT OR REPLACE INTO meta VALUES('old_copy', ?)", (cur,))
+    with contextlib.closing(memdb.connect(new_db)) as conn:  # the copy came with the old copies of the source: the source joins them
+        _set_old(conn, [*_old_copies(memdb.meta(conn, 'old_copy')), cur])
     _unmark()  # left behind, the source is a plain old copy, and a mark beside it (a stale one too) would have the next run merge it and delete it
     if field:  # its forgets are kept at home from now on: the folder may be away before the next run
         keep_forgets(new_db)
     out['done'] = True
-    return cur, new_db
+    return [cur], new_db
+
+
+@contextlib.contextmanager
+def _late(out):
+    """A database that is locked once the switch is made is not the "busy" of a move that changed nothing (cg.py turns every 'locked' into it)."""
+    try:
+        yield
+    except memdb.db_errors() as e:
+        if out['done'] and 'locked' in str(e):
+            raise ValueError(t('index_dir_locked_after', dir=out['dir'])) from None
+        raise
 
 
 def move(where, target, key, ui, drive_type=None, free=None, locks=()):
@@ -467,10 +507,14 @@ def move(where, target, key, ui, drive_type=None, free=None, locks=()):
     folder = os.path.abspath(target)
     out = {'action': 'index-dir', 'done': False, 'dir': folder, 'notes': []}
     try:
-        old = _switch(out, where, target, key, ui, drive_type or _drive_type, free or _free)
+        with _late(out):
+            old = _switch(out, where, target, key, ui, drive_type or _drive_type, free or _free)
     finally:
         for lock in locks:
             lock.close()
+    if where.fallback and out['done'] and crypto.norm(folder) not in (crypto.norm(crypto.HOME_DIR), crypto.norm(where.configured)):
+        out['notes'].append(t('index_dir_left_behind', dir=where.configured))  # a third folder: what the configured one holds is left
     if old:
-        _drop_old(*old, ui, out['notes'])
+        with _late(out):
+            _drop_old(*old, ui, out['notes'])
     return out

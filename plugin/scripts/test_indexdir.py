@@ -9,6 +9,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 import crypto
+import dialogs
 import encrypt
 import indexdir
 import lessons
@@ -993,7 +994,7 @@ class MoveTest(unittest.TestCase):
             self.move()
         self.assertEqual(str(e.exception), t('index_dir_busy'))
         self.assertEqual(self.tree(self.home), before)
-        self.assertEqual(sorted(os.listdir(self.target)), ['handoffs', 'job.xml'])  # no .cg-move, no index
+        self.assertEqual(os.listdir(self.target), [])  # no .cg-move, no index, and no handoffs or job.xml: "nothing was changed" is true
         self.assertEqual((self.fields(), self.ui.asked, crypto.INDEX_DIRS), ({'language': 'ru'}, [], set()))
         self.assertTrue(self.move()['done'])  # and a try that finds it quiet goes through
 
@@ -1141,6 +1142,72 @@ class MoveTest(unittest.TestCase):
         with self.assertRaises(crypto.SettingsBroken):
             self.move()
         self.assertFalse(os.path.exists(self.target))
+
+    def test_a_journal_in_the_target_is_a_foreign_index_too(self):
+        self.full_home()
+        for name in ('index.db-journal', 'index.before-stage2.db-journal'):
+            with self.subTest(name):
+                shutil.rmtree(self.target, ignore_errors=True)
+                self.write(os.path.join(self.target, name))
+                before = self.tree(self.home, self.target)
+                with self.assertRaises(ValueError) as e:
+                    self.move()
+                self.assertEqual(str(e.exception), t('index_dir_foreign', dir=self.target))
+                self.assertEqual(self.tree(self.home, self.target), before)
+
+    def test_a_copy_that_counts_differently_is_refused(self):
+        self.full_home()
+        with mock.patch.object(encrypt, '_counts', side_effect=[{'chunks': 2}, {'chunks': 1}]), self.assertRaises(ValueError) as e:
+            indexdir._copy(self.src, self.src + '.cg-move', None)
+        self.assertEqual(str(e.exception), t('encrypt_copy_differs', path=self.src))
+
+    def test_a_locked_index_after_the_switch_is_not_called_busy(self):
+        self.full_home()
+        with mock.patch.object(indexdir, '_drop_old', side_effect=sqlite3.OperationalError('database is locked')), self.assertRaises(ValueError) as e:
+            self.move()
+        self.assertEqual(str(e.exception), t('index_dir_locked_after', dir=self.target))
+        self.assertEqual(self.fields()['indexDir'], self.target)
+        with mock.patch.object(indexdir, '_drop_old', side_effect=sqlite3.OperationalError('disk I/O error')), self.assertRaises(sqlite3.OperationalError):
+            self.move(where=resolve(self.home, self.free))  # any other failure stays what it is
+
+    def test_the_box_about_the_old_copy_has_its_own_title(self):
+        self.full_home()
+        self.move(ui=FakeUI([False]))
+        self.assertEqual(self.ui.titles, [t('dlg_title_index_dir')])
+        with mock.patch.object(dialogs, '_box', return_value=dialogs.IDYES) as box:
+            self.assertTrue(dialogs.WindowsUI().confirm('q', 'The title'))
+        self.assertEqual(box.call_args.kwargs['title'], 'The title')
+
+    def test_every_old_copy_left_is_kept_listed_and_asked_about(self):
+        self.full_home()
+        b, c = (os.path.join(self.root, n) for n in ('b', 'c'))
+        self.move(b, ui=FakeUI([False]))
+        self.move(c, where=resolve(self.home, self.free), ui=FakeUI([False]))  # b is left too, and the first old copy is not forgotten
+        self.assertEqual(self.old_copy(self.new_db(c)).splitlines(), [self.home, b])
+        with contextlib.closing(memdb.connect(self.new_db(c))) as conn:
+            self.assertEqual(indexdir.status(conn, Where(self.new_db(c), c, False, None))['notes'], [t('index_old_copy', dir=self.home), t('index_old_copy', dir=b)])
+        out = self.move(c, where=resolve(self.home, self.free), ui=FakeUI([True, False]))  # "here" asks about each: Yes to the first, No to the second
+        self.assertEqual(self.ui.asked, [t('dlg_delete_old_index', dir=self.home), t('dlg_delete_old_index', dir=b)])
+        self.assertEqual(out['notes'], [t('index_dir_here', dir=c), t('index_old_kept', dir=b)])
+        self.assertEqual((os.path.exists(self.src), os.path.exists(self.new_db(b))), (False, True))
+        self.assertEqual(self.old_copy(self.new_db(c)), b)
+
+    def test_a_third_folder_while_c_stands_in_says_the_index_of_the_earlier_folder_is_left(self):
+        far = os.path.join(self.root, 'far')
+        self.full_home()
+        crypto.set_fields(self.settings, {'indexDir': far})
+        self.write(self.mark, far)
+        out = self.move(where=Where(self.src, far, True, None))
+        self.assertEqual(out['notes'], [t('index_dir_left_behind', dir=far)])
+
+    def test_back_to_the_folder_of_an_old_copy_says_so_and_what_to_do(self):
+        self.full_home()
+        self.move(ui=FakeUI([False]))
+        before = self.tree(self.home, self.target)
+        with self.assertRaises(ValueError) as e:
+            self.move(self.home.upper(), where=resolve(self.home, self.free))
+        self.assertEqual(str(e.exception), t('index_dir_old_copy_there', dir=self.home.upper(), cur=self.target))
+        self.assertEqual(self.tree(self.home, self.target), before)
 
 
 class ForgetsFileTest(unittest.TestCase):

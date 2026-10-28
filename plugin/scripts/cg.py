@@ -323,10 +323,12 @@ def _index_dir(a):
     the background job are held until `move` has switched over, and given back there (the old copy could not be deleted with them open)."""
     import dialogs
     ui = dialogs.WindowsUI()
+    where = a.where or indexdir.Where(a.db, None, False, None)  # a run with --db: that index is the one that moves
+    indexdir.refuse(where)  # what changes nothing is refused before the window opens and before any lock is waited for
     path = a.path or ui.pick_folder()  # before the locks: nobody waits while the owner looks for a folder
     if path is None:
         return {'done': False, 'notes': [texts.t('index_dir_cancelled')]}
-    where = a.where or indexdir.Where(a.db, None, False, None)  # a run with --db: that index is the one that moves
+    indexdir.refuse(where, path)
     with _all_locks(a, 'index_dir_busy') as locks:
         out = indexdir.move(where, path, _key(a), ui, locks=locks)
         a.where = None  # `main` adds the notice of where the index was before the command: stale now

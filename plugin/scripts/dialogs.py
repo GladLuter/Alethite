@@ -14,12 +14,12 @@ CREATE_NEW_CONSOLE = 0x10
 _GETPASS = 'import getpass, sys; sys.stdout.buffer.write(getpass.getpass(sys.argv[1]).encode())'
 
 
-def _box(text, flags):
-    """The system's message box, always on top of the other windows; the button pressed."""
+def _box(text, flags, title=None):
+    """The system's message box (with its own `title`, else the mod's), always on top of the other windows; the button pressed."""
     user32 = ctypes.WinDLL('user32', use_last_error=True)
     user32.MessageBoxW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
     user32.MessageBoxW.restype = ctypes.c_int
-    button = user32.MessageBoxW(None, text, t('dlg_title'), flags | MB_TOPMOST | MB_SETFOREGROUND)
+    button = user32.MessageBoxW(None, text, title or t('dlg_title'), flags | MB_TOPMOST | MB_SETFOREGROUND)
     if not button:
         raise OSError('MessageBoxW failed: error %d' % ctypes.get_last_error())
     return button
@@ -85,9 +85,9 @@ class WindowsUI:
     def show_code(self, code):
         _box(t('dlg_code', code=code), 0)
 
-    def confirm(self, text):
+    def confirm(self, text, title=None):
         # No is the default button: an Enter held down to close the box before closes this one too, and must never answer Yes
-        return _box(text, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES
+        return _box(text, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2, title=title) == IDYES
 
     def ask_code(self):
         try:

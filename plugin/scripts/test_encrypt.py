@@ -25,13 +25,14 @@ class FakeUI:
     `folder`: what the folder window gives back (None: cancelled)."""
 
     def __init__(self, answers=(), code=None, folder=None):
-        self.answers, self.code, self.folder, self.shown, self.asked, self.entries = list(answers), code, folder, [], [], 0
+        self.answers, self.code, self.folder, self.shown, self.asked, self.entries, self.titles = list(answers), code, folder, [], [], 0, []
 
     def show_code(self, code):
         self.shown.append(code)
 
-    def confirm(self, text):
+    def confirm(self, text, title=None):
         self.asked.append(text)
+        self.titles.append(title)
         return self.answers.pop(0) if self.answers else True
 
     def ask_code(self):
