@@ -140,10 +140,12 @@ class ResolveTest(unittest.TestCase):
         self.touch(self.db)
         for raw in ('{ "indexDir": ', '[1]', 'not json'):
             self.settings(raw=raw)
-            self.assertEqual(self.where(), Where(self.db, None, False, None), raw)
+            self.assertEqual(self.where()[:4], Where(self.db, None, False, None)[:4], raw)
+            self.assertTrue(self.where().settings_error, raw)
         os.remove(path)
         os.mkdir(path)  # a folder, not a file: OSError
-        self.assertEqual(self.where(), Where(self.db, None, False, None))
+        self.assertEqual(self.where()[:4], Where(self.db, None, False, None)[:4])
+        self.assertTrue(self.where().settings_error)
         self.assertFalse(os.path.exists(self.mark))
         self.assertEqual(self.asked, [])
 

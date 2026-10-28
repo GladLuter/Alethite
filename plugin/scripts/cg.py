@@ -495,7 +495,7 @@ def main(argv):
         merged = pending and indexdir.merge_back(a.where, crypto.load_key(crypto.settings_path(a.db)) if enc else None)
         if pending and not os.path.exists(pending):  # merged and deleted just now: the command is not to see it as still to merge
             a.where = a.where._replace(merge_from=None)
-        if a.where and a.where.fallback and a.cmd not in INDEX_FREE:  # before anything is read from a transcript
+        if a.where and (a.where.fallback or a.where.settings_error) and a.cmd not in INDEX_FREE:  # before anything is read from a transcript
             indexdir.apply_forgets(a.db)
         out, code = a.fn(a), 0
         if a.where and a.where.configured and not a.where.fallback and a.cmd not in INDEX_FREE:  # this run may have made forgets, or taken some in

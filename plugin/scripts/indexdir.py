@@ -19,8 +19,9 @@ MIN_FREE = 2 * 2 ** 30  # a new index in the home folder (C:) only while that mu
 MARK = 'index.db.fallback'  # in the home folder: the index beside it stands in for indexDir, and the file holds that folder
 FORGETS = 'forgotten.json'  # in the home folder: the keys (no text) of every forget an index in another folder holds, for a stand-in index to apply
 # db: the index to open; configured: indexDir, None when it is not set or is the home folder; fallback: the home index stands in for it;
-# merge_from: the home index to merge into db, None when there is none
-Where = collections.namedtuple('Where', 'db configured fallback merge_from')
+# merge_from: the home index to merge into db, None when there is none; settings_error: why the settings could not be read, the home index
+# is worked with (and the forgets applied) meanwhile, None when they were read
+Where = collections.namedtuple('Where', 'db configured fallback merge_from settings_error', defaults=(None,))
 LOCKS = ('maintain', 'embed', 'sync')  # the long runs on an index (memdb.lock): a merge waits for none, it takes all of both indexes or does nothing
 DRIVE_FIXED = 3  # GetDriveTypeW: a disk inside this computer, not a removable or a network one
 SPARE = 200 * 2 ** 20  # what a move leaves free on the target disk besides the files it copies
@@ -50,7 +51,7 @@ def resolve(home=None, free=None):
         d = crypto._read(settings).get('indexDir')
     except (crypto.SettingsBroken, OSError) as e:  # nothing says where the index is: the home one is all there is to go by, and no guess is made without it
         if os.path.isfile(db):
-            return Where(db, None, False, None)
+            return Where(db, None, False, None, str(e))
         raise ValueError(t('index_settings_unreadable', path=settings, e=e)) from None
     if isinstance(d, str) and not d.strip():  # a value emptied by hand means no folder, as none does
         d = None
@@ -74,6 +75,9 @@ def notice(where):
     """What the owner is told when the index is not where indexDir says; None when it is."""
     if where and where.fallback:
         return t('index_fallback', dir=where.configured, home=os.path.dirname(where.db))
+    if where and where.settings_error:
+        home = os.path.dirname(where.db)
+        return t('index_settings_fallback', path=os.path.join(home, 'settings.json'), e=where.settings_error, home=home)
 
 
 def status(conn, where):

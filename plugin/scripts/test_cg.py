@@ -753,6 +753,28 @@ class CgTest(unittest.TestCase):
         self.assertEqual(self.main_home('index', '--rebuild')[0], 0)
         self.assertEqual(self.secret_in(db), (0, 1, 0))  # and a rebuild does not bring it back
 
+    def break_settings(self, home):
+        path = os.path.join(home, 'settings.json')
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('{ "indexDir": ')
+        return path
+
+    def test_unreadable_settings_applies_forgets(self):
+        far, home = self.forgotten_in_the_folder(old_copy=True)
+        db = os.path.join(home, 'index.db')
+        self.break_settings(home)
+        self.assertEqual(self.secret_in(db), (1, 0, 0))
+        self.assertEqual(self.main_home('lessons', '--all')[0], 0)
+        self.assertEqual(self.secret_in(db), (0, 1, 0))  # the forget made in the folder is applied here too
+
+    def test_unreadable_settings_tells_owner(self):
+        far, home = self.forgotten_in_the_folder(old_copy=True)
+        path = self.break_settings(home)
+        code, out, _ = self.main_home('status')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out['index_notice'], t('index_settings_fallback', path=path, e=t('settings_broken', path=path), home=home))
+        self.assertEqual(out['index_dir']['notes'], [out['index_notice']])
+
     def test_a_pending_merge_of_plain_indexes_never_reads_the_key(self):  # a key that cannot be read stops no plain index, merges included
         far, home = self.temporary_index()
         with open(os.path.join(home, 'settings.json'), 'w', encoding='utf-8') as f:
