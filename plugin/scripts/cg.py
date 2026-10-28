@@ -25,6 +25,9 @@ from handoff import build_handoff
 from transcripts import find_session, last_usage, project_key
 
 
+INDEX_FREE = ('last-turn', 'compress', 'handoff')  # the commands that read no index: no merge waits for them, and they still work when the index cannot be used
+
+
 class _Help(Exception):
     pass
 
@@ -484,7 +487,8 @@ def main(argv):
                 crypto.INDEX_DIRS.add(crypto.norm(a.where.configured))
         # the folder is back and the home folder has a temporary index: it is merged first, and its locks are given back before the command
         # a plain pair never reads the key (memdb._open): a key that cannot be read must not stop it
-        pending = a.where and a.where.merge_from
+        # a merge of a big index takes seconds: not in a run that needs no index, nor in the prompt hook's lessons-match, which has eight
+        pending = a.where and a.where.merge_from and a.cmd not in (*INDEX_FREE, 'lessons-match')
         enc = pending and (crypto.is_encrypted(a.where.db) or crypto.is_encrypted(a.where.merge_from))
         merged = pending and indexdir.merge_back(a.where, crypto.load_key(crypto.settings_path(a.db)) if enc else None)
         if pending and not os.path.exists(pending):  # merged and deleted just now: the command is not to see it as still to merge

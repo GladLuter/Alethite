@@ -635,6 +635,15 @@ class CgTest(unittest.TestCase):
         code, out, _ = self.main_home('status')  # the next run tries again, and what it merges takes the note away
         self.assertEqual((code, out['rows'], out['index_notice'], out['index_dir']['notes']), (0, 2, t('index_merged', dir=far, home=home, n=2), []))
 
+    def test_a_run_with_little_time_leaves_a_pending_merge_to_the_next_one(self):  # the prompt hook's lessons-match has 8 s, a big merge takes more
+        far, home = self.temporary_index()
+        there = lambda: [os.path.exists(os.path.join(home, n)) for n in ('index.db', indexdir.MARK)]
+        for cmd in (('lessons-match', '--text', 'some message to match'), ('last-turn', '--session', 'S1'), ('handoff', '--session', 'S1', '--today', '2026-10-27')):
+            code, out, _ = self.main_home(*cmd)
+            self.assertEqual((code, 'index_notice' in out, there()), (0, False, [True, True]), cmd)
+        code, out, _ = self.main_home('status')  # a run with time merges, and the command works on the index in the folder
+        self.assertEqual((code, out['index_notice'], out['rows'], there()), (0, t('index_merged', dir=far, home=home, n=2), 2, [False, False]))
+
     def test_a_pending_merge_of_plain_indexes_never_reads_the_key(self):  # a key that cannot be read stops no plain index, merges included
         far, home = self.temporary_index()
         with open(os.path.join(home, 'settings.json'), 'w', encoding='utf-8') as f:
