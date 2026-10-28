@@ -20,7 +20,7 @@ REQUIRED = ('action', 'symptom', 'cause')
 FIELD_CHARS = 300
 TRIGGER_MIN = 8  # a shorter one ("git", "rm") would stop every other command
 _SELECT = ("SELECT rowid, conv, pos, ts, text, (SELECT origin FROM keys WHERE id = chunks.rowid) FROM chunks "
-           "WHERE rowid IN (SELECT id FROM keys WHERE cls = 'lesson') AND " + memdb.IN_PROJECT)  # kind is UNINDEXED: it scans the whole FTS table
+           "WHERE rowid IN (SELECT id FROM keys WHERE cls = 'lesson' AND (:c IS NULL OR conv = :c))")  # the lessons of a project all sit in its conv_of
 
 
 def conv_of(project):
@@ -65,15 +65,16 @@ def save(conn, project, fields, now=None):
     ts = stamp.strftime('%Y-%m-%dT%H:%M:%S.') + '%03dZ' % (stamp.microsecond // 1000)
     conn.execute('BEGIN IMMEDIATE')
     with conn:
-        row = conn.execute("SELECT rowid, pos FROM chunks WHERE conv = ? AND kind = 'lesson' AND text = ?", (conv, text)).fetchone()
+        h = memdb.text_hash(text)
+        row = conn.execute('SELECT c.rowid, c.pos FROM keys k JOIN chunks c ON c.rowid = k.id WHERE k.conv = ? AND k.cls = ? AND k.hash = ? AND c.text = ?',
+                           (conv, KIND, h, text)).fetchone()
         if row:
             return {'id': row[0], 'conv': conv, 'pos': row[1], 'text': text, 'new': False}
         # milliseconds, not a counter: two computers that each save a lesson must not give two different lessons one pos (forget takes a pos)
-        last = conn.execute('SELECT max(pos) FROM chunks WHERE conv = ?', (conv,)).fetchone()[0] or 0
+        last = conn.execute('SELECT max(c.pos) FROM keys k JOIN chunks c ON c.rowid = k.id WHERE k.conv = ?', (conv,)).fetchone()[0] or 0
         pos = max(int(stamp.timestamp() * 1000), last + 1)
         conn.execute('INSERT INTO convs VALUES(?, ?, ?, ?) ON CONFLICT(conv) DO UPDATE SET last_ts = max(last_ts, excluded.last_ts)', (conv, '', ts, ts))
         conn.execute('INSERT OR IGNORE INTO conv_projects VALUES(?, ?)', (conv, project))
-        h = memdb.text_hash(text)
         n = conn.execute('SELECT (SELECT count(*) FROM keys WHERE conv = ? AND cls = ? AND hash = ?) + '
                          '(SELECT count(*) FROM forgotten WHERE conv = ? AND cls = ? AND hash = ?)', (conv, KIND, h) * 2).fetchone()[0]
         rid = conn.execute('INSERT INTO chunks(text, conv, pos, ts, kind) VALUES(?, ?, ?, ?, ?)', (text, conv, pos, ts, KIND)).lastrowid
@@ -83,7 +84,7 @@ def save(conn, project, fields, now=None):
 
 def listing(conn, project):
     """The lessons of `project` (None: all), newest first: {'id', 'conv', 'pos', 'ts', 'text', 'trigger', 'from'}."""
-    rows = conn.execute(_SELECT + ' ORDER BY pos DESC', {'p': project}).fetchall()  # not ts: two lessons of one millisecond tie
+    rows = conn.execute(_SELECT + ' ORDER BY pos DESC', {'c': project and conv_of(project)}).fetchall()  # not ts: two lessons of one millisecond tie
     return [{'id': rid, 'conv': conv, 'pos': pos, 'ts': ts, 'text': text, 'trigger': fields_of(text).get('trigger'), 'from': origin}
             for rid, conv, pos, ts, text, origin in rows]
 

@@ -539,6 +539,18 @@ class MemdbTest(unittest.TestCase):
         self.assertEqual(owner_count(self.conn, '2026-10-13'), 2)
         self.assertEqual(owner_count(self.conn, '2026-10-12', '2026-10-13'), 1)
 
+    def test_expand_same_rows_via_keys(self):
+        self.write('P/S.jsonl', [owner_line('раз'), claude_line('два'), owner_line('три'), claude_line('четыре')])
+        self.update()
+        for i in (5, 1, 3):  # imported rows of the same conversation, out of order, one sharing a pos
+            rid = self.conn.execute("INSERT INTO chunks(text, conv, pos, ts, kind) VALUES(?, 'S', ?, '2026-10-14T10:00:00.000Z', 'owner')",
+                                    ('чужое%d' % i, 100 + i % 2)).lastrowid
+            self.conn.execute("INSERT INTO keys(id, conv, cls, hash, n, origin) VALUES(?, 'S', 'owner', ?, 0, 'A')", (rid, 'h%d' % i))
+        old = self.conn.execute('SELECT pos, ts, kind, substr(text, 1, 1500) FROM chunks WHERE conv = ? ORDER BY pos, rowid', ('S',)).fetchall()
+        pos = old[len(old) // 2][0]
+        want = [dict(zip(('pos', 'ts', 'kind', 'text'), r)) for r in old]
+        self.assertEqual(expand(self.conn, 'S', pos, radius=50), want)
+
     def test_owner_count_skips_other_computers(self):
         self.write('P/S.jsonl', [owner_line('раз'), owner_line('два'), owner_line('три')])
         self.update()

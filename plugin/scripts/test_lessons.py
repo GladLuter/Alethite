@@ -67,6 +67,23 @@ class LessonsTest(unittest.TestCase):
                          [('Action: второй урок', None), ('Action: запустил сборку ещё раз сразу после ошибки', 'gh api /repos')])
         self.assertEqual(len(lessons.listing(self.conn, None)), 3)
 
+    def test_listing_same_lessons_as_the_full_scan(self):
+        now = datetime.datetime(2026, 10, 20, 9, 0, tzinfo=datetime.timezone.utc)
+        lessons.save(self.conn, A, RATE, now)
+        lessons.save(self.conn, B, dict(RATE, action='урок другого проекта'), now)
+        lessons.save(self.conn, A, dict(RATE, action='второй урок'), now)
+        old = "SELECT rowid FROM chunks WHERE kind = 'lesson' AND " + memdb.IN_PROJECT + ' ORDER BY pos DESC'
+        for p in (A, B, None):
+            self.assertEqual([l['id'] for l in lessons.listing(self.conn, p)], [r[0] for r in self.conn.execute(old, {'p': p})])
+
+    def test_save_finds_a_repeat_and_continues_pos(self):
+        now = datetime.datetime(2026, 10, 20, 9, 0, tzinfo=datetime.timezone.utc)
+        first = lessons.save(self.conn, A, RATE, now)
+        again = lessons.save(self.conn, A, RATE, now)
+        self.assertEqual((again['new'], again['id'], again['pos']), (False, first['id'], first['pos']))
+        last = self.conn.execute('SELECT max(pos) FROM chunks WHERE conv = ?', (first['conv'],)).fetchone()[0]
+        self.assertEqual(lessons.save(self.conn, A, dict(RATE, action='второй'), now)['pos'], last + 1)
+
     def test_a_message_finds_the_lesson_that_fits_and_only_it(self):
         fit = lessons.save(self.conn, A, RATE)
         lessons.save(self.conn, A, {'action': 'поменял модель векторов', 'symptom': 'всё пересчитывается заново', 'cause': 'векторы разных моделей несравнимы'})

@@ -344,8 +344,8 @@ def cut(hits, budget, limit=None):
 
 def expand(conn, conv, pos, radius=6, budget=7000):
     """The records around `pos` (±radius), in order; when over budget the ones farthest from `pos` are dropped first."""
-    # shortcut: expand scans the FTS table by conv; add a plain msgs table with an index if the index grows past ~1M rows
-    rows = conn.execute('SELECT pos, ts, kind, substr(text, 1, 1500) FROM chunks WHERE conv = ? ORDER BY pos, rowid', (conv,)).fetchall()
+    rows = conn.execute('SELECT c.pos, c.ts, c.kind, substr(c.text, 1, 1500) FROM keys k JOIN chunks c ON c.rowid = k.id WHERE k.conv = ? '
+                        'ORDER BY c.pos, c.rowid', (conv,)).fetchall()
     hit = [i for i, r in enumerate(rows) if r[0] == pos]
     if not hit:
         return []
