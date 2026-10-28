@@ -581,7 +581,8 @@ class CgTest(unittest.TestCase):
         home = self.home_dir(indexDir=far)
         with mock.patch('shutil.disk_usage', return_value=SimpleNamespace(free=2 ** 30)):
             code, out, _ = self.main_home('status')
-        self.assertEqual((code, out), (1, {'error': 'ValueError: ' + t('index_fallback_no_space', dir=far, home=home, free=1.0)}))
+        text = t('index_fallback_no_space', dir=far, home=home, free=1.0)
+        self.assertEqual((code, out), (1, {'error': 'ValueError: ' + text, 'index_problem': text}))
         self.assertEqual((os.listdir(home), os.path.exists(far)), (['settings.json'], False))
 
     def test_commands_that_need_no_index_work_when_it_cannot_be_used_and_every_answer_says_why(self):
