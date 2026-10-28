@@ -1,5 +1,6 @@
 """Command line of Claude-CacheGuard: every command prints one JSON object in UTF-8; an error is {"error": "<Type>: <text>"} with exit code 1."""
 import argparse
+import contextlib
 import datetime
 import json
 import os
@@ -270,11 +271,30 @@ def _sync(a):
                      key=_key(a), cipher=cipher)
 
 
-ENCRYPT_WAITS = {'maintain': 120, 'embed': 10, 'sync': 60}  # how long encrypt waits for each lock of the background job, in the job's order
+ENCRYPT_WAITS = dict(zip(indexdir.LOCKS, (120, 10, 60)))  # how long encrypt and index-dir wait for each lock of the background job, in the job's order
 # How long encrypt pushes to the sync folder. The mod gives the whole command 600 s at most (the host's cap on a process); the locks (190 s at
 # worst) and this leave about 290 s for the owner in the windows. What a big push leaves undone ends as note_share_pending: a repeat or the job
 # finishes it.
 ENCRYPT_PUSH_SECONDS = 120
+
+
+@contextlib.contextmanager
+def _all_locks(a, busy):
+    """The three locks of the background job on the index in `a.db`, held for the block (a list of them, for a block that gives them back
+    early). A lock held by another process is the ValueError `busy`; any other database error is not."""
+    os.makedirs(os.path.dirname(a.db), exist_ok=True)  # the lock files lie there; memdb.connect would open the index (and refuse an encrypted one)
+    locks = []
+    try:
+        for name, wait in ENCRYPT_WAITS.items():
+            locks.append(memdb.lock(a.db, name, wait))
+        yield locks
+    except memdb.db_errors() as e:  # a locked lock file, or an index another process holds: nothing was lost
+        if 'locked' not in str(e):
+            raise
+        raise ValueError(texts.t(busy)) from None
+    finally:
+        for lock in locks:
+            lock.close()
 
 
 def _encrypt(a):
@@ -288,22 +308,11 @@ def _encrypt(a):
     s, _ = _settings(crypto.settings_path(a.db))
     sync_dir = _sync_dir(s) if a.sync_dir is None else a.sync_dir
     kw = dict(model=a.model, memory_dir=_memory_dir(a.memory_dir), project_cwd=a.project_cwd, seconds=ENCRYPT_PUSH_SECONDS)
-    os.makedirs(os.path.dirname(a.db), exist_ok=True)  # the lock files lie there; memdb.connect would open the index (and refuse an encrypted one)
-    locks = []
-    try:
-        for name, wait in ENCRYPT_WAITS.items():
-            locks.append(memdb.lock(a.db, name, wait))
+    with _all_locks(a, 'encrypt_busy'):
         ui = dialogs.WindowsUI()
         if a.action == 'off':
             return encrypt.off(a.db, sync_dir, a.machine, ui, **kw)
         return getattr(encrypt, a.action)(a.db, sync_dir, _cipher(s, a.share_cipher), a.machine, ui, **kw)
-    except memdb.db_errors() as e:  # a locked lock file, or an index another process holds: nothing was lost
-        if 'locked' not in str(e):
-            raise
-        raise ValueError(texts.t('encrypt_busy')) from None
-    finally:
-        for lock in locks:
-            lock.close()
 
 
 def _index_dir(a):
@@ -315,21 +324,10 @@ def _index_dir(a):
     if path is None:
         return {'done': False, 'notes': [texts.t('index_dir_cancelled')]}
     where = a.where or indexdir.Where(a.db, None, False, None)  # a run with --db: that index is the one that moves
-    os.makedirs(os.path.dirname(a.db), exist_ok=True)  # the lock files lie there
-    locks = []
-    try:
-        for name, wait in ENCRYPT_WAITS.items():
-            locks.append(memdb.lock(a.db, name, wait))
+    with _all_locks(a, 'index_dir_busy') as locks:
         out = indexdir.move(where, path, _key(a), ui, locks=locks)
         a.where = None  # `main` adds the notice of where the index was before the command: stale now
         return out
-    except memdb.db_errors() as e:  # a locked lock file, or an index another process holds: nothing was lost
-        if 'locked' not in str(e):
-            raise
-        raise ValueError(texts.t('index_dir_busy')) from None
-    finally:
-        for lock in locks:
-            lock.close()
 
 
 def _forget(a):
