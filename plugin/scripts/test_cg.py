@@ -632,8 +632,10 @@ class CgTest(unittest.TestCase):
             code, out, _ = self.main_home('status')
         want = t('index_merge_failed', dir=far, home=home, e='диск занят')
         self.assertEqual((code, out['db'], out['index_notice'], out['index_dir']['notes']), (0, os.path.join(far, 'index.db'), want, [want]))
-        code, out, _ = self.main_home('status')  # the next run tries again, and what it merges takes the note away
-        self.assertEqual((code, out['rows'], out['index_notice'], out['index_dir']['notes']), (0, 2, t('index_merged', dir=far, home=home, n=2), []))
+        code, out, _ = self.main_home('status')  # the next run tries again, and what it merges takes the failure away and leaves the merge for health
+        merged = t('index_merged', dir=far, home=home, n=2)
+        self.assertEqual((code, out['rows'], out['index_notice'], out['index_dir']['notes']), (0, 2, merged, [merged]))
+        self.assertEqual(self.main_home('status')[1]['index_dir']['notes'], [merged])  # and a run that merges nothing still shows it
 
     def test_a_run_with_little_time_leaves_a_pending_merge_to_the_next_one(self):  # the prompt hook's lessons-match has 8 s, a big merge takes more
         far, home = self.temporary_index()

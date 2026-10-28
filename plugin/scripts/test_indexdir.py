@@ -181,20 +181,26 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(indexdir.status(self.conn, Where('H\\index.db', None, False, None)), quiet)
         self.assertEqual(indexdir.status(self.conn, Where('D:\\x\\index.db', 'D:\\x', False, None)), dict(quiet, configured='D:\\x'))
 
-    def test_work_on_the_standard_folder_an_old_copy_and_a_failed_merge_are_notes_in_this_order(self):
+    def test_work_on_the_standard_folder_and_an_old_copy_are_notes_in_this_order_and_a_failed_merge_with_no_index_to_merge_is_none(self):
         self.meta(old_copy='C:\\old', merge_error='диск занят')
         out = indexdir.status(self.conn, Where('H\\index.db', 'D:\\x', True, None))
-        self.assertEqual(out, {'configured': 'D:\\x', 'fallback': True, 'notes': [
-            t('index_fallback', dir='D:\\x', home='H'), t('index_old_copy', dir='C:\\old'),
-            t('index_merge_failed', dir='D:\\x', home='H', e='диск занят')]})
-        self.assertIn('C:\\old', out['notes'][1])
-        self.assertIn('диск занят', out['notes'][2])
-        self.assertIn('H', out['notes'][2])
+        self.assertEqual(out, {'configured': 'D:\\x', 'fallback': True, 'notes': [t('index_fallback', dir='D:\\x', home='H'), t('index_old_copy', dir='C:\\old')]})
+        self.assertEqual(indexdir.status(self.conn, Where('D:\\x\\index.db', 'D:\\x', False, None))['notes'], [t('index_old_copy', dir='C:\\old')])  # the temporary index is gone
 
-    def test_a_failed_merge_names_the_folder_of_the_temporary_index(self):  # db is in the index folder then, the temporary one is merge_from
-        self.meta(merge_error='диск занят')
+    def test_a_failed_merge_follows_the_old_copy_while_the_temporary_index_waits(self):
+        self.meta(old_copy='C:\\old', merge_error='диск занят')
         out = indexdir.status(self.conn, Where('D:\\x\\index.db', 'D:\\x', False, 'H\\index.db'))
-        self.assertEqual(out['notes'], [t('index_merge_failed', dir='D:\\x', home='H', e='диск занят')])
+        self.assertEqual(out['notes'], [t('index_old_copy', dir='C:\\old'), t('index_merge_failed', dir='D:\\x', home='H', e='диск занят')])
+        self.assertIn('H', out['notes'][1])
+        self.assertIn('диск занят', out['notes'][1])
+
+    def test_the_last_merge_is_told_in_the_language_of_the_run_and_names_the_folders_it_had(self):
+        self.meta(merge_done=json.dumps({'dir': 'D:\\x', 'home': 'H', 'n': 3}))
+        for where in (None, Where('E:\\y\\index.db', 'E:\\y', False, None)):  # a later move does not change what it says
+            self.assertEqual(indexdir.status(self.conn, where)['notes'], [t('index_merged', dir='D:\\x', home='H', n=3)])
+        use_lang(self, 'en')
+        self.assertEqual(indexdir.status(self.conn, None)['notes'], [t('index_merged', dir='D:\\x', home='H', n=3)])
+        self.assertIn('(records: 3)', indexdir.status(self.conn, None)['notes'][0])
 
     def test_the_notes_of_the_index_itself_show_without_a_where(self):  # a run with --db has none
         self.meta(old_copy='C:\\old', merge_error='диск занят')  # a failed merge needs both folders to be told, and a run with --db knows neither
@@ -337,6 +343,19 @@ class MergeTest(unittest.TestCase):
         self.assertEqual(d.execute('SELECT conv, cls, hash, n FROM forgotten').fetchall(), [key])
         self.assertEqual(d.execute('SELECT line FROM outbox').fetchall(), [line])  # its own line, once
         self.assertFalse(os.path.exists(self.src))
+
+    def test_a_merge_is_kept_for_health_until_the_next_result_which_takes_it_away(self):  # the background job tells nobody
+        self.two()
+        self.assertEqual(self.merge(), t('index_merged', dir=self.far, home=self.home, n=2))
+        d = self.index(self.db)
+        done = Where(self.db, self.far, False, None)
+        self.assertEqual(indexdir.status(d, done)['notes'], [t('index_merged', dir=self.far, home=self.home, n=2)])
+        self.close()
+        with mock.patch.object(indexdir, 'absorb', side_effect=OSError('the disk is gone')):  # the next try fails
+            merge_back(self.where, None)
+        d = self.index(self.db)
+        self.assertEqual((memdb.meta(d, 'merge_done'), memdb.meta(d, 'merge_error') is None), (None, False))
+        self.assertEqual(len(indexdir.status(d, self.where)['notes']), 1)  # the failure, not the merge before it
 
     def test_a_lock_that_is_taken_leaves_everything_as_it_was_and_none_is_kept(self):
         self.two()

@@ -79,10 +79,12 @@ def notice(where):
 
 def status(conn, where):
     """The `index_dir` of `status`: where the index is meant to be and the notes the index keeps. `where` is None for a run with --db."""
-    old, failed = memdb.meta(conn, 'old_copy'), memdb.meta(conn, 'merge_error')
-    # the failed merge names both folders: the one the index is in and the one of the temporary index, which a run with --db does not know
-    merge = failed and where and where.configured and t('index_merge_failed', dir=where.configured, home=os.path.dirname(where.merge_from or where.db), e=failed)
-    notes = [n for n in (notice(where), old and t('index_old_copy', dir=old), merge) if n]
+    old, failed, done = (memdb.meta(conn, k) for k in ('old_copy', 'merge_error', 'merge_done'))
+    # the failed merge names both folders: the one the index is in and the one of the temporary index, which a run with --db does not know.
+    # It is told while that index is there to merge: a note that nothing would take away is none
+    merge = failed and where and where.merge_from and t('index_merge_failed', dir=where.configured, home=os.path.dirname(where.merge_from), e=failed)
+    merged = done and t('index_merged', **json.loads(done))  # the last merge, in the language of this run: merge_back stored its figures
+    notes = [n for n in (notice(where), old and t('index_old_copy', dir=old), merge, merged) if n]
     return {'configured': where and where.configured, 'fallback': bool(where and where.fallback), 'notes': notes}
 
 
@@ -213,6 +215,8 @@ def merge_back(where, key):
             old = memdb.meta(conn, 'old_copy')
             if old and crypto.norm(old) == crypto.norm(fields['home']):
                 conn.execute("DELETE FROM meta WHERE key = 'old_copy'")
+            # for /cg-health: a merge done by the background job is told nowhere else
+            conn.execute("INSERT OR REPLACE INTO meta VALUES('merge_done', ?)", (json.dumps(dict(fields, n=done['records'])),))
         encrypt._remove(src)
         with contextlib.suppress(OSError):  # a mark left beside no index does nothing, and no failure may stay on record once the index is gone
             os.remove(os.path.join(fields['home'], MARK))
@@ -222,6 +226,7 @@ def merge_back(where, key):
         with contextlib.suppress(Exception):  # the index folder may be what failed
             with contextlib.closing(_connect(db, key)) as conn:
                 conn.execute("INSERT OR REPLACE INTO meta VALUES('merge_error', ?)", (why,))
+                conn.execute("DELETE FROM meta WHERE key = 'merge_done'")  # the last result is the one told
         return t('index_merge_failed', e=why, **fields)
     finally:
         for lock in held:
