@@ -22,7 +22,17 @@ export const parseCg = ({ exitCode, stdout, stderr }: { exitCode: number; stdout
   throw new Error(json?.error || stderr.trim().slice(-300) || `exit ${exitCode}`)
 }
 
-type Vectors = { model: string | null; with_vectors: number; total: number; failed?: number; updated: string | null }
+// Why cg.py cannot use the index (index_problem, in an error answer too): '' when the answer has none, undefined when it is no JSON (nothing is known then).
+export const indexProblemOf = (stdout: string): string | undefined => {
+  try {
+    const problem = JSON.parse(stdout).index_problem
+    return typeof problem === 'string' ? problem : ''
+  } catch {
+    return undefined
+  }
+}
+
+type Vectors ={ model: string | null; with_vectors: number; total: number; failed?: number; updated: string | null }
 type Project = { key: string; convs: number }
 
 // embedCmd: the terminal command that finishes the vectors, shown while some records have none.

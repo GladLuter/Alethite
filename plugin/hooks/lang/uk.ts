@@ -53,6 +53,7 @@ export const uk: Partial<Texts> = {
 
   // refresh failed: the status line shows it until the next good refresh
   statusError: (msg: string) => `помилка — ${msg}`,
+  indexProblemStatus: 'Індекс недоступний, подробиці в /cg-health',
 
   // /cg-band
   cgBandDescription: 'Показати смугу примусово (off: повернути пороги)',

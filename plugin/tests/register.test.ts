@@ -268,7 +268,7 @@ const found = (extra: object = {}) => ran(JSON.stringify({ hits: [hit], errors: 
 const failed = (error: string) => ({ value: { exitCode: 1, stdout: JSON.stringify({ error }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
 // A session that has started: cg.py answers `answer(argv)` and every run is recorded in `runs`; the tools and the index timer exist.
-const started = async ($: any, on: any, answer: (a: string[]) => unknown, statuses: (string | undefined)[] = [], answerUsage: () => unknown = () => ({ value: usage }), env: Record<string, string> = {}) => {
+const started = async ($: any, on: any, answer: (a: string[]) => unknown, statuses: (string | undefined)[] = [], answerUsage: () => unknown = () => ({ value: usage }), env: Record<string, string> = {}, lastTurn: () => unknown = noTurn) => {
   mock.env(on, env) // no USERPROFILE: no settings file
   const m = { runs: [] as { argv: string[]; timeoutMs?: number }[], langs: [] as string[][], toasts: [] as string[], specs: [] as any[], store: new Map<string, unknown>(), clock: undefined as any }
   on('ui.toast', (_: unknown, e: { text: string }) => (m.toasts.push(e.text), { value: undefined }))
@@ -278,7 +278,7 @@ const started = async ($: any, on: any, answer: (a: string[]) => unknown, status
   on('session.cwd', () => ({ value: 'C:/w/plugin/scripts' })) // after a shell `cd`: must not reach the search
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   // argv: python, cg.py, --lang, <language>, then the command
-  m.clock = wire(on, statuses, answerUsage, (_, e: any) => (m.runs.push({ argv: e.argv.slice(4), timeoutMs: e.init?.timeoutMs }), m.langs.push(e.argv.slice(2, 4)), e.argv.includes('last-turn') ? noTurn() : answer(e.argv.slice(4))), m.store)
+  m.clock = wire(on, statuses, answerUsage, (_, e: any) => (m.runs.push({ argv: e.argv.slice(4), timeoutMs: e.init?.timeoutMs }), m.langs.push(e.argv.slice(2, 4)), e.argv.includes('last-turn') ? lastTurn() : answer(e.argv.slice(4))), m.store)
   await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false })
   return m
 }
@@ -1293,6 +1293,53 @@ test('index notice: any answer of cg.py that carries one gives a toast when it d
   notice = first
   await index()
   expect(m.toasts).toEqual([T.toast(first), T.toast('a merge of the test happened in D:/two'), T.toast(first)])
+})
+
+test('index problem: an answer with one puts a warning on the status line, every owner prompt toasts it and asks again, an answer without it clears both', async ($, on) => {
+  let problem = 'the index folder D:/one is not available and C: has only 1 GB free'
+  on('prompt.submit', (_: unknown, e: { text: string }) => ({ text: e.text }))
+  const statuses: (string | undefined)[] = []
+  const says = (body: object) => ran(JSON.stringify({ ...body, ...(problem ? { index_problem: problem } : {}) })) // every answer of cg.py carries it while it lasts
+  const m = await started($, on, () => says({}), statuses, undefined, {}, () => says({ tokens: 1, at: null, model: 'm' }))
+  const lastTurns = () => ofCg(m, 'last-turn').length
+  expect(statuses.at(-1)).toBe(`${T.ctx('512k', T.cacheUnknown)} · ${T.indexProblemStatus}`) // the start asked last-turn: the warning stands beside the token line
+  const asked = lastTurns()
+  await typed($, 'сообщение от другого плагина', { origin: { kind: 'plugin', name: 'x' } }) // not the owner's
+  await typed($, 'a meta prompt', { isMeta: true })
+  expect([lastTurns() - asked, m.toasts]).toEqual([0, []])
+  await typed($, 'a message of the owner')
+  await typed($, 'a message of the owner')
+  expect(lastTurns() - asked).toBe(2) // asked on each prompt, with the 8 s a prompt can spare
+  expect(ofCg(m, 'last-turn').at(-1)!.timeoutMs).toBe(8_000)
+  expect(m.toasts).toEqual(Array(2).fill(T.toast(problem))) // and said again each time
+  problem = ''
+  await typed($, 'a message of the owner')
+  expect(m.toasts).toHaveLength(2)
+  expect(statuses.at(-1)).toBe(T.ctx('512k', T.cacheUnknown)) // the warning goes with the problem
+  await typed($, 'a message of the owner')
+  expect(lastTurns() - asked).toBe(3) // a healthy chat pays nothing
+  expect(m.toasts).toHaveLength(2)
+})
+
+test('index problem: an error answer carries it too, and a check that fails keeps it without holding the prompt', async ($, on) => {
+  const problem = 'the settings cannot be read'
+  on('prompt.submit', (_: unknown, e: { text: string }) => ({ text: e.text }))
+  let lastTurn: () => unknown = noTurn
+  let isBroken = false
+  const statuses: (string | undefined)[] = []
+  const refused = { value: { exitCode: 1, stdout: JSON.stringify({ error: `ValueError: ${problem}`, index_problem: problem }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  const m = await started($, on, a => (a[0] === 'index' ? refused : ran('{}')), statuses, () => (isBroken ? { deny: 'boom' } : { value: usage }), {}, () => lastTurn())
+  expect(statuses.some(t => t?.includes(T.indexProblemStatus))).toBe(false)
+  await ($ as any).command.run({ command: 'cg-index', args: '' })
+  expect(statuses.at(-1)).toBe(`${T.ctx('512k', T.cacheUnknown)} · ${T.indexProblemStatus}`) // the error answer set it
+  isBroken = true // a failed refresh puts its error on the status line, and the warning stays beside it
+  await ($ as any).command.run({ command: 'cg-band', args: '' })
+  expect(statuses.at(-1)!.startsWith(T.statusError(''))).toBe(true)
+  expect(statuses.at(-1)!.endsWith(` · ${T.indexProblemStatus}`)).toBe(true)
+  lastTurn = () => ({ deny: 'boom' }) // the check itself fails
+  m.toasts.length = 0
+  await typed($, 'a message of the owner')
+  expect(m.toasts).toEqual([T.toast(problem)])
 })
 
 test('/cg-health: the notes of the index folder follow the index line', async ($, on) => {

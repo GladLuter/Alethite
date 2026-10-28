@@ -52,6 +52,7 @@ export const ru: Partial<Texts> = {
 
   // refresh failed: the status line shows it until the next good refresh
   statusError: (msg: string) => `ошибка — ${msg}`,
+  indexProblemStatus: 'Индекс недоступен, подробности в /cg-health',
 
   // /cg-band
   cgBandDescription: 'Показать полосу принудительно (off: вернуть пороги)',

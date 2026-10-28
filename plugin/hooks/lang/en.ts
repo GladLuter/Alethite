@@ -52,6 +52,8 @@ export const en = {
 
   // refresh failed: the status line shows it until the next good refresh
   statusError: (msg: string) => `error — ${msg}`,
+  // cg.py cannot use the index (its folder is away and C: has no room, or the settings cannot be read): the status line says so beside whatever else it shows
+  indexProblemStatus: 'Index unavailable, details in /cg-health',
 
   // /cg-band
   cgBandDescription: 'Show the band now (off: back to the thresholds)',

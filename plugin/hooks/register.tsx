@@ -11,7 +11,7 @@ import { encryptArgs, encryptHealth, encryptReply, isTimeout } from './encrypt'
 import type { EncryptResult, EncryptStatus } from './encrypt'
 import { indexDirArgs, indexDirRefusal, indexDirReply } from './indexdir'
 import type { IndexDirResult } from './indexdir'
-import { healthLines, message, parseCg } from './py'
+import { healthLines, indexProblemOf, message, parseCg } from './py'
 import type { LastError } from './py'
 import { jobArgs, jobHealth } from './job'
 import type { JobRun } from './job'
@@ -38,11 +38,29 @@ const isBusy = atom({ plugin: 'cacheguard', key: 'isBusy' } as const, false)
 // after an answer with none, /cg-health keeps saying it.
 let lastNotice = ''
 
+// Why cg.py cannot use the index, kept until an answer comes without it, and what the status line shows besides the warning about it.
+let indexProblem = ''
+let statusLine = ''
+
+// The one door for the status line: while the index cannot be used, the warning goes with whatever else is shown.
+const showStatus = ($: EngineInterface, text: string) => {
+  statusLine = text
+  $.ui.status(indexProblem ? [text, T.indexProblemStatus].filter(Boolean).join(' · ') : text)
+}
+
+const setProblem = ($: EngineInterface, text: string) => {
+  if (text === indexProblem) return
+  indexProblem = text
+  showStatus($, statusLine)
+}
+
 const runCg = async ($: EngineInterface, python: string, args: string[], timeoutMs = 120_000) => {
   // run() rejects only when the child cannot start or times out; cg.py speaks the language of the mod
   const r = await $.process.run([python, `${$.plugin.root}/scripts/cg.py`, '--lang', language(), ...args], { timeoutMs }).catch((err: unknown) => {
     throw new Error(`${T.pythonMissing(python)} (${message(err)})`)
   })
+  const problem = indexProblemOf(r.stdout) // before parseCg throws: an error answer carries it too
+  if (problem !== undefined) setProblem($, problem)
   const out = parseCg(r)
   const notice = typeof out.index_notice === 'string' ? out.index_notice : ''
   if (notice && notice !== lastNotice) toast($, notice)
@@ -52,6 +70,16 @@ const runCg = async ($: EngineInterface, python: string, args: string[], timeout
 
 // The one door for toasts: everything this mod puts in one starts with its name (the texts in text.ts do not). The status line needs no mark: the engine labels it with the plugin name.
 const toast = ($: EngineInterface, text: string) => $.ui.toast(T.toast(text))
+
+// An owner's prompt while the index cannot be used (none otherwise: a healthy chat pays nothing): ask again with a command that needs no index (its
+// answer sets or clears the problem), and say it again if it is still there. A failed check leaves the problem as it was and never holds the prompt.
+const recheck = async ($: EngineInterface, python: string) => {
+  if (!indexProblem) return
+  try {
+    await runCg($, python, ['last-turn', '--session', await $.session.id()], 8_000)
+  } catch {}
+  if (indexProblem) toast($, indexProblem)
+}
 
 // What /cg-health shows as the last error; every path that reports a failure leaves it here.
 const noteError = async ($: EngineInterface, where: string, err: unknown) => $.store.set('lastError', { at: await $.clock.now(), where, msg: message(err) })
@@ -67,7 +95,7 @@ const indexErrors = async ($: EngineInterface, where: string, errors: IndexError
   if (errors.length === 0) return
   const text = T.indexErrors(errors.length)
   if (isAsked) toast($, text)
-  else $.ui.status(text)
+  else showStatus($, text)
   await noteError($, where, T.indexErrorFirst(errors.length, errors[0]!.path, errors[0]!.error))
 }
 
@@ -92,7 +120,7 @@ const guarded = async ($: EngineInterface, where: string, work: () => Promise<un
     await work()
     return true
   } catch (err) {
-    $.ui.status(T.statusError(message(err)))
+    showStatus($, T.statusError(message(err)))
     await noteError($, where, err)
     return false
   }
@@ -172,7 +200,7 @@ const refresh = async ($: EngineInterface, python: string) => {
     at: rec?.at ?? null,
     limits: usage.rateLimits.map(({ kind, percentUsed }) => ({ kind, percentUsed })),
   }
-  $.ui.status(statusText(fresh.tokens, fresh.at, now))
+  showStatus($, statusText(fresh.tokens, fresh.at, now))
   await update($, snap, () => fresh)
 }
 
@@ -604,6 +632,7 @@ export const register: Register = (on, options) => {
     // an engine older than the origin (2.1.29x) stamps none: there a prompt is the owner's; in the desktop Code tab (an SDK host) it is `sdk`, or `unclassified` from a channel the engine cannot attest
     const kind = (e.origin as { kind?: string } | undefined)?.kind
     const isOwners = kind === undefined || kind === 'composer' || kind === 'bridge' || kind === 'sdk' || kind === 'unclassified'
+    if (isOwners && !e.isMeta) await recheck($, python)
     if (!isLessonsOn || lessonList.length === 0 || e.command !== undefined || e.isMeta || !isOwners || e.text.trim().length < 12) return next(e)
     let block: string | undefined
     try {
