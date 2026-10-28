@@ -155,7 +155,8 @@ What else to know:
 - **What stays plain:**
   - Claude Code's conversations, `%USERPROFILE%\.claude\projects\*.jsonl`;
   - the auto-memory files of each project on the local disk (`.md`): Claude Code reads them;
-  - the handoffs, `%USERPROFILE%\.claude\cacheguard\handoffs`: the same text goes into the chat unencrypted.
+  - the handoffs, the `handoffs` folder beside the index: the same text goes into the chat unencrypted.
+  - `forgotten.json` in `%USERPROFILE%\.claude\cacheguard`, made only when the index lives in another folder: the keys of the records deleted with `forget`. They are hashes, with no text.
 
 ## The index in another folder
 
@@ -178,9 +179,10 @@ What else to know:
   - an `index.db.plain` lies beside the index, so finish `/cg-encrypt on` first
   - what was saved on C: while the folder was away is not merged yet (see below).
 - **If the folder or the `index.db` in it is gone** (the disk was unplugged, the folder deleted), the mod says so in a toast, once per session, and in a `/cg-health` line: "the index in D:\CacheGuard is not available, working with …". It works with the index on C: and leaves `indexDir` alone.
-  - If the standard folder already holds an index (the old copy after No), the work goes on with it. If not, a new one is made only when C: has at least 2 GB free. Otherwise every command answers with an error that names the paths and the numbers, and creates nothing.
+  - If the standard folder already holds an index (the old copy after No), the work goes on with it. If not, a new one is made only when C: has at least 2 GB free. Otherwise the commands that read the index answer with an error that names the paths and the numbers, and nothing is created. The ones that need no index still work: the handoff of New worker, the token count and the compression preview. While this lasts, the status line says "Index unavailable, details in /cg-health", and every message you send gets a toast with the reason.
   - Sync goes on as usual.
-- **When the folder is back**, the first run of `cg.py` (the background job or a command in a chat) merges everything gathered on C: into it and deletes the temporary index. It does not ask, because space on C: is worth more. The message gives the number of records merged. What was deleted with `forget` does not come back. If the merge does not match, both indexes stay in place, the work goes on with D:, `/cg-health` shows the reason, and the next run tries again.
+  - What you deleted with `forget` stays deleted on C: too. Its keys are kept in `forgotten.json` beside `settings.json`, and the index on C: applies them before it reads any conversation.
+- **When the folder is back**, the first run of `cg.py` (the background job or a command in a chat) merges everything gathered on C: into it and deletes the temporary index. It does not ask, because space on C: is worth more. An old copy that you kept with No and that stood in during the outage is merged and deleted in the same way. The message gives the number of records merged, and `/cg-health` keeps it. What was deleted with `forget` does not come back. If the merge does not match, both indexes stay in place, the work goes on with D:, `/cg-health` shows the reason, and the next run tries again.
 - **The folder is not coming back.** While the mod works with C:, the command with the full path of the standard folder, `/cg-index-dir C:\Users\<name>\.claude\cacheguard`, removes `indexDir` and copies nothing. C: becomes the permanent place of the index. If the folder is back but has no index, the command with that folder's path moves the index from C: into it.
 - **Moving the index back to C:** from the working folder is done by the same command, `/cg-index-dir C:\Users\<name>\.claude\cacheguard`. If an old copy is left on C:, the command refuses. Then first repeat `/cg-index-dir` with the working folder and answer Yes to the question about deleting.
 
