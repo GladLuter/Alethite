@@ -263,6 +263,29 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(self.a.q("SELECT pushed FROM keys WHERE hash = 'replaced'"), 0)
         self.assertEqual(self.a.q("SELECT count(*) FROM keys WHERE hash != 'replaced' AND pushed = 1"), 1)
 
+    def test_push_vector_of_record_replaced_after_its_chunk_waits(self):
+        self.ready(self.a)
+        real, real_dumps, batches, hit = cgsync._write, cgsync._dumps, [], []
+
+        def dumps(o):
+            if o.get('type') == 'conv' and not hit:  # the chunks are read, the vectors not yet
+                hit.append(1)
+                self.a.conn.execute("UPDATE keys SET hash = 'replaced' WHERE id = (SELECT min(id) FROM keys)")
+            return real_dumps(o)
+
+        def write(gen, n, lines, machine, key):
+            batches.append([json.loads(l) for l in lines])
+            if len(batches) == 1:
+                real(gen, n, lines, machine, key)
+            else:
+                raise OSError('stop here')
+
+        with mock.patch.object(cgsync, '_dumps', dumps), mock.patch.object(cgsync, '_write', write):
+            self.a.sync(memory=False)
+        chunks = {tuple(l['key']) for l in batches[0] if l['type'] == 'chunk'}
+        self.assertTrue(all(tuple(l['key']) in chunks for l in batches[0] if l['type'] == 'vec'))
+        self.assertEqual(self.a.q("SELECT pushed + vec_pushed FROM keys WHERE hash = 'replaced'"), 0)
+
     def test_sync_memory_reads_share_outside_write_lock(self):
         self.a.fact('from_a.md', 'a')
         self.b.fact('from_b.md', 'b')

@@ -197,7 +197,7 @@ def _collect(conn):
         seqs.append(seq)
         size += len(line)
     chunks, convs = [], {}
-    cur = conn.execute('SELECT k.id, k.conv, k.cls, k.hash, k.n, c.pos, c.ts, c.kind, c.text FROM keys k JOIN chunks c ON c.rowid = k.id '
+    cur = conn.execute('SELECT k.id, k.conv, k.cls, k.hash, k.n, c.pos, c.ts, c.kind, c.text FROM keys k CROSS JOIN chunks c ON c.rowid = k.id '
                        'WHERE k.origin IS NULL AND k.pushed = 0 ORDER BY k.id')
     while size <= BATCH_BYTES:
         rows = cur.fetchmany(500)
@@ -218,13 +218,13 @@ def _collect(conn):
             lines.append(_dumps({'type': 'conv', 'conv': conv, 'parent': row[0], 'first_ts': row[1], 'last_ts': row[2]}))
         lines += [_dumps({'type': 'project', 'conv': conv, 'project': p}) for (p,) in conn.execute('SELECT project FROM conv_projects WHERE conv = ?', (conv,))]
     lines += chunks
-    vec_ids, going = [], {i for i, _ in ids}
+    vec_ids, going = [], dict(ids)
     cur = conn.execute('SELECT k.id, k.conv, k.cls, k.hash, k.n, k.pushed FROM keys k WHERE k.origin IS NULL AND ' + _VEC_OUT
                        + ' ORDER BY k.id', (4 * DIMS,))
     for rid, conv, cls, h, n, pushed in cur.fetchall():
         if size > BATCH_BYTES:
             break
-        if not (pushed or rid in going):
+        if not (pushed or rid in going) or going.get(rid, h) != h:  # a record rebuilt since its chunk was read: its vector waits too
             continue
         for part, vec in conn.execute('SELECT part, vec FROM vecs WHERE chunk = ? AND length(vec) = ? ORDER BY part', (rid, 4 * DIMS)):
             line = _dumps({'type': 'vec', 'key': [conv, cls, h, n], 'part': part, 'vec': base64.b64encode(vec).decode('ascii')})
