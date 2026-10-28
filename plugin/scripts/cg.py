@@ -122,7 +122,9 @@ def _settings(path):
     (settings, None), or ({}, why) when the file is broken: the job goes on with the defaults and says so."""
     try:
         return crypto._read(path), None
-    except (ValueError, OSError) as e:  # a broken file, or one that an editor holds or the owner may not read
+    except crypto.SettingsBroken as e:  # its message names the path already
+        return {}, str(e)
+    except (ValueError, OSError) as e:  # a file that cannot be decoded, or one that an editor holds or the owner may not read
         return {}, '%s: %s' % (path, e)
 
 
@@ -271,7 +273,8 @@ def _sync(a):
                      key=_key(a), cipher=cipher)
 
 
-ENCRYPT_WAITS = dict(zip(indexdir.LOCKS, (120, 10, 60)))  # how long encrypt and index-dir wait for each lock of the background job, in the job's order
+_WAITS = {'maintain': 120, 'embed': 10, 'sync': 60}  # how long encrypt and index-dir wait for each lock of the background job
+ENCRYPT_WAITS = {name: _WAITS[name] for name in indexdir.LOCKS}  # the names and their order are indexdir's; a lock without a wait is a KeyError at import
 # How long encrypt pushes to the sync folder. The mod gives the whole command 600 s at most (the host's cap on a process); the locks (190 s at
 # worst) and this leave about 290 s for the owner in the windows. What a big push leaves undone ends as note_share_pending: a repeat or the job
 # finishes it.
