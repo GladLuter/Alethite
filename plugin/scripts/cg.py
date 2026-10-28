@@ -10,18 +10,12 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import crypto
-import dialogs
-import encrypt
 import indexdir
-import job
 import lessons
 import memdb
-import stats
-import sync
 import texts
 import vectors
 from compress import LEVELS, compress
-from handoff import build_handoff
 from transcripts import find_session, last_usage, project_key
 
 
@@ -52,6 +46,7 @@ def _index(a):
 
 
 def _status(a):
+    import encrypt, sync
     conn = memdb.connect(a.db)
     out = memdb.status(conn)
     out['sync'] = sync.status(conn, a.machine)
@@ -173,11 +168,13 @@ def _memory_dir(path):
     return path if path and os.path.isdir(path) else None
 
 
-def maintain(a, embed_fn=vectors.ollama_embed, battery=job.on_battery, digest=sync.ollama_digest):
+def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
     """One run of the background job: the index, then the vectors (on mains power, while no chat embeds), then the sync (when a folder
     is set). Each step under the lock a chat takes for it, so a chat and the job never do one thing twice at a time; a step that fails
     does not stop the next. The result is kept in meta.job_last for /cg-health. The short memory waits for a chat: only a chat knows its
     project's auto-memory folder."""
+    import job, sync
+    battery, digest = battery or job.on_battery, digest or sync.ollama_digest
     try:
         conn = memdb.connect(a.db)  # first: it also makes the folder the lock files lie in
     except ValueError as e:  # an encrypted index and no key that opens it: nowhere to keep the run, /cg-health tells the same from `status`
@@ -247,9 +244,10 @@ def _maintain(a):
 
 
 def _job(a):
+    import job
     folder = os.path.dirname(a.db)
     if a.action == 'install':
-        return job.install(folder, a.minutes)
+        return job.install(folder, job.MINUTES if a.minutes is None else a.minutes)
     if a.action == 'remove':
         return job.remove()
     return {'supported': job.is_supported(), 'minutes': job.installed(), 'last': json.loads(memdb.meta(memdb.connect(a.db), 'job_last') or 'null')}
@@ -261,6 +259,7 @@ def _last_turn(a):
 
 
 def _handoff(a):
+    from handoff import build_handoff
     text = build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress)
     folder = os.path.join(os.path.dirname(a.db), 'handoffs')  # next to the index: ~/.claude/cacheguard/handoffs by default
     os.makedirs(folder, exist_ok=True)
@@ -271,6 +270,7 @@ def _handoff(a):
 
 
 def _sync(a):
+    import sync
     # a second sync waits its turn within its own time and then takes in only what is still new
     t0 = time.monotonic()
     conn = memdb.connect(a.db)  # first: it also makes the folder the lock file lies in
@@ -293,6 +293,7 @@ ENCRYPT_PUSH_SECONDS = 120
 def _encrypt(a):
     """/cg-encrypt: on, join, off (windows ask the owner; the code is shown there and nowhere else) and status. No connection to the index
     is held meanwhile: Windows cannot replace a file that is open. The sync folder and the cipher come from the settings file unless given."""
+    import dialogs, encrypt
     if a.action == 'status':
         return encrypt.status(a.db)  # from the files alone: no lock, no connection
     if a.where and (a.where.fallback or a.where.merge_from):  # it would turn one of two indexes (and `off` would take the key from the other)
@@ -321,6 +322,7 @@ def _encrypt(a):
 def _index_dir(a):
     """/cg-index-dir: the index moves to the folder of --path, or of the window that asks when there is none. Alone like encrypt: the locks of
     the background job are held until `move` has switched over, and given back there (the old copy could not be deleted with them open)."""
+    import dialogs
     ui = dialogs.WindowsUI()
     path = a.path or ui.pick_folder()  # before the locks: nobody waits while the owner looks for a folder
     if path is None:
@@ -371,6 +373,7 @@ def _day(s):  # argparse reports a ValueError from a type function as a bad argu
 
 
 def _stats(a):
+    import stats, sync
     errors = []
     m = stats.metrics(a.projects, memdb.connect(a.db), a.since, a.until, errors, a.machine or sync.machine_name())
     return {'metrics': m, 'note': stats.note_markdown(m, a.host, a.today, json.loads(a.limits), a.rule_chars, a.memory_tokens, a.compression),
@@ -459,7 +462,7 @@ def _parser():
     s.add_argument('--sync-seconds', type=float, default=60)
     s = add('job', _job)
     s.add_argument('action', choices=('install', 'remove', 'status'))
-    s.add_argument('--minutes', type=int, default=job.MINUTES)
+    s.add_argument('--minutes', type=int, default=None)  # job.MINUTES
     s = add('forget', _forget)
     s.add_argument('--conv', required=True)
     s.add_argument('--pos', type=int, required=True)

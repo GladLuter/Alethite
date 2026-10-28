@@ -11,7 +11,6 @@ import os
 import shutil
 import sqlite3
 import crypto
-import encrypt
 import memdb
 from texts import t
 from vectors import DIMS
@@ -90,6 +89,7 @@ def status(conn, where):
 
 def _connect(path, key):
     """The index at `path`: an open one as it is, an encrypted one with `key`."""
+    import encrypt
     if not crypto.is_encrypted(path):
         return sqlite3.connect(path, isolation_level=None, timeout=30)
     if not key:
@@ -194,6 +194,7 @@ def merge_back(where, key):
     job, a sync or an embed holds either index (nothing was touched), or the temporary index was written to meanwhile (by a run that began
     before the folder was back: what came over is in, the next run takes the rest and deletes it). A failure is told and kept in
     meta.merge_error of `db`; both indexes stay as they were and the next run tries again."""
+    import encrypt
     db, src = where.db, where.merge_from
     fields = {'dir': where.configured, 'home': os.path.dirname(src)}
     held = []
@@ -274,6 +275,7 @@ def apply_forgets(db):
 
 def _same(a, b):
     """The file `b` is a whole copy of `a`: the same size and the same first page (every commit rewrites it)."""
+    import encrypt
     return os.path.isfile(a) and os.path.isfile(b) and os.path.getsize(a) == os.path.getsize(b) and encrypt._stamp(a) == encrypt._stamp(b)
 
 
@@ -303,6 +305,7 @@ def _copyfile(path, copy, page, lock=LOCK_BYTE):
 def _copy(path, copy, key):
     """The index file `path` copied to `copy` under its own write lock (a chat cannot write meanwhile) and counted from a fresh open;
     the first page of `path` as it was then."""
+    import encrypt
     with contextlib.closing(_connect(path, key)) as conn:
         conn.execute('BEGIN IMMEDIATE')
         want, stamp = encrypt._counts(conn), encrypt._stamp(path)
@@ -342,6 +345,7 @@ def _unmark():
 def _delete_old(old):
     """The files an index leaves in the folder `old` go: the index and the backup of stage 2 with their journals, the lock files, job.xml,
     the handoff files and the mark. Never the settings file, never a folder tree. Whether a file stayed because something holds it."""
+    import encrypt
     db = os.path.join(old, 'index.db')
     names = [*encrypt._files(db), *('%s.%s.lock' % (db, name) for name in LOCKS), os.path.join(old, 'job.xml'), os.path.join(old, MARK), *_handoffs_in(old)]
     stayed = False
@@ -374,6 +378,7 @@ def _switch(out, where, target, key, ui, drive_type, free):
     """The move up to the switch, with `out` (see `move`) filled in. Every refusal is a ValueError raised before anything is changed; a
     failure later leaves at most a whole copy in the target, which the repeat takes for its own. Returns (the folder of an old copy, the
     index that notes it) when the owner is to be asked about deleting it, else None."""
+    import encrypt
     src, folder, notes = where.db, out['dir'], out['notes']
     cur, n, home = os.path.dirname(src), crypto.norm(out['dir']), crypto.norm(crypto.HOME_DIR)
     settings = os.path.join(crypto.HOME_DIR, 'settings.json')

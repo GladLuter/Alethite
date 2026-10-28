@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import gc
 import io
@@ -68,6 +69,15 @@ class CgTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn('ёжик', out['hits'][0]['snippet'])
         self.assertEqual(out['errors'], [])
+
+    def test_every_command_runs_alone(self):
+        """Each command starts in a fresh process with only the modules it needs: --help of every one, and `status` on a temporary index."""
+        cmds = next(a for a in cg._parser()._actions if isinstance(a, argparse._SubParsersAction)).choices
+        for cmd in cmds:
+            code, out = self.run_cg(cmd, '--help')
+            self.assertEqual((cmd, code), (cmd, 0))
+            self.assertIn('help', out)
+        self.assertEqual(self.run_cg('status')[0], 0)
 
     def test_cli_error_is_json(self):
         code, out = self.run_cg('status', db=self.tmp)  # a folder instead of the database file
