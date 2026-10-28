@@ -21,7 +21,7 @@ IMAGE_CHARS = 6000     # image blocks count as this many chars (base64 length is
 # Set to 1.0 for the literal "any negative delta is a reset" rule: that turns ~0.5M-token contexts into compaction_summary.
 RESET_BELOW = 0.5
 # API-equivalent $ per MTok: (input, cache_write_5m, cache_write_1h, cache_read, output).
-# Keep this table identical to PRICES in plugin/hooks/guard.ts.
+# The cache_write_1h and cache_read numbers are also in PRICES of plugin/hooks/guard.ts: change both.
 # Matched as a substring of message.model, most specific first; anything else is priced as sonnet-5 and reported.
 OPUS, SON5, SON4 = (5, 6.25, 10, .5, 25), (2, 2.5, 4, .2, 10), (3, 3.75, 6, .3, 15)
 PRICES = [
@@ -130,7 +130,7 @@ def read_chain(path, ctx, visit=None):
                 c = calls.get(mid)
                 if c is None:  # one API call = several entries with the same message.id; keep the first position
                     c = calls[mid] = {'id': mid, 'model': m.get('model') or 'unknown', 'ts': o.get('timestamp') or '',
-                                      'usage': None, 'seen': set()}
+                                      'usage': None}
                     ev.append(('c', c))
                 u = m.get('usage')
                 if isinstance(u, dict) and (c['usage'] is None or num(u, 'output_tokens') >= num(c['usage'], 'output_tokens')):
@@ -140,8 +140,6 @@ def read_chain(path, ctx, visit=None):
                         continue
                     if b.get('type') == 'tool_use':
                         tools[b.get('id')] = tool_cat(b.get('name'))
-                    elif b.get('type') == 'text' and isinstance(b.get('text'), str) and hash(b['text']) not in c['seen']:
-                        c['seen'].add(hash(b['text']))
             elif t == 'user':
                 if o.get('isCompactSummary'):
                     continue

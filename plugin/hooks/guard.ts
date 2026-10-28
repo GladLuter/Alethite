@@ -8,8 +8,7 @@ type Row = [model: string, write1h: number, read: number]
 
 const SONNET5: Row = ['sonnet-5', 4, 0.2] // also the price of an unknown model
 
-// USD per MTok, most specific first; same numbers as cc_token_audit.py
-// Keep this table identical to the one in plugin/scripts/cc_token_audit.py
+// USD per MTok, most specific first; same numbers as cc_token_audit.py, change both
 const PRICES: Row[] = [
   ['opus-5-5', 8, 0.2], ['opus-5', 10, 0.5], ['opus-4', 10, 0.5],
   ['sonnet-5-5', 4, 0.1], SONNET5, ['sonnet-4', 6, 0.3],
