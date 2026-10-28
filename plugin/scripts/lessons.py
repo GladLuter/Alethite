@@ -20,7 +20,7 @@ REQUIRED = ('action', 'symptom', 'cause')
 FIELD_CHARS = 300
 TRIGGER_MIN = 8  # a shorter one ("git", "rm") would stop every other command
 _SELECT = ("SELECT rowid, conv, pos, ts, text, (SELECT origin FROM keys WHERE id = chunks.rowid) FROM chunks "
-           "WHERE rowid IN (SELECT id FROM keys WHERE cls = 'lesson' AND (:c IS NULL OR conv = :c))")  # the lessons of a project all sit in its conv_of
+           "WHERE rowid IN (SELECT id FROM keys WHERE cls = 'lesson' AND " + memdb.IN_PROJECT + ')')  # conv_projects, not conv_of: the project key may have been migrated
 
 
 def conv_of(project):
@@ -84,7 +84,7 @@ def save(conn, project, fields, now=None):
 
 def listing(conn, project):
     """The lessons of `project` (None: all), newest first: {'id', 'conv', 'pos', 'ts', 'text', 'trigger', 'from'}."""
-    rows = conn.execute(_SELECT + ' ORDER BY pos DESC', {'c': project and conv_of(project)}).fetchall()  # not ts: two lessons of one millisecond tie
+    rows = conn.execute(_SELECT + ' ORDER BY pos DESC', {'p': project}).fetchall()  # not ts: two lessons of one millisecond tie
     return [{'id': rid, 'conv': conv, 'pos': pos, 'ts': ts, 'text': text, 'trigger': fields_of(text).get('trigger'), 'from': origin}
             for rid, conv, pos, ts, text, origin in rows]
 

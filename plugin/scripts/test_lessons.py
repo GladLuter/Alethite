@@ -76,6 +76,16 @@ class LessonsTest(unittest.TestCase):
         for p in (A, B, None):
             self.assertEqual([l['id'] for l in lessons.listing(self.conn, p)], [r[0] for r in self.conn.execute(old, {'p': p})])
 
+    def test_listing_after_the_project_key_was_migrated(self):
+        raw, home = r'C:\old\proj', r'C:\Users\x'
+        lessons.save(self.conn, raw, RATE)
+        new = project_key(raw, home)
+        self.conn.execute('UPDATE conv_projects SET project = ?', (new,))  # what _migrate does; the lesson conv keeps the hash of the raw key
+        old = "SELECT rowid FROM chunks WHERE kind = 'lesson' AND " + memdb.IN_PROJECT
+        want = [r[0] for r in self.conn.execute(old, {'p': new})]
+        self.assertEqual(len(want), 1)
+        self.assertEqual([l['id'] for l in lessons.listing(self.conn, new)], want)
+
     def test_save_finds_a_repeat_and_continues_pos(self):
         now = datetime.datetime(2026, 10, 20, 9, 0, tzinfo=datetime.timezone.utc)
         first = lessons.save(self.conn, A, RATE, now)
