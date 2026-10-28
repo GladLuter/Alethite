@@ -210,6 +210,74 @@ class SyncTest(unittest.TestCase):
         self.b.index()
         self.assertEqual((self.b.rows(), self.b.vecs()), (4, 2))
 
+    def second_writer(self, c):
+        """A function that makes a second connection of `c` write at once: True when it got through, False when the index was locked."""
+        other = connect(c.db, home=c.home)
+        self.addCleanup(other.close)
+        other.execute('PRAGMA busy_timeout = 200')
+
+        def write():
+            try:
+                other.execute("INSERT OR REPLACE INTO meta VALUES('probe', '1')")
+                return True
+            except sqlite3.OperationalError:
+                return False
+        return write
+
+    def test_push_writes_share_outside_write_lock(self):
+        self.ready(self.a)
+        write, real, got = self.second_writer(self.a), cgsync._write, []
+
+        def slow(*args):
+            got.append(write())
+            real(*args)
+
+        with mock.patch.object(cgsync, '_write', slow):
+            r = self.a.sync(memory=False)
+        self.assertEqual((got, r['pushed'], r['errors']), ([True], 2, []))
+
+    def test_push_failure_marks_nothing(self):
+        self.ready(self.a)
+        self.a.conn.execute("INSERT INTO outbox(line) VALUES('{\"type\": \"forget\", \"key\": [\"SA\", 0, \"h\", 0]}')")
+        with mock.patch.object(cgsync, '_write', side_effect=OSError('the share is gone')):
+            r = self.a.sync(memory=False)
+        self.assertIn('the share is gone', r['errors'][0]['error'])
+        self.assertEqual((self.a.q('SELECT count(*) FROM keys WHERE pushed = 1'), self.a.q('SELECT count(*) FROM outbox')), (0, 1))
+        r = self.a.sync(memory=False)
+        self.assertEqual((r['pushed'], r['errors'], self.a.q('SELECT count(*) FROM outbox')), (2, [], 0))
+
+    def test_push_skips_record_replaced_meanwhile(self):
+        self.ready(self.a)
+        real, calls = cgsync._write, []
+
+        def replaced(gen, n, lines, machine, key):
+            calls.append(n)
+            if len(calls) == 1:  # the record is rebuilt after the collect, before the mark
+                self.a.conn.execute("UPDATE keys SET hash = 'replaced' WHERE id = (SELECT min(id) FROM keys)")
+                real(gen, n, lines, machine, key)
+            else:
+                raise OSError('stop here')
+
+        with mock.patch.object(cgsync, '_write', replaced):
+            self.a.sync(memory=False)
+        self.assertEqual(self.a.q("SELECT pushed FROM keys WHERE hash = 'replaced'"), 0)
+        self.assertEqual(self.a.q("SELECT count(*) FROM keys WHERE hash != 'replaced' AND pushed = 1"), 1)
+
+    def test_sync_memory_reads_share_outside_write_lock(self):
+        self.a.fact('from_a.md', 'a')
+        self.b.fact('from_b.md', 'b')
+        self.ready(self.a, self.b)
+        self.b.sync()
+        write, real, got = self.second_writer(self.a), cgsync._read_facts, []
+
+        def slow(*args):
+            got.append(write())
+            return real(*args)
+
+        with mock.patch.object(cgsync, '_read_facts', slow):
+            r = self.a.sync()
+        self.assertEqual((r['errors'], r['memory']['pulled'], got), ([], 1, [True, True]))
+
     def break_line(self, c, n, line):
         path = os.path.join(c.share, c.name, 'batch-%08d.jsonl.gz' % n)
         with gzip.open(path, 'rt', encoding='utf-8') as f:

@@ -186,8 +186,9 @@ def pending(conn):
 
 
 def _collect(conn):
-    """The lines of our next batch, inside the caller's transaction: forgets, then conversations, records and vectors of ours that are not
-    out yet, about BATCH_BYTES of them. The records are marked pushed already, so their vectors may come in the same batch."""
+    """The lines of our next batch, by plain reads: forgets, then conversations, records and vectors of ours that are not out yet, about
+    BATCH_BYTES of them, and what to mark once the file is written: (id, hash) of the records, (id, hash) of the vectors, outbox seqs. The
+    vectors of the records of this batch may come with it."""
     lines, size, seqs, ids = [], 0, [], []
     for seq, line in conn.execute('SELECT seq, line FROM outbox ORDER BY seq').fetchall():
         if size > BATCH_BYTES:
@@ -205,7 +206,7 @@ def _collect(conn):
         for rid, conv, cls, h, n, pos, ts, kind, text in rows:
             line = _dumps({'type': 'chunk', 'key': [conv, cls, h, n], 'pos': pos, 'ts': ts, 'kind': kind, 'text': text})
             chunks.append(line)
-            ids.append(rid)
+            ids.append((rid, h))
             convs[conv] = None
             size += len(line)
             if size > BATCH_BYTES:
@@ -217,21 +218,20 @@ def _collect(conn):
             lines.append(_dumps({'type': 'conv', 'conv': conv, 'parent': row[0], 'first_ts': row[1], 'last_ts': row[2]}))
         lines += [_dumps({'type': 'project', 'conv': conv, 'project': p}) for (p,) in conn.execute('SELECT project FROM conv_projects WHERE conv = ?', (conv,))]
     lines += chunks
-    conn.executemany('UPDATE keys SET pushed = 1 WHERE id = ?', [(i,) for i in ids])
-    vec_ids = []
-    cur = conn.execute('SELECT k.id, k.conv, k.cls, k.hash, k.n FROM keys k WHERE k.origin IS NULL AND k.pushed = 1 AND ' + _VEC_OUT
+    vec_ids, going = [], {i for i, _ in ids}
+    cur = conn.execute('SELECT k.id, k.conv, k.cls, k.hash, k.n, k.pushed FROM keys k WHERE k.origin IS NULL AND ' + _VEC_OUT
                        + ' ORDER BY k.id', (4 * DIMS,))
-    for rid, conv, cls, h, n in cur.fetchall():
+    for rid, conv, cls, h, n, pushed in cur.fetchall():
         if size > BATCH_BYTES:
             break
+        if not (pushed or rid in going):
+            continue
         for part, vec in conn.execute('SELECT part, vec FROM vecs WHERE chunk = ? AND length(vec) = ? ORDER BY part', (rid, 4 * DIMS)):
             line = _dumps({'type': 'vec', 'key': [conv, cls, h, n], 'part': part, 'vec': base64.b64encode(vec).decode('ascii')})
             lines.append(line)
             size += len(line)
-        vec_ids.append(rid)
-    conn.executemany('UPDATE keys SET vec_pushed = 1 WHERE id = ?', [(i,) for i in vec_ids])
-    conn.executemany('DELETE FROM outbox WHERE seq = ?', [(s,) for s in seqs])
-    return lines, len(ids), len(vec_ids), len(seqs)
+        vec_ids.append((rid, h))
+    return lines, ids, vec_ids, seqs
 
 
 def _aad(machine, gen, n):
@@ -260,18 +260,23 @@ def _write(gen, n, lines, machine, key):
 
 
 def _push(conn, gen, machine, key, digest, deadline, now, report):
+    # the caller holds the sync lock, which keeps a second sync of this computer from taking the same batch number; the share is written
+    # with no database lock held, and the write lock is taken only to mark what went out
     while now() < deadline:
-        conn.execute('BEGIN IMMEDIATE')  # also keeps a second sync of this computer from taking the same batch number
+        lines, ids, vec_ids, seqs = _collect(conn)
+        if not lines:
+            return
+        n = max(_batches(gen.path, crypto.EXT[gen.cipher]), default=0) + 1
+        model = memdb.meta(conn, 'embed_model')
+        header = {'type': 'header', 'format': FORMAT, 'machine': machine, 'gen': gen.n, 'batch': n, 'model': model, 'dims': DIMS,
+                  'digest': digest(model) if vec_ids and model else None, 'created': _now()}
+        _write(gen, n, [_dumps(header)] + lines, machine, key)
+        conn.execute('BEGIN IMMEDIATE')
         try:
-            lines, chunks, vecs, forgets = _collect(conn)
-            if not lines:
-                conn.rollback()
-                return
-            n = max(_batches(gen.path, crypto.EXT[gen.cipher]), default=0) + 1
-            model = memdb.meta(conn, 'embed_model')
-            header = {'type': 'header', 'format': FORMAT, 'machine': machine, 'gen': gen.n, 'batch': n, 'model': model, 'dims': DIMS,
-                      'digest': digest(model) if vecs and model else None, 'created': _now()}
-            _write(gen, n, [_dumps(header)] + lines, machine, key)
+            # a record rebuilt since the collect (same id, other hash) was not what we sent: it stays unmarked and goes out again
+            conn.executemany('UPDATE keys SET pushed = 1 WHERE id = ? AND hash = ?', ids)
+            conn.executemany('UPDATE keys SET vec_pushed = 1 WHERE id = ? AND hash = ?', vec_ids)
+            conn.executemany('DELETE FROM outbox WHERE seq = ?', [(s,) for s in seqs])
             # our mark moves on only from the batch before: when our own folder stopped at a broken batch, the batches after it
             # must still be read once it is skipped
             conn.execute('INSERT INTO peers(machine, last_batch, gen) VALUES(?, ?, ?) ON CONFLICT(machine) DO UPDATE SET last_batch = excluded.last_batch '
@@ -280,8 +285,8 @@ def _push(conn, gen, machine, key, digest, deadline, now, report):
         except BaseException:
             conn.rollback()
             raise
-        report['pushed'] += chunks
-        report['vectors']['pushed'] += vecs
+        report['pushed'] += len(ids)
+        report['vectors']['pushed'] += len(vec_ids)
         report['batches']['pushed'] += 1
 
 
@@ -595,44 +600,45 @@ def sync_memory(conn, sync_dir, machine, peers, memory_dir, key, gens, secret, e
         if new:
             _write_facts(gens[machine], machine, key, secret, new)
     out['pushed'] = len(new)
+    read_of = {peer: read(gens[peer], peer) or {} for peer in peers if peer in gens and not _refusal(gens[peer], secret, peer, True)}
     added = []
-    for peer in peers:
-        if peer not in gens or _refusal(gens[peer], secret, peer, True):
-            continue
-        theirs = read(gens[peer], peer) or {}
-        for name in sorted(theirs):
-            data = theirs[name]
-            h = _hash(data)
-            if any(r[0] == peer and r[1] == name and r[2] == h for r in taken.values()):
-                continue  # this version came in already, wherever it went since
+    conn.execute('BEGIN IMMEDIATE')  # the share is read; from here only the index and the memory folder
+    with conn:
+        for peer in read_of:
+            theirs = read_of[peer]
+            for name in sorted(theirs):
+                data = theirs[name]
+                h = _hash(data)
+                if any(r[0] == peer and r[1] == name and r[2] == h for r in taken.values()):
+                    continue  # this version came in already, wherever it went since
 
-            def place(local):
-                path, rec = os.path.join(memory_dir, local), taken.get(local)
-                if not os.path.exists(path):
-                    if rec:
-                        return 'deleted'  # the owner deleted it after it came: it stays deleted
-                    _put(path, data)
-                    added.append((local, data))
-                    got = 'written'
-                elif _hash(_read(path)) == h:
-                    if not rec:  # the same text got here otherwise (by hand, a run that died before its record): still ours to push
+                def place(local):
+                    path, rec = os.path.join(memory_dir, local), taken.get(local)
+                    if not os.path.exists(path):
+                        if rec:
+                            return 'deleted'  # the owner deleted it after it came: it stays deleted
+                        _put(path, data)
                         added.append((local, data))
-                        return 'same'
-                    got = 'same'
-                elif rec and rec[:2] == (peer, name) and _hash(_read(path)) == rec[2]:
-                    _put(path, data)  # our copy is as it came, and its source has a newer version
-                    got = 'written'
-                else:
-                    return 'busy'  # the owner's own text, or a copy the owner changed
-                taken[local] = (peer, name, h)
-                conn.execute('INSERT OR REPLACE INTO mem_files VALUES(?, ?, ?, ?, ?)', (key, local, peer, name, h))
-                return got
+                        got = 'written'
+                    elif _hash(_read(path)) == h:
+                        if not rec:  # the same text got here otherwise (by hand, a run that died before its record): still ours to push
+                            added.append((local, data))
+                            return 'same'
+                        got = 'same'
+                    elif rec and rec[:2] == (peer, name) and _hash(_read(path)) == rec[2]:
+                        _put(path, data)  # our copy is as it came, and its source has a newer version
+                        got = 'written'
+                    else:
+                        return 'busy'  # the owner's own text, or a copy the owner changed
+                    taken[local] = (peer, name, h)
+                    conn.execute('INSERT OR REPLACE INTO mem_files VALUES(?, ?, ?, ?, ?)', (key, local, peer, name, h))
+                    return got
 
-            got = place(name)
-            if got == 'busy':  # the same name holds other text here: the other computer's version goes beside it
-                out['conflicts'] += 1
-                got = place(name[:-3] + '--' + peer + '.md')
-            out['pulled'] += got == 'written'
+                got = place(name)
+                if got == 'busy':  # the same name holds other text here: the other computer's version goes beside it
+                    out['conflicts'] += 1
+                    got = place(name[:-3] + '--' + peer + '.md')
+                out['pulled'] += got == 'written'
     if added:
         index = os.path.join(memory_dir, 'MEMORY.md')
         old = _read(index).decode('utf-8') if os.path.isfile(index) else ''
@@ -684,10 +690,8 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
             for p in peers:
                 with contextlib.suppress(OSError):  # a share that hiccups: the pull told, and that computer's facts wait for the next sync
                     gens[p] = generation(os.path.join(sync_dir, p))
-            conn.execute('BEGIN IMMEDIATE')
-            with conn:
-                report['memory'] = sync_memory(conn, sync_dir, machine, peers, memory_dir, project_key(project_cwd or os.getcwd(), home), gens, key,
-                                               report['errors'])
+            report['memory'] = sync_memory(conn, sync_dir, machine, peers, memory_dir, project_key(project_cwd or os.getcwd(), home), gens, key,
+                                           report['errors'])
     except Exception as e:
         report['errors'].append({'where': 'sync', 'error': str(e) if isinstance(e, (OSError, ValueError)) and str(e) else '%s: %s' % (type(e).__name__, e)})
     report['peers'] = {m: last for m, last in conn.execute('SELECT machine, last_batch FROM peers WHERE machine != ? ORDER BY machine', (machine,))}
