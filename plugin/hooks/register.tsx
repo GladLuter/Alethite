@@ -590,7 +590,7 @@ export const register: Register = (on, options) => {
       const r = await runCg($, python, lessonSaveArgs(input, await $.session.root(), embedModel))
       lessonList = await lessonsOr($, python, lessonList)
       if (!r.new) return T.lessonKnown
-      toast($, T.lessonToast(String(input.action)))
+      toast($, T.lessonToast(oneLine(String(r.text))))
       return T.lessonSaved(String(r.text))
     }, T.lessonSaveFailed),
   )

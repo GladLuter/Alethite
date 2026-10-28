@@ -21,6 +21,7 @@ IMAGE_CHARS = 6000     # image blocks count as this many chars (base64 length is
 # Set to 1.0 for the literal "any negative delta is a reset" rule: that turns ~0.5M-token contexts into compaction_summary.
 RESET_BELOW = 0.5
 # API-equivalent $ per MTok: (input, cache_write_5m, cache_write_1h, cache_read, output).
+# Keep this table identical to PRICES in plugin/hooks/guard.ts.
 # Matched as a substring of message.model, most specific first; anything else is priced as sonnet-5 and reported.
 OPUS, SON5, SON4 = (5, 6.25, 10, .5, 25), (2, 2.5, 4, .2, 10), (3, 3.75, 6, .3, 15)
 PRICES = [

@@ -994,7 +994,7 @@ test('lesson_save: the fields go to cg.py one item each, the owner gets a toast,
   const r = await ($ as any).tool.call({ tool: 'mcp__cacheguard__lesson_save', action: '-x', symptom: 'HTTP 429', cause: 'limit', fix: '', trigger: 7 })
   expect(ofCg(m, 'lesson-save')[0]!.argv).toEqual(['lesson-save', '--cwd', 'C:/w', '--model', 'embeddinggemma', '--action=-x', '--symptom=HTTP 429', '--cause=limit'])
   expect(r).toEqual({ result: T.lessonSaved('Action: x\nSymptom: y\nCause: z') })
-  expect(m.toasts).toEqual([T.toast(T.lessonToast('-x'))])
+  expect(m.toasts).toEqual([T.toast(T.lessonToast('Action: x | Symptom: y | Cause: z'))]) // the whole lesson on one line, Fix included
 })
 
 test('lessons: one that fits goes beside the owner\'s message once a chat, in the hidden context; nothing else is asked or added', async ($, on) => {
