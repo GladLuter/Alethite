@@ -1170,6 +1170,30 @@ class MoveTest(unittest.TestCase):
         with mock.patch.object(indexdir, '_drop_old', side_effect=sqlite3.OperationalError('disk I/O error')), self.assertRaises(sqlite3.OperationalError):
             self.move(where=resolve(self.home, self.free))  # any other failure stays what it is
 
+    def test_a_locked_index_between_the_setting_and_the_end_of_the_switch_is_not_called_busy(self):
+        self.full_home()
+        with mock.patch.object(indexdir, '_set_old', side_effect=sqlite3.OperationalError('database is locked')), self.assertRaises(ValueError) as e:
+            self.move()
+        self.assertEqual(str(e.exception), t('index_dir_locked_after', dir=self.target))
+        self.assertEqual(self.fields()['indexDir'], self.target)
+
+    def test_a_locked_index_on_the_here_path_is_busy_because_nothing_moved(self):
+        self.full_home()
+        self.move(ui=FakeUI([False]))
+        where = resolve(self.home, self.free)
+        with mock.patch.object(memdb, 'connect', side_effect=sqlite3.OperationalError('database is locked')), self.assertRaises(sqlite3.OperationalError):
+            self.move(where=where)  # not turned into "moved": cg.py makes it the true busy
+
+    def test_a_journal_alone_in_the_folder_of_an_old_copy_is_a_foreign_index(self):
+        self.full_home()
+        self.move(ui=FakeUI([False]))
+        self.write(os.path.join(self.home, 'index.db-journal'))
+        os.remove(self.src)
+        os.remove(os.path.join(self.home, 'index.before-stage2.db'))
+        with self.assertRaises(ValueError) as e:
+            self.move(self.home, where=resolve(self.home, self.free))
+        self.assertEqual(str(e.exception), t('index_dir_foreign', dir=self.home))
+
     def test_the_box_about_the_old_copy_has_its_own_title(self):
         self.full_home()
         self.move(ui=FakeUI([False]))

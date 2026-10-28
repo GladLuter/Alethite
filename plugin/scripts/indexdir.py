@@ -428,21 +428,20 @@ def _switch(out, where, target, key, ui, drive_type, free):
         notes.append(t('index_dir_permanent', dir=folder))
         return None
     if n == crypto.norm(cur):
-        out['done'] = True
-        notes.append(t('index_dir_here', dir=folder))
+        old = []
         if os.path.isfile(src):
             with contextlib.closing(memdb.connect(src)) as conn:
                 old = _old_copies(memdb.meta(conn, 'old_copy'))
-            if old:
-                return old, src
-        return None
+        out['done'] = True  # after the read: a locked index there is a "busy" that changed nothing, and it is true
+        notes.append(t('index_dir_here', dir=folder))
+        return (old, src) if old else None
     if glob.glob(os.path.join(glob.escape(cur), '*.plain')):
         raise ValueError(t('index_dir_plain_left', dir=cur))
     new_db = os.path.join(folder, 'index.db')
     pairs = list(zip(encrypt._files(src), encrypt._files(new_db)))
     # one the target has must be a copy of ours, a half-done move of this one, and no journal lies there (a hot one belongs to some index)
     if any(os.path.exists(b) and not _same(a, b) or os.path.exists(b + '-journal') for a, b in pairs):
-        if os.path.isfile(src):
+        if os.path.isfile(src) and any(os.path.exists(b) for _, b in pairs):  # a journal alone is no old copy
             with contextlib.closing(memdb.connect(src)) as conn:
                 if n in map(crypto.norm, _old_copies(memdb.meta(conn, 'old_copy'))):  # the old copy of this index, left by an earlier move
                     raise ValueError(t('index_dir_old_copy_there', dir=folder, cur=cur))
@@ -476,12 +475,12 @@ def _switch(out, where, target, key, ui, drive_type, free):
             encrypt._remove(c)
     crypto.set_fields(settings, {'indexDir': field})  # from here every new run of cg.py works in the target
     crypto.INDEX_DIRS.add(n)
+    out['done'] = True  # the switch is made: a locked index from here on is told as moved, not as "busy, nothing was changed"
     with contextlib.closing(memdb.connect(new_db)) as conn:  # the copy came with the old copies of the source: the source joins them
         _set_old(conn, [*_old_copies(memdb.meta(conn, 'old_copy')), cur])
     _unmark()  # left behind, the source is a plain old copy, and a mark beside it (a stale one too) would have the next run merge it and delete it
     if field:  # its forgets are kept at home from now on: the folder may be away before the next run
         keep_forgets(new_db)
-    out['done'] = True
     return [cur], new_db
 
 
