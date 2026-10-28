@@ -174,6 +174,15 @@ const countLessons = async ($: EngineInterface, key: 'shown' | 'chars' | 'stoppe
   await $.store.set('lessonCounts', { ...all, [key]: (all[key] ?? 0) + n })
 }
 
+// The turn size is kept for the last 200 chats; the oldest by `at` go first.
+const KEEP_TURNS = 200
+const pruneTurns = async ($: EngineInterface) => {
+  const keys = (await $.store.keys()).filter(k => k.startsWith('turn:'))
+  if (keys.length <= KEEP_TURNS) return
+  const ats = await Promise.all(keys.map(async k => [k, ((await $.store.get(k)) as { at: number | null } | undefined)?.at ?? 0] as const))
+  for (const [k] of ats.sort((a, b) => a[1] - b[1]).slice(0, keys.length - KEEP_TURNS)) await $.store.delete(k)
+}
+
 // chats whose size was already asked of cg.py in this load, so a failure is not retried on every tick
 const asked = new Set<string>()
 
@@ -437,6 +446,7 @@ export const register: Register = (on, options) => {
         await update($, isArmed, () => false)
         const [id, now, usage] = await Promise.all([$.session.id(), $.clock.now(), $.session.usage()])
         await $.store.set(`turn:${id}`, { at: now, tokens: usage.context.tokens ?? null })
+        await pruneTurns($)
         await refresh($, python)
       })
     }

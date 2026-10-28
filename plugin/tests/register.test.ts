@@ -16,6 +16,8 @@ const wire = (on: any, statuses: (string | undefined)[], answerUsage: () => unkn
   const clock = mock.clock(on, { now: 10_000_000_000 })
   on('store.get', (_: unknown, e: { key: string }) => ({ value: store.get(e.key) }))
   on('store.set', (_: unknown, e: { key: string; value: unknown }) => (store.set(e.key, e.value), { value: undefined }))
+  on('store.keys', () => ({ value: [...store.keys()] }))
+  on('store.delete', (_: unknown, e: { key: string }) => (store.delete(e.key), { value: undefined }))
   on('session.id', () => ({ value: 'id' }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('session.usage', answerUsage)
@@ -73,6 +75,18 @@ test('after a restart the size comes from cg.py last-turn, asked once per chat',
   expect(statuses).toContain(T.ctx('300k', T.cacheExpired))
   expect(argvs.filter(a => a.includes('last-turn')).length).toBe(1)
   expect(store.get('turn:id')).toEqual({ at: Date.parse(at), tokens: 300_000 })
+})
+
+test('the turn size is kept for the last 200 chats: the 201st pushes out the oldest by at', async ($, on) => {
+  const store = new Map<string, unknown>()
+  for (let i = 1; i <= 200; i++) store.set(`turn:c${i}`, { at: i, tokens: i })
+  wire(on, [], () => ({ value: usage }), undefined, store)
+  await ($ as any).turn.complete(turn) // the current chat, id "id", is the 201st
+  const turns = [...store.keys()].filter(k => k.startsWith('turn:'))
+  expect(turns.length).toBe(200)
+  expect(store.has('turn:c1')).toBe(false)
+  expect(store.get('turn:c2')).toEqual({ at: 2, tokens: 2 })
+  expect(store.get('turn:id')).toEqual({ at: 10_000_000_000, tokens: 512_000 })
 })
 
 test('python missing: one toast, the error is kept for /cg-health', async ($, on) => {
