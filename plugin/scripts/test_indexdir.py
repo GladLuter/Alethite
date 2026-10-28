@@ -130,7 +130,7 @@ class ResolveTest(unittest.TestCase):
         before = sorted(os.listdir(self.home))
         with self.assertRaises(ValueError) as e:
             self.where(1.54)
-        self.assertEqual(str(e.exception), t('index_fallback_no_space', dir=self.far, home=self.home, free=1.5))
+        self.assertEqual(str(e.exception), t('index_fallback_no_space', dir=self.far, home=self.home, free=1.5, min=2))
         self.assertIn('1.5', str(e.exception))
         self.assertEqual(sorted(os.listdir(self.home)), before)  # no mark, no new file
         self.assertFalse(os.path.exists(self.far))
@@ -157,6 +157,13 @@ class ResolveTest(unittest.TestCase):
         self.assertIn(os.path.join(self.home, 'settings.json'), str(e.exception))
         self.assertIn(t('settings_broken', path=os.path.join(self.home, 'settings.json')), str(e.exception))
         self.assertEqual(sorted(os.listdir(self.home)), ['settings.json'])
+
+    def test_the_gigabytes_in_the_refusal_are_the_floor_in_force(self):
+        self.settings(indexDir=self.far)
+        with mock.patch('indexdir.MIN_FREE', 3 * GB), self.assertRaises(ValueError) as e:
+            self.where(1)
+        self.assertEqual(str(e.exception), t('index_fallback_no_space', dir=self.far, home=self.home, free=1.0, min=3))
+        self.assertIn('3', str(e.exception))
 
     def test_defaults_are_the_home_of_the_mod_and_the_free_space_of_the_disk(self):
         self.settings(indexDir=self.far)
@@ -803,6 +810,7 @@ class MoveTest(unittest.TestCase):
         for spelling in (self.target.upper(), self.target.replace('\\', '/') + '/', self.target + '\\', os.path.join(self.target, '..', 'new')):
             out = self.move(spelling, where=where, ui=FakeUI([False]))
             self.assertEqual(out['notes'], [t('index_dir_here', dir=out['dir']), t('index_old_kept', dir=self.home)], spelling)
+            self.assertIs(out.get('here'), True, spelling)  # the reply must not say "now in X" over "already in X"
             self.assertEqual((out['done'], self.ui.asked), (True, [t('dlg_delete_old_index', dir=self.home)]), spelling)
         self.assertTrue(os.path.exists(self.src))
         out = self.move(where=where)  # and Yes deletes it

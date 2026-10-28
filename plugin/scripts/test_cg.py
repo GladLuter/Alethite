@@ -586,6 +586,14 @@ class CgTest(unittest.TestCase):
         self.assertEqual(self.main_home('status')[1]['index_dir'], {'configured': far, 'fallback': True, 'notes': [want]})
         self.assertFalse(os.path.exists(far))
 
+    def test_a_failed_command_while_its_folder_is_gone_still_says_where_the_index_is(self):
+        far = os.path.join(self.tmp, 'far')  # not made: the disk is away
+        home = self.home_dir(indexDir=far)
+        open(os.path.join(home, 'index.db'), 'wb').close()
+        with mock.patch.object(encrypt, 'SUPPORTED', False):
+            code, out, _ = self.main_home('index-dir')
+        self.assertEqual((code, out), (1, {'error': 'ValueError: ' + t('index_dir_windows_only'), 'index_notice': t('index_fallback', dir=far, home=home)}))
+
     def test_a_run_that_chose_the_home_index_just_before_a_merge_deleted_it_leaves_the_new_one_marked(self):
         far = os.path.join(self.tmp, 'far')
         home = self.home_dir(indexDir=far)
@@ -610,7 +618,7 @@ class CgTest(unittest.TestCase):
         home = self.home_dir(indexDir=far)
         with mock.patch('shutil.disk_usage', return_value=SimpleNamespace(free=2 ** 30)):
             code, out, _ = self.main_home('status')
-        text = t('index_fallback_no_space', dir=far, home=home, free=1.0)
+        text = t('index_fallback_no_space', dir=far, home=home, free=1.0, min=2)
         self.assertEqual((code, out), (1, {'error': 'ValueError: ' + text, 'index_problem': text}))
         self.assertEqual((os.listdir(home), os.path.exists(far)), (['settings.json'], False))
 
@@ -621,7 +629,7 @@ class CgTest(unittest.TestCase):
         sample = os.path.join(self.tmp, 'sample.txt')
         with open(sample, 'w', encoding='utf-8') as f:
             f.write('some text, the sample of the compression')
-        text = t('index_fallback_no_space', dir=far, home=home, free=1.0)
+        text = t('index_fallback_no_space', dir=far, home=home, free=1.0, min=2)
         with mock.patch('shutil.disk_usage', return_value=SimpleNamespace(free=2 ** 30)):  # no index on C: and 1 GB free: resolve raises
             for cmd in (('last-turn', '--session', 'S1'), ('compress', '--level', 'lite', '--file', sample), ('handoff', '--session', 'S1', '--today', '2026-10-27')):
                 code, out, _ = self.main_home(*cmd)
@@ -688,7 +696,7 @@ class CgTest(unittest.TestCase):
             self.assertEqual(memdb.forget(conn, 'S1', pos), 1)
         with mock.patch.object(cg, '_status', side_effect=RuntimeError('boom')):
             code, out, _ = self.main_home('status')
-        self.assertEqual((code, out), (1, {'error': 'RuntimeError: boom'}))
+        self.assertEqual((code, out), (1, {'error': 'RuntimeError: boom', 'index_notice': t('index_merged', dir=far, home=home, n=1)}))  # the merge is told in the error answer too
         self.assertFalse(os.path.exists(os.path.join(home, 'index.db')))  # the merge was done, the index on C: is gone
         with open(os.path.join(home, indexdir.FORGETS), encoding='utf-8') as f:  # so a new index on C: in a second outage forgets it too
             self.assertEqual(len(json.load(f)), 1)
@@ -749,7 +757,7 @@ class CgTest(unittest.TestCase):
         self.addCleanup(no_window.stop)
         for state in ('pending', 'away'):
             for action in ('on', 'join', 'off'):
-                self.assertEqual(self.main_home('encrypt', action)[:2], (1, want), (state, action))
+                self.assertEqual(self.main_home('encrypt', action)[:2], (1, {**want, **({'index_notice': t('index_fallback', dir=far, home=home)} if state == 'away' else {})}), (state, action))
             code, out, _ = self.main_home('encrypt', 'status')
             self.assertEqual((code, out['on'], out['db']), (0, False, 'plain'), state)
             if state == 'pending':

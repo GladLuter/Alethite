@@ -474,7 +474,7 @@ def main(argv):
     for stream in (sys.stdout, sys.stderr, sys.stdin):  # stderr: the progress line of embed; stdin: the text cg.py compress reads
         if stream is not None:  # pythonw, the background job's, has none of them
             stream.reconfigure(encoding='utf-8')
-    problem = None  # why the index cannot be used: every answer says so, an error answer too
+    problem = merged = a = None  # problem: why the index cannot be used, every answer says so, an error answer too
     try:
         a = _parser().parse_args(argv)
         texts.lang = a.lang
@@ -515,6 +515,9 @@ def main(argv):
         out, code = {'help': str(h)}, 0
     except Exception as e:
         out, code = {'error': '%s: %s' % (type(e).__name__, e)}, 1
+        note = a and (merged or indexdir.notice(a.where))  # an error answer tells where the index is as well
+        if note:
+            out['index_notice'] = note
     if problem:
         out['index_problem'] = problem
     print(json.dumps(out, ensure_ascii=False))

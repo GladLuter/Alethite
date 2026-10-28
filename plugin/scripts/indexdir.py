@@ -64,7 +64,7 @@ def resolve(home=None, free=None):
     if not os.path.isfile(db):  # an index that is there is worked with whatever the space: it grows no faster than before
         room = free(home)
         if room < MIN_FREE:
-            raise ValueError(t('index_fallback_no_space', dir=d, home=home, free=round(room / 2 ** 30, 1)))
+            raise ValueError(t('index_fallback_no_space', dir=d, home=home, free=round(room / 2 ** 30, 1), min=MIN_FREE // 2 ** 30))
     if not os.path.isfile(mark):
         with open(mark, 'w', encoding='utf-8') as f:
             f.write(d)
@@ -450,6 +450,7 @@ def _switch(out, where, target, key, ui, drive_type, free):
             with contextlib.closing(memdb.connect(src)) as conn:
                 old = _old_copies(memdb.meta(conn, 'old_copy'))
         out['done'] = True  # after the read: a locked index there is a "busy" that changed nothing, and it is true
+        out['here'] = True  # the reply does not announce a move
         notes.append(t('index_dir_here', dir=folder))
         return (old, src) if old else None
     if glob.glob(os.path.join(glob.escape(cur), '*.plain')):
@@ -516,7 +517,7 @@ def move(where, target, key, ui, drive_type=None, free=None, locks=()):
     """/cg-index-dir: the index in use (`where.db`) moves to the folder `target` (a full path). The checks come first and change nothing. Then
     the index files are copied under their write lock, counted and put in place, the settings point to the target (`indexDir`, the other
     fields as they were), and only then the owner is asked about the old copy (`ui.confirm`, default No). Result: {'action': 'index-dir',
-    'done': True, 'dir': the target, 'notes': what the owner is told besides}. A refusal or a failure is a ValueError. `key` opens an encrypted
+    'done': True, 'dir': the target, 'notes': what the owner is told besides, and 'here': True when the index was there already}. A refusal or a failure is a ValueError. `key` opens an encrypted
     index (the home settings hold it). `drive_type(root)` and `free(path)` are the system's by default. `locks`: the connections the caller
     holds on the source index (memdb.lock). They are closed here as soon as the switch is made, or on any failure: with them open the lock
     files and the index could not be deleted."""
