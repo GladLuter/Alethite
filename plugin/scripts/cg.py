@@ -479,14 +479,22 @@ def main(argv):
     for stream in (sys.stdout, sys.stderr, sys.stdin):  # stderr: the progress line of embed; stdin: the text cg.py compress reads
         if stream is not None:  # pythonw, the background job's, has none of them
             stream.reconfigure(encoding='utf-8')
+    problem = None  # why the index cannot be used: every answer says so, an error answer too
     try:
         a = _parser().parse_args(argv)
         texts.lang = a.lang
         if a.db is None:
-            a.where = indexdir.resolve()
-            a.db = a.where.db
-            if a.where.configured:  # the settings of an index in that folder are still the home ones
-                crypto.INDEX_DIRS.add(crypto.norm(a.where.configured))
+            try:
+                a.where = indexdir.resolve()
+            except (ValueError, OSError) as e:
+                problem = str(e)
+                if a.cmd not in INDEX_FREE:
+                    raise
+                a.db = os.path.join(crypto.HOME_DIR, 'index.db')  # a place for files beside it (the handoff), the index itself is never opened
+            else:
+                a.db = a.where.db
+                if a.where.configured:  # the settings of an index in that folder are still the home ones
+                    crypto.INDEX_DIRS.add(crypto.norm(a.where.configured))
         # the folder is back and the home folder has a temporary index: it is merged first, and its locks are given back before the command
         # a plain pair never reads the key (memdb._open): a key that cannot be read must not stop it
         # a merge of a big index takes seconds: not in a run that needs no index, nor in the prompt hook's lessons-match, which has eight
@@ -507,6 +515,8 @@ def main(argv):
         out, code = {'help': str(h)}, 0
     except Exception as e:
         out, code = {'error': '%s: %s' % (type(e).__name__, e)}, 1
+    if problem:
+        out['index_problem'] = problem
     print(json.dumps(out, ensure_ascii=False))
     return code
 

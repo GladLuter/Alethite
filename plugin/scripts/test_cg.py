@@ -584,6 +584,40 @@ class CgTest(unittest.TestCase):
         self.assertEqual((code, out), (1, {'error': 'ValueError: ' + t('index_fallback_no_space', dir=far, home=home, free=1.0)}))
         self.assertEqual((os.listdir(home), os.path.exists(far)), (['settings.json'], False))
 
+    def test_commands_that_need_no_index_work_when_it_cannot_be_used_and_every_answer_says_why(self):
+        far = os.path.join(self.tmp, 'far')  # not made: the disk is away
+        home = self.home_dir(indexDir=far)
+        self.write('P/S1.jsonl', [owner_line('вопрос'), claude_line('ответ')])
+        sample = os.path.join(self.tmp, 'sample.txt')
+        with open(sample, 'w', encoding='utf-8') as f:
+            f.write('some text, the sample of the compression')
+        text = t('index_fallback_no_space', dir=far, home=home, free=1.0)
+        with mock.patch('shutil.disk_usage', return_value=SimpleNamespace(free=2 ** 30)):  # no index on C: and 1 GB free: resolve raises
+            for cmd in (('last-turn', '--session', 'S1'), ('compress', '--level', 'lite', '--file', sample), ('handoff', '--session', 'S1', '--today', '2026-10-27')):
+                code, out, _ = self.main_home(*cmd)
+                self.assertEqual((code, out['index_problem'], 'error' in out, 'index_notice' in out), (0, text, False, False), cmd)
+            self.assertEqual(out['path'], os.path.join(home, 'handoffs', 'S1.md'))
+            self.assertTrue(os.path.isfile(out['path']))
+            self.assertEqual(sorted(os.listdir(home)), ['handoffs', 'settings.json'])  # no index made, no mark
+            for cmd in (('status',), ('recall', '--query', 'x'), ('lessons-match', '--text', 'some message'), ('encrypt', 'status')):
+                self.assertEqual(self.main_home(*cmd)[:2], (1, {'error': 'ValueError: ' + text, 'index_problem': text}), cmd)  # the others fail, as they did, and say it
+        with open(os.path.join(home, 'settings.json'), 'w', encoding='utf-8') as f:  # the other way: nothing says where the index is
+            f.write('{ "indexDir": ')
+        code, out, _ = self.main_home('last-turn', '--session', 'S1')
+        self.assertEqual((code, 'tokens' in out), (0, True))
+        self.assertIn(os.path.join(home, 'settings.json'), out['index_problem'])
+        code, err, _ = self.main_home('status')
+        self.assertEqual((code, err), (1, {'error': 'ValueError: ' + out['index_problem'], 'index_problem': out['index_problem']}))
+
+    def test_a_run_whose_index_can_be_used_has_no_problem(self):
+        far = os.path.join(self.tmp, 'far')
+        memdb.connect(os.path.join(far, 'index.db')).close()
+        self.home_dir(indexDir=far)
+        self.write('P/S1.jsonl', [owner_line('вопрос'), claude_line('ответ')])
+        for cmd in (('status',), ('last-turn', '--session', 'S1'), ('forget', '--conv', 'x', '--pos', '1'), ('status', '--bad')):  # an error of the command is no problem of the index
+            code, out, _ = self.main_home(*cmd)
+            self.assertNotIn('index_problem', out, cmd)
+
     def test_the_job_on_an_index_in_its_folder_reads_the_settings_in_the_home(self):
         far, share = os.path.join(self.tmp, 'far'), self.share_dir()
         self.home_dir(indexDir=far, syncDir=share, language='uk')
