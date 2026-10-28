@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -57,7 +59,8 @@ class StatsTest(unittest.TestCase):
         self.assertAlmostEqual(m['idle60_share'], 2.5 / 6.5)
 
     def test_audit_selftest(self):  # the cost and cache-rewrite checks of the measure /cg-stats stands on
-        cc_token_audit.selftest()
+        with contextlib.redirect_stderr(io.StringIO()):  # its "selftest OK" is not for the output of the suite
+            cc_token_audit.selftest()
 
     def test_no_messages_no_division(self):
         m = metrics(self.projects, self.conn, '2030-01-01')
@@ -158,7 +161,7 @@ class StatsTest(unittest.TestCase):
                 raise PermissionError(13, 'denied', path)
             return real_open(path, *a, **k)
 
-        with mock.patch('builtins.open', deny):
+        with mock.patch('builtins.open', deny), contextlib.redirect_stderr(io.StringIO()):  # the audit's "unreadable file" line stays out of the suite output
             out = self.stats_out()
         self.assertEqual(out['metrics']['owner_msgs'], 0)  # the undercount the errors warn about
         self.assertIn('usd_per_owner_msg', out['metrics'])
