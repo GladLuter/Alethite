@@ -396,8 +396,7 @@ def _switch(out, where, target, key, ui, drive_type, free):
     crypto.INDEX_DIRS.add(n)
     with contextlib.closing(memdb.connect(new_db)) as conn:
         conn.execute("INSERT OR REPLACE INTO meta VALUES('old_copy', ?)", (cur,))
-    if where.fallback:  # the source was the temporary index: left behind it is a plain old copy
-        _unmark()
+    _unmark()  # left behind, the source is a plain old copy, and a mark beside it (a stale one too) would have the next run merge it and delete it
     out['done'] = True
     return cur, new_db
 

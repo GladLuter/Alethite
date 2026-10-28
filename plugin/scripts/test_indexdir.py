@@ -938,6 +938,18 @@ class MoveTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.mark))
         self.assertEqual(self.old_copy(self.new_db(far)), self.home)
 
+    def test_a_mark_left_by_a_short_outage_does_not_turn_a_kept_old_copy_into_a_temporary_index(self):
+        far1, far2 = (os.path.join(self.root, n) for n in ('far1', 'far2'))
+        crypto.set_fields(self.settings, {'indexDir': far1})
+        self.assertTrue(resolve(self.home, self.free).fallback)  # an outage in which no index was made (last-turn, compress): only the mark is left
+        self.index(self.new_db(far1), 'alpha')  # far1 is back with its index
+        self.move(self.home, where=resolve(self.home, self.free), ui=FakeUI([False]))  # to C:, and the copy in far1 is kept
+        self.assertFalse(os.path.exists(self.mark))
+        self.move(far2, where=resolve(self.home, self.free), ui=FakeUI([False]))  # on to far2, and the copy on C: is kept too
+        where = resolve(self.home, self.free)
+        self.assertEqual(where, Where(self.new_db(far2), far2, False, None))  # no mark: nothing to merge
+        self.assertEqual(counts(self.src)['chunks'], 1)
+
     def test_a_source_that_changed_while_it_was_copied_is_busy_and_nothing_stays_behind(self):
         self.full_home()
         real, seen = encrypt._stamp, []
