@@ -132,6 +132,17 @@ def load_key(settings):
     return key
 
 
+def atomic_write(path, data):
+    """`data` (bytes) replaces the file at `path` in one step, and is on the disk before it does: after a power cut the file is the old one or
+    the new one, never a new one made of zeros."""
+    tmp = path + '.cg-tmp'
+    with open(tmp, 'wb') as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
 def set_fields(settings, updates):
     """Writes `updates` into the settings file in one atomic write (a None value takes its key out); the other fields as they were."""
     s = _read(settings)
@@ -140,10 +151,7 @@ def set_fields(settings, updates):
             s.pop(k, None)
         else:
             s[k] = v
-    tmp = settings + '.cg-tmp'
-    with open(tmp, 'wb') as f:
-        f.write(json.dumps(s, ensure_ascii=False, indent=2).encode('utf-8'))
-    os.replace(tmp, settings)
+    atomic_write(settings, json.dumps(s, ensure_ascii=False, indent=2).encode('utf-8'))
 
 
 def save_key(settings, key, cipher=None):

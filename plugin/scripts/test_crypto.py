@@ -88,6 +88,12 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(self.raw(), b'[1]')
         self.assertFalse(os.path.exists(self.path + '.cg-tmp'))
 
+    def test_set_fields_puts_the_bytes_on_the_disk_before_the_replace(self):
+        calls = []
+        with mock.patch('os.fsync', lambda fd: calls.append('fsync')), mock.patch('os.replace', lambda a, b: calls.append('replace')):
+            crypto.set_fields(self.path, {'indexDir': 'D:\\X'})
+        self.assertEqual(calls, ['fsync', 'replace'])
+
     @dpapi
     def test_dpapi_roundtrip(self):
         blob = crypto.protect(KEY)
