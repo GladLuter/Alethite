@@ -646,6 +646,26 @@ class CgTest(unittest.TestCase):
         code, out, _ = self.main_home('status')  # a run with time merges, and the command works on the index in the folder
         self.assertEqual((code, out['index_notice'], out['rows'], there()), (0, t('index_merged', dir=far, home=home, n=2), 2, [False, False]))
 
+    def test_encrypt_waits_while_the_index_is_away_or_a_merge_is_pending_and_its_status_still_answers(self):
+        far, home = self.temporary_index()
+        held = memdb.lock(os.path.join(home, 'index.db'), 'maintain', 0)  # the merge cannot run: the background job holds the temporary index
+        self.addCleanup(held.close)
+        want = {'error': 'ValueError: ' + t('encrypt_index_away', dir=far, home=home)}
+        no_window = mock.patch('dialogs.WindowsUI', side_effect=AssertionError('the command went on to ask the owner'))
+        no_window.start()
+        self.addCleanup(no_window.stop)
+        for state in ('pending', 'away'):
+            for action in ('on', 'join', 'off'):
+                self.assertEqual(self.main_home('encrypt', action)[:2], (1, want), (state, action))
+            code, out, _ = self.main_home('encrypt', 'status')
+            self.assertEqual((code, out['on'], out['db']), (0, False, 'plain'), state)
+            if state == 'pending':
+                held.close()  # on to the other state: the folder is gone and C: stands in for it
+                gc.collect()
+                os.rename(far, far + '-away')
+        with open(os.path.join(home, 'settings.json'), encoding='utf-8') as f:
+            self.assertNotIn(crypto.KEY_FIELD, json.load(f))  # no key was made, and none taken away
+
     def secret_in(self, db):
         """(records with the secret, forgotten keys, lines in the outbox) of the index at `db`."""
         with contextlib.closing(sqlite3.connect(db)) as conn:

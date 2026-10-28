@@ -295,6 +295,8 @@ def _encrypt(a):
     is held meanwhile: Windows cannot replace a file that is open. The sync folder and the cipher come from the settings file unless given."""
     if a.action == 'status':
         return encrypt.status(a.db)  # from the files alone: no lock, no connection
+    if a.where and (a.where.fallback or a.where.merge_from):  # it would turn one of two indexes (and `off` would take the key from the other)
+        raise ValueError(texts.t('encrypt_index_away', dir=a.where.configured, home=os.path.dirname(a.where.merge_from or a.where.db)))
     s, _ = _settings(crypto.settings_path(a.db))
     sync_dir = _sync_dir(s) if a.sync_dir is None else a.sync_dir
     kw = dict(model=a.model, memory_dir=_memory_dir(a.memory_dir), project_cwd=a.project_cwd, seconds=ENCRYPT_PUSH_SECONDS)

@@ -144,6 +144,7 @@ EN = {
     'index_old_busy': 'some files of the old copy in {dir} are in use by another program and were not deleted. Repeat /cg-index-dir with the new folder to delete the rest',
     'index_old_kept': 'the old copy of the index stays in {dir}. To delete it, repeat /cg-index-dir with the new folder',
     'index_dir_merge_pending': 'the records saved in {home} while the index folder {dir} was away are not merged into the index there yet. The next run of the mod merges them. Then repeat the command. Nothing was changed',
+    'encrypt_index_away': 'the index folder {dir} is away, or what was saved in {home} meanwhile is not merged into it yet. Turning encryption on or off now would change only one of the two indexes, and they would no longer match. Nothing was changed. Repeat the command when the folder is back and the merge is done',
 }
 
 RU = {
@@ -280,6 +281,7 @@ RU = {
     'index_old_busy': 'часть файлов старой копии в {dir} занята другой программой и не удалена. Повторите /cg-index-dir с новой папкой, чтобы удалить остальное',
     'index_old_kept': 'старая копия индекса осталась в {dir}. Чтобы удалить её, повторите /cg-index-dir с новой папкой',
     'index_dir_merge_pending': 'записи, сохранённые в {home}, пока папки индекса {dir} не было, ещё не влиты в индекс там. Следующий запуск мода их вольёт. Потом повторите команду. Ничего не изменено',
+    'encrypt_index_away': 'папки индекса {dir} сейчас нет, либо то, что сохранилось за это время в {home}, ещё не влито в неё. Включение или выключение шифрования сейчас изменило бы только один из двух индексов, и они перестали бы совпадать. Ничего не изменено. Повторите команду, когда папка вернётся и слияние пройдёт',
 }
 
 UK = {
@@ -416,6 +418,7 @@ UK = {
     'index_old_busy': 'частину файлів старої копії в {dir} зайнято іншою програмою, і їх не видалено. Повторіть /cg-index-dir з новою текою, щоб видалити решту',
     'index_old_kept': 'стара копія індексу залишилась у {dir}. Щоб видалити її, повторіть /cg-index-dir з новою текою',
     'index_dir_merge_pending': 'записи, збережені в {home}, поки теки індексу {dir} не було, ще не влиті в індекс там. Наступний запуск мода їх влиє. Потім повторіть команду. Нічого не змінено',
+    'encrypt_index_away': 'теки індексу {dir} зараз немає, або те, що збереглося за цей час у {home}, ще не влито в неї. Вмикання чи вимикання шифрування зараз змінило б лише один із двох індексів, і вони перестали б збігатися. Нічого не змінено. Повторіть команду, коли тека повернеться і злиття пройде',
 }
 
 TABLES = {'en': EN, 'ru': RU, 'uk': UK}
