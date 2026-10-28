@@ -217,6 +217,7 @@ export const ru: Partial<Texts> = {
   // the folder of the index (/cg-index-dir)
   cgIndexDirDescription: 'Перенести индекс в папку по вашему выбору на локальном диске. Без пути окно спросит папку',
   cgIndexDirHint: '[папка]',
+  indexDirWindow: 'смотрите окно Claude-CacheGuard с вопросом о папке, оно может быть за другими окнами',
   indexDirDone: (dir: string) => `Индекс теперь в ${dir}.`,
   indexDirUnfinished: 'cg-index-dir: не закончено.',
   indexDirTimeout: 'не закончилось за 10 минут и было остановлено. /cg-health покажет, где индекс сейчас. Если он не там, где нужно, запустите /cg-index-dir ещё раз.',

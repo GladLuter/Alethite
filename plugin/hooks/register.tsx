@@ -63,8 +63,13 @@ const runCg = async ($: EngineInterface, python: string, args: string[], timeout
   if (problem !== undefined) setProblem($, problem)
   const out = parseCg(r)
   const notice = typeof out.index_notice === 'string' ? out.index_notice : ''
-  if (notice && notice !== lastNotice) toast($, notice)
-  lastNotice = notice
+  if (!notice) lastNotice = ''
+  else if (notice !== lastNotice) {
+    try {
+      await toast($, notice)
+      lastNotice = notice // shown only once the toast went out: a refused one is tried again with the next answer
+    } catch {}
+  }
   return out
 }
 
@@ -545,7 +550,7 @@ export const register: Register = (on, options) => {
   // A refusal (not a local disk, no space, a merge not done yet, busy) is what the owner must act on, so it is in the reply, not in a toast alone.
   on('command.run', { command: 'cg-index-dir' }, async ($, e) => {
     try {
-      toast($, T.encryptWindow)
+      if (indexDirArgs(e.args).length === 1) toast($, T.indexDirWindow) // only the run without a path opens the window
       return { text: indexDirReply((await runCg($, python, indexDirArgs(e.args), 600_000)) as unknown as IndexDirResult) }
     } catch (err) {
       const cut = isTimeout(message(err)) ? T.indexDirTimeout : undefined

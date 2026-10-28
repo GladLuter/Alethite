@@ -1259,23 +1259,23 @@ test('/cg-health: the encryption line, from what cg.py status reports', async ($
 })
 
 // ---- the index folder (/cg-index-dir) ----
-const moved = { action: 'index-dir', done: true, dir: 'D:/cg', notes: ['n1'] }
+const moved = { action: 'index-dir', done: true, dir: 'D:/cg', notes: ['the note'] }
 
 test('/cg-index-dir: with no path the window opens, with a path it is given; both wait as long as the host allows and tell how it ended', async ($, on) => {
   const seen: number[] = [] // the toasts there were when cg.py was started
   const m = await started($, on, a => (a[0] === 'index-dir' ? (seen.push(m.toasts.length), ran(JSON.stringify(a.length === 1 ? { ...moved, done: false, dir: '' } : moved))) : ran('{}')))
   const run = async (args: string) => (await ($ as any).command.run({ command: 'cg-index-dir', args })).text
-  expect(await run('')).toBe([T.indexDirUnfinished, 'n1'].join('\n'))
-  expect(await run(' "D:/cg" ')).toBe([T.indexDirDone('D:/cg'), 'n1'].join('\n'))
+  expect(await run('')).toBe([T.indexDirUnfinished, 'The note'].join('\n'))
+  expect(await run(' "D:/cg" ')).toBe([T.indexDirDone('D:/cg'), 'The note'].join('\n'))
   expect(ofCg(m, 'index-dir')).toEqual([{ argv: ['index-dir'], timeoutMs: 600_000 }, { argv: ['index-dir', '--path=D:/cg'], timeoutMs: 600_000 }])
-  expect(seen).toEqual([1, 2])
-  expect(m.toasts).toEqual(Array(2).fill(T.toast(T.encryptWindow)))
+  expect(seen).toEqual([1, 1]) // the window is announced for the run without a path only
+  expect(m.toasts).toEqual([T.toast(T.indexDirWindow)])
 })
 
 test('/cg-index-dir: a refusal of cg.py is in the reply with its reason, in a toast and kept for /cg-health', async ($, on) => {
   const m = await started($, on, a => (a[0] === 'index-dir' ? failed('ValueError: D:/cg is not on a local disk. Nothing was changed') : ran('{}')))
   expect((await ($ as any).command.run({ command: 'cg-index-dir', args: 'D:/cg' })).text).toBe('cg-index-dir: D:/cg is not on a local disk. Nothing was changed')
-  expect(m.toasts).toEqual([T.toast(T.encryptWindow), T.toast(T.failed('cg-index-dir', 'ValueError: D:/cg is not on a local disk. Nothing was changed'))])
+  expect(m.toasts).toEqual([T.toast(T.failed('cg-index-dir', 'ValueError: D:/cg is not on a local disk. Nothing was changed'))])
   expect(m.store.get('lastError')).toMatchObject({ where: 'cg-index-dir', msg: 'ValueError: D:/cg is not on a local disk. Nothing was changed' })
 })
 
@@ -1284,7 +1284,7 @@ test('/cg-index-dir: a run the host stopped at its time limit says so and what t
   const m = await started($, on, a => (a[0] === 'index-dir' ? { deny: why } : ran('{}')))
   const run = async () => (await ($ as any).command.run({ command: 'cg-index-dir', args: '' })).text
   expect(await run()).toBe(`cg-index-dir: ${T.indexDirTimeout}`)
-  expect(m.toasts).toEqual([T.toast(T.encryptWindow), T.toast(T.failed('cg-index-dir', T.indexDirTimeout))])
+  expect(m.toasts).toEqual([T.toast(T.indexDirWindow), T.toast(T.failed('cg-index-dir', T.indexDirTimeout))])
   expect(m.store.get('lastError')).toMatchObject({ where: 'cg-index-dir', msg: T.indexDirTimeout })
   why = 'failed to start: ENOENT'
   expect(await run()).toContain(T.pythonMissing('python'))

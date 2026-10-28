@@ -220,6 +220,7 @@ export const uk: Partial<Texts> = {
   // the folder of the index (/cg-index-dir)
   cgIndexDirDescription: 'Перенести індекс у теку на ваш вибір на локальному диску. Без шляху вікно запитає теку',
   cgIndexDirHint: '[тека]',
+  indexDirWindow: 'дивіться вікно Claude-CacheGuard із питанням про теку, воно може бути за іншими вікнами',
   indexDirDone: (dir: string) => `Індекс тепер у ${dir}.`,
   indexDirUnfinished: 'cg-index-dir: не завершено.',
   indexDirTimeout: 'не завершилося за 10 хвилин і було зупинено. /cg-health покаже, де індекс зараз. Якщо він не там, де потрібно, запустіть /cg-index-dir ще раз.',
