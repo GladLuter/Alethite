@@ -14,12 +14,12 @@ import zlib
 from unittest import mock
 import numpy
 import memdb
-from memdb import connect, search, status, update
-from test_memdb import TS, claude_line, owner_line
+from memdb import connect, status, update
+from test_memdb import TS, claude_line, owner_line, search
 from test_texts import use_lang
 from transcripts import project_key
 from vectors import (CHUNK, DIMS, DOC_PREFIX, MODEL, OVERLAP, OllamaDown, chunks_of, embed_pending, hybrid_search, ollama_embed, pack,
-                     rrf, search_vectors, vector_status)
+                     rrf_scores, search_vectors, vector_status)
 
 TOOL = dict(type='assistant', timestamp=TS, cwd='C:\\a', message={
     'id': 'm2', 'model': 'claude-opus-5-5', 'role': 'assistant', 'content': [{'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'ls'}}]})
@@ -46,6 +46,10 @@ def never(texts, model, timeout=None):
 
 class RrfTest(unittest.TestCase):
     def test_rrf(self):
+        def rrf(lists, weights):  # the ids best first; a tie keeps the order of first appearance
+            score = rrf_scores(lists, weights)
+            return sorted(score, key=score.__getitem__, reverse=True)
+
         self.assertEqual(rrf([[1, 2, 3], [3, 4]], [1.0, 1.0])[:2], [3, 1])
         self.assertEqual(rrf([[1, 2], [3]], [1.0, 1.0]), [1, 3, 2])  # a tie keeps the order of the first list
         self.assertEqual(rrf([[1], [2]], [0.5, 1.0]), [2, 1])

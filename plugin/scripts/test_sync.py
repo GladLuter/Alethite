@@ -16,8 +16,8 @@ from unittest import mock
 import crypto
 import memdb
 import sync as cgsync
-from memdb import connect, search, update
-from test_memdb import TS, claude_line, owner_line
+from memdb import connect, update
+from test_memdb import TS, claude_line, owner_line, search
 from test_vectors import fake
 from texts import t
 from transcripts import project_key

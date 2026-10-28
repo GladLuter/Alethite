@@ -321,11 +321,6 @@ def word_hits(conn, query, project=None, n=50):
             for conv, pos, ts, kind, snippet, parent, rowid in rows]
 
 
-def search(conn, query, project=None, limit=8, budget=7000):
-    """Hits containing all the words of the query, else any of them; best first, cut at `limit` hits or `budget` snippet characters."""
-    return cut(word_hits(conn, query, project, max(limit, 50)), budget, limit)  # the rows beyond `limit` stand in for the repeats cut drops
-
-
 def cut(hits, budget, limit=None):
     """The leading hits that fit in `budget` snippet characters and `limit` hits. A hit that repeats an earlier one is dropped and counts
     for nothing: Claude Code copies the history of a resumed session into the new transcript, so one message sits under two convs."""

@@ -9,13 +9,17 @@ import unittest
 from unittest import mock
 import crypto
 import memdb
-from memdb import connect, expand, owner_count, search, status, update
+from memdb import connect, cut, expand, owner_count, status, update, word_hits
 from texts import t
 from transcripts import project_key
 
 TS = '2026-10-13T10:00:00.000Z'
 KEY = bytes(range(32))
 dpapi = unittest.skipUnless(os.name == 'nt', 'DPAPI is Windows only')
+
+
+def search(conn, query, project=None, limit=8, budget=7000):  # what the recall does of the word hits: the rows beyond `limit` stand in for the repeats cut drops
+    return cut(word_hits(conn, query, project, max(limit, 50)), budget, limit)
 
 
 def owner_line(text, ts=TS, cwd='C:\\a'):

@@ -9,7 +9,8 @@ import unittest
 import lessons
 import memdb
 import sync as cgsync
-from memdb import connect, search
+from memdb import connect
+from test_memdb import search
 from test_texts import use_lang
 from test_vectors import fake, never
 from transcripts import project_key

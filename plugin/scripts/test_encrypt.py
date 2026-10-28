@@ -15,6 +15,7 @@ import crypto
 import encrypt
 import memdb
 import sync as cgsync
+from test_memdb import search
 from test_sync import Computer
 from texts import t
 
@@ -128,7 +129,7 @@ class EncryptTest(unittest.TestCase):
         self.assertTrue(crypto.is_encrypted(a.db))
         self.assertEqual(self.counts(a.conn), before)
         self.assert_index_pages(a.db, self.key(a))
-        self.assertEqual([h['conv'] for h in memdb.search(a.conn, 'ёжик')], ['conv-a'])  # the full-text index came over too
+        self.assertEqual([h['conv'] for h in search(a.conn, 'ёжик')], ['conv-a'])  # the full-text index came over too
         self.assertFalse(os.path.exists(a.db + '.plain'))
         self.assertFalse(os.path.exists(a.db + '.cg-new'))
         self.assertEqual(len(ui.shown), 1)

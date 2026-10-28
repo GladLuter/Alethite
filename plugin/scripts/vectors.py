@@ -138,7 +138,7 @@ def embed_pending(conn, model=MODEL, embed_fn=ollama_embed, max_seconds=120, bat
 
 
 def search_vectors(conn, qvec, project, limit=50):
-    """(chunks.rowid, cosine) pairs, best first; of several pieces of one record the best counts. Same project scope as memdb.search."""
+    """(chunks.rowid, cosine) pairs, best first; of several pieces of one record the best counts. Same project scope as memdb.word_hits."""
     # shortcut: brute force over all vectors in numpy; switch to sqlite-vec past ~500k vectors (the BLOBs move as they are)
     np = _np()
     # a BLOB of another length (a broken write, another model) would break the matrix: such rows are left out
@@ -167,12 +167,6 @@ def rrf_scores(lists, weights, k=60):
         for rank, i in enumerate(ids, 1):
             score[i] = score.get(i, 0) + (w(i) if callable(w) else w) / (k + rank)
     return score
-
-
-def rrf(lists, weights, k=60):
-    """The ids of rrf_scores, best first; a tie keeps the order of first appearance."""
-    score = rrf_scores(lists, weights, k)
-    return sorted(score, key=score.__getitem__, reverse=True)
 
 
 def _best_piece(conn, rowid, qvec):
@@ -212,7 +206,7 @@ ALSO = 3  # other wordings a search takes at most
 
 
 def hybrid_search(conn, query, project=None, limit=8, budget=7000, model=MODEL, embed_fn=ollama_embed, also=()):
-    """memdb.search merged with the vector search by RRF: (hits as in memdb.search, 'ok' or why only the words were used).
+    """memdb.word_hits merged with the vector search by RRF: (hits as in memdb.cut, 'ok' or why only the words were used).
     `also`: other wordings of the same search (stage 4: a past error is found by its trace, the error text, as often as by the action
     that caused it), each searched the same way; the lists are merged by RRF, the main query first, within the one budget and limit."""
     queries = [query] + [q for q in also if q.strip() and q != query][:ALSO]
