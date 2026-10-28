@@ -157,6 +157,7 @@ def set_fields(settings, updates):
 def save_key(settings, key, cipher=None):
     """Puts the key into the settings file (None takes it out) and, if given, shareCipher beside it, in one write; the other fields as they were.
     The background job reads the cipher from this file only, so it must hold the one the sync folder was switched to."""
+    _read(settings)  # a settings file that cannot be read is told first: a DPAPI error must not hide it
     up = {KEY_FIELD: None if key is None else PREFIX + base64.b64encode(protect(key)).decode()}
     if cipher is not None:  # none given, none taken: set_fields would read None as "remove"
         up['shareCipher'] = cipher

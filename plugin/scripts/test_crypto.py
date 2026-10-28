@@ -152,6 +152,12 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(self.raw(), text.encode('utf-8'))
             self.assertFalse(os.path.exists(self.path + '.cg-tmp'))
 
+    def test_a_broken_settings_file_is_told_before_the_key_is_protected(self):
+        self.write('[1]')
+        with mock.patch.object(crypto, 'protect', side_effect=AssertionError('the key was protected first')):
+            with self.assertRaises(crypto.SettingsBroken):
+                crypto.save_key(self.path, KEY)
+
     @dpapi
     def test_key_unreadable(self):
         junk = 'dpapi:' + base64.b64encode(b'junk').decode()
