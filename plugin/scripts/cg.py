@@ -466,7 +466,7 @@ def _parser():
     s = add('stats', _stats)
     s.add_argument('--since', type=_day, required=True)
     s.add_argument('--until', type=_day)
-    s.add_argument('--machine')  # as for sync: whose owner messages are counted; COMPUTERNAME by default
+    s.add_argument('--machine')  # as for sync, whose owner messages are counted. COMPUTERNAME by default
     s.add_argument('--host', required=True)
     s.add_argument('--today', type=_day, required=True)
     s.add_argument('--limits', required=True)  # JSON: [{"kind", "percentUsed"}, ...]

@@ -360,6 +360,6 @@ def expand(conn, conv, pos, radius=6, budget=7000):
 
 
 def owner_count(conn, since, until=None, machine=None):
-    """Owner messages of this computer only: the cost beside the count is this computer's too (origin is its name in a peer's records)."""
+    """Counts this computer's owner messages only, because the cost it is divided by comes from this computer's transcripts. origin is NULL for our own rows, or our name when a peer sent them back."""
     return conn.execute("SELECT count(*) FROM chunks JOIN keys k ON k.id = chunks.rowid WHERE chunks.kind = 'owner' AND chunks.ts >= ? "
                         "AND (? IS NULL OR chunks.ts < ?) AND (k.origin IS NULL OR k.origin = ?)", (since, until, until, machine)).fetchone()[0]
