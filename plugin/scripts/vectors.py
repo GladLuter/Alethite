@@ -153,7 +153,7 @@ def search_vectors(conn, qvec, project, limit=50):
 
 
 def vector_status(conn):
-    total, pending = conn.execute('SELECT count(*), count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM vecs WHERE chunk = chunks.rowid)) ' + _RECORDS).fetchone()
+    total, pending = conn.execute('SELECT count(*), coalesce(sum(NOT EXISTS (SELECT 1 FROM vecs WHERE chunk = chunks.rowid)), 0) ' + _RECORDS).fetchone()
     return {'model': memdb.meta(conn, 'embed_model'), 'with_vectors': total - pending,
             'total': total, 'failed': conn.execute('SELECT count(*) FROM vecs WHERE length(vec) = 0').fetchone()[0],  # sentinels, see embed_pending
             'updated': memdb.meta(conn, 'vec_updated')}

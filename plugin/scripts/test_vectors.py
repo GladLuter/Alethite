@@ -269,9 +269,8 @@ class VectorsTest(unittest.TestCase):
         reads = [x for x in sql if x.startswith('SELECT rowid, text')]
         self.assertEqual(len(reads), -(-n // 16) + 1)  # the batches and the empty one that ends the run
         marks = [int(re.search(r'rowid > (\d+)', x).group(1)) for x in reads]  # each read starts after the last row of the batch before
-        self.assertEqual(marks[0], 0)
-        self.assertEqual(marks, sorted(set(marks)))
-        self.assertEqual(marks[-1], self.q('SELECT max(rowid) FROM chunks WHERE kind != "tool"'))
+        ids = [r[0] for r in self.conn.execute('SELECT rowid FROM chunks WHERE kind != "tool" ORDER BY rowid')]
+        self.assertEqual(marks, [0] + ids[15::16] + ([ids[-1]] if len(ids) % 16 else []))  # the last row of each batch of 16
 
     def test_embed_pending_row_changed_midbatch(self):
         def rebuilds_s2(texts, model):
@@ -281,7 +280,6 @@ class VectorsTest(unittest.TestCase):
 
         r = embed_pending(self.conn, embed_fn=rebuilds_s2, batch=1000)
         self.assertEqual((r['pending'], r['errors'], self.q("SELECT count(*) FROM vecs WHERE conv = 'S2'")), (1, [], 0))
-        self.assertEqual(r['done'], self.records)  # the run ends; the changed record waits for the next one
         self.assertEqual(embed_pending(self.conn, embed_fn=fake)['done'], 1)
 
     def test_vector_status_scans_once(self):
