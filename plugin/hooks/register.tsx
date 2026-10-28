@@ -34,8 +34,9 @@ const isBusy = atom({ plugin: 'cacheguard', key: 'isBusy' } as const, false)
 
 // The helpers below take `$` and so stay in this file: the loader follows `$` only into functions declared here, never across an import.
 
-// The notices of cg.py about where the index is (not in its folder, a merge done): a toast once per text, /cg-health keeps saying it.
-const noticed = new Set<string>()
+// The notice of cg.py about where the index is (not in its folder, a merge done) that was shown last: a toast only when it changes or comes back
+// after an answer with none, /cg-health keeps saying it.
+let lastNotice = ''
 
 const runCg = async ($: EngineInterface, python: string, args: string[], timeoutMs = 120_000) => {
   // run() rejects only when the child cannot start or times out; cg.py speaks the language of the mod
@@ -43,11 +44,9 @@ const runCg = async ($: EngineInterface, python: string, args: string[], timeout
     throw new Error(`${T.pythonMissing(python)} (${message(err)})`)
   })
   const out = parseCg(r)
-  const notice = out.index_notice
-  if (typeof notice === 'string' && !noticed.has(notice)) {
-    noticed.add(notice)
-    toast($, notice)
-  }
+  const notice = typeof out.index_notice === 'string' ? out.index_notice : ''
+  if (notice && notice !== lastNotice) toast($, notice)
+  lastNotice = notice
   return out
 }
 

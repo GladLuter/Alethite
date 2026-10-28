@@ -1276,17 +1276,23 @@ test('/cg-index-dir: a run the host stopped at its time limit says so and what t
   expect(await run()).toContain(T.pythonMissing('python'))
 })
 
-test('index notice: any answer of cg.py that carries one gives a toast, once per text for the life of the mod', async ($, on) => {
-  let notice = 'the index of the test is not in D:/one'
+test('index notice: any answer of cg.py that carries one gives a toast when it differs from the last one shown, and an answer with none forgets it', async ($, on) => {
+  let notice: string | undefined = 'the index of the test is not in D:/one'
   const m = await started($, on, a => (a[0] === 'index' ? ran(JSON.stringify({ files: 0, rows: 0, convs: 0, seconds: 0, errors: [], index_notice: notice })) : ran('{}')))
   const index = () => ($ as any).command.run({ command: 'cg-index', args: '' })
   await index()
   await index()
-  expect(m.toasts).toEqual([T.toast(notice)])
+  expect(m.toasts).toEqual([T.toast(notice!)])
+  const first = notice!
   notice = 'a merge of the test happened in D:/two'
   await index()
   await index()
-  expect(m.toasts).toEqual([T.toast('the index of the test is not in D:/one'), T.toast(notice)])
+  expect(m.toasts).toEqual([T.toast(first), T.toast(notice)])
+  notice = undefined // the folder is back and nothing is said: a second outage with the very first text is news again
+  await index()
+  notice = first
+  await index()
+  expect(m.toasts).toEqual([T.toast(first), T.toast('a merge of the test happened in D:/two'), T.toast(first)])
 })
 
 test('/cg-health: the notes of the index folder follow the index line', async ($, on) => {
