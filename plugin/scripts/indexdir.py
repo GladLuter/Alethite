@@ -6,6 +6,7 @@ import collections
 import contextlib
 import ctypes
 import glob
+import json
 import os
 import shutil
 import sqlite3
@@ -17,6 +18,7 @@ from vectors import DIMS
 
 MIN_FREE = 2 * 2 ** 30  # a new index in the home folder (C:) only while that much is free there
 MARK = 'index.db.fallback'  # in the home folder: the index beside it stands in for indexDir, and the file holds that folder
+FORGETS = 'forgotten.json'  # in the home folder: the keys (no text) of every forget an index in another folder holds, for a stand-in index to apply
 # db: the index to open; configured: indexDir, None when it is not set or is the home folder; fallback: the home index stands in for it;
 # merge_from: the home index to merge into db, None when there is none
 Where = collections.namedtuple('Where', 'db configured fallback merge_from')
@@ -226,6 +228,43 @@ def merge_back(where, key):
             lock.close()
 
 
+# ---- forgets that a stand-in index must not lose: kept in the home folder by the index in another folder, applied by the one that stands in for it
+
+def _kept():
+    """The keys in the home folder's file. A file that is missing or cannot be read holds none: it is written anew at the end of a run."""
+    try:
+        with open(os.path.join(crypto.HOME_DIR, FORGETS), encoding='utf-8') as f:
+            return {tuple(k) for k in json.load(f) if isinstance(k, list) and len(k) == 4}
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+def keep_forgets(db):
+    """Adds the forget keys of the index `db` (in a folder other than the home one) to the home folder's file, after the run that made them.
+    Keys only, never a text. Never an error: the next run writes what this one could not."""
+    with contextlib.suppress(Exception):
+        with contextlib.closing(memdb.connect(db)) as conn:
+            have = set(conn.execute('SELECT conv, cls, hash, n FROM forgotten'))
+        kept = _kept()
+        if have - kept:  # shortcut: the whole file is rewritten, fine for the few forgets an owner makes, append lines past thousands
+            crypto.atomic_write(os.path.join(crypto.HOME_DIR, FORGETS), json.dumps(list(kept | have)).encode('utf-8'))
+
+
+def apply_forgets(db):
+    """The index `db` that stands in for its folder forgets every key of the file, as an imported forget is forgotten: the record and its
+    vectors go, the key stays in `forgotten`, no line goes to the outbox. Before it reads a transcript: an old copy lacks the forgets made in the
+    folder after the move, a new index all of them."""
+    keys = _kept()
+    if keys:
+        with contextlib.closing(memdb.connect(db)) as conn:
+            todo = keys - set(conn.execute('SELECT conv, cls, hash, n FROM forgotten'))
+            if todo:
+                conn.execute('BEGIN IMMEDIATE')
+                with conn:
+                    for k in todo:
+                        memdb.forget_key(conn, *k, push=False)
+
+
 # ---- the move (/cg-index-dir)
 
 def _same(a, b):
@@ -397,6 +436,8 @@ def _switch(out, where, target, key, ui, drive_type, free):
     with contextlib.closing(memdb.connect(new_db)) as conn:
         conn.execute("INSERT OR REPLACE INTO meta VALUES('old_copy', ?)", (cur,))
     _unmark()  # left behind, the source is a plain old copy, and a mark beside it (a stale one too) would have the next run merge it and delete it
+    if field:  # its forgets are kept at home from now on: the folder may be away before the next run
+        keep_forgets(new_db)
     out['done'] = True
     return cur, new_db
 

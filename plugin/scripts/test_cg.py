@@ -644,6 +644,48 @@ class CgTest(unittest.TestCase):
         code, out, _ = self.main_home('status')  # a run with time merges, and the command works on the index in the folder
         self.assertEqual((code, out['index_notice'], out['rows'], there()), (0, t('index_merged', dir=far, home=home, n=2), 2, [False, False]))
 
+    def secret_in(self, db):
+        """(records with the secret, forgotten keys, lines in the outbox) of the index at `db`."""
+        with contextlib.closing(sqlite3.connect(db)) as conn:
+            return (conn.execute("SELECT count(*) FROM chunks WHERE chunks MATCH 'hunter2xyz'").fetchone()[0],
+                    conn.execute('SELECT count(*) FROM forgotten').fetchone()[0], conn.execute('SELECT count(*) FROM outbox').fetchone()[0])
+
+    def forgotten_in_the_folder(self, old_copy):
+        """The folder has its index with a secret in it, and `forget` removes it there. With `old_copy` C: has the index as it was before.
+        Then the disk goes away. (far, home)"""
+        far = os.path.join(self.tmp, 'far')
+        home = self.home_dir(indexDir=far)
+        self.write('P/S1.jsonl', [owner_line('my password is hunter2xyz'), claude_line('noted')])
+        for folder in ((home, far) if old_copy else (far,)):
+            conn = memdb.connect(os.path.join(folder, 'index.db'))
+            memdb.update(conn, self.projects)
+            conn.close()
+        with contextlib.closing(sqlite3.connect(os.path.join(far, 'index.db'))) as conn:
+            pos = conn.execute("SELECT pos FROM chunks WHERE text LIKE '%hunter2xyz%'").fetchone()[0]
+        self.assertEqual(self.main_home('forget', '--conv', 'S1', '--pos', str(pos))[1], {'forgotten': 1})
+        with open(os.path.join(home, indexdir.FORGETS), 'rb') as f:  # kept at home by that run: keys, no text
+            kept = f.read()
+        self.assertEqual((len(json.loads(kept)), b'hunter2xyz' in kept), (1, False))
+        gc.collect()
+        os.rename(far, far + '-away')
+        return far, home
+
+    def test_a_forgotten_record_does_not_come_back_in_the_new_index_made_while_the_folder_is_away(self):
+        far, home = self.forgotten_in_the_folder(old_copy=False)
+        with mock.patch('shutil.disk_usage', return_value=SimpleNamespace(free=10 * 2 ** 30)):
+            code, out, _ = self.main_home('index')  # the first update of the new index reads every transcript again
+        self.assertEqual((code, out['rows']), (0, 1))
+        self.assertEqual(self.secret_in(os.path.join(home, 'index.db')), (0, 1, 0))  # the key is forgotten here, and no line for the others
+
+    def test_a_forgotten_record_is_forgotten_in_an_old_copy_that_stands_in_for_the_folder(self):
+        far, home = self.forgotten_in_the_folder(old_copy=True)
+        db = os.path.join(home, 'index.db')
+        self.assertEqual(self.secret_in(db), (1, 0, 0))  # the copy lacks the forget made in the folder after the move
+        self.assertEqual(self.main_home('lessons', '--all')[0], 0)  # whatever the first run is, it applies the file first
+        self.assertEqual(self.secret_in(db), (0, 1, 0))
+        self.assertEqual(self.main_home('index', '--rebuild')[0], 0)
+        self.assertEqual(self.secret_in(db), (0, 1, 0))  # and a rebuild does not bring it back
+
     def test_a_pending_merge_of_plain_indexes_never_reads_the_key(self):  # a key that cannot be read stops no plain index, merges included
         far, home = self.temporary_index()
         with open(os.path.join(home, 'settings.json'), 'w', encoding='utf-8') as f:

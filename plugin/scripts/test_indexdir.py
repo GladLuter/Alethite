@@ -938,6 +938,15 @@ class MoveTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.mark))
         self.assertEqual(self.old_copy(self.new_db(far)), self.home)
 
+    def test_the_forgets_of_the_moved_index_are_kept_at_home_at_once_and_survive_the_deletion_of_the_old_copy(self):
+        self.full_home()
+        with contextlib.closing(memdb.connect(self.src)) as conn:
+            self.assertEqual(memdb.forget(conn, 'S', 1), 1)
+        self.move()  # Yes
+        with open(os.path.join(self.home, indexdir.FORGETS), encoding='utf-8') as f:
+            self.assertEqual(len(json.load(f)), 1)
+        self.assertEqual(sorted(os.listdir(self.home)), [indexdir.FORGETS, 'settings.json'])
+
     def test_a_mark_left_by_a_short_outage_does_not_turn_a_kept_old_copy_into_a_temporary_index(self):
         far1, far2 = (os.path.join(self.root, n) for n in ('far1', 'far2'))
         crypto.set_fields(self.settings, {'indexDir': far1})
@@ -1111,6 +1120,88 @@ class MoveTest(unittest.TestCase):
         with self.assertRaises(crypto.SettingsBroken):
             self.move()
         self.assertFalse(os.path.exists(self.target))
+
+
+class ForgetsFileTest(unittest.TestCase):
+    """The file of forget keys in the home folder: written from the index in a folder, read by the index that stands in for it."""
+
+    def setUp(self):
+        use_lang(self, 'en')
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.home, self.far = (os.path.join(d.name, n) for n in ('home', 'far'))
+        os.makedirs(self.home)
+        self.file, self.db, self.standin = os.path.join(self.home, indexdir.FORGETS), os.path.join(self.far, 'index.db'), os.path.join(self.home, 'index.db')
+        patch = mock.patch.object(crypto, 'HOME_DIR', self.home)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def forget(self, db, *texts):
+        """An index at `db` with these records, all forgotten; their keys."""
+        with contextlib.closing(memdb.connect(db)) as conn:
+            for i, text in enumerate(texts):
+                put(conn, 'S', text, pos=i + 1)
+            keys = [key_of(conn, text) for text in texts]
+            for i in range(len(texts)):
+                memdb.forget(conn, 'S', i + 1)
+        return keys
+
+    def kept(self):
+        with open(self.file, 'rb') as f:
+            return f.read()
+
+    def test_the_keys_of_the_index_in_the_folder_are_kept_at_home_without_any_text_and_only_added_to(self):
+        a = self.forget(self.db, 'secret one')
+        indexdir.keep_forgets(self.db)
+        self.assertEqual([tuple(k) for k in json.loads(self.kept())], a)
+        self.assertNotIn(b'secret', self.kept())
+        with mock.patch.object(crypto, 'atomic_write') as write:
+            indexdir.keep_forgets(self.db)  # nothing new: nothing is written
+        write.assert_not_called()
+        other = self.forget(os.path.join(self.far, 'other', 'index.db'), 'secret two')
+        indexdir.keep_forgets(os.path.join(self.far, 'other', 'index.db'))  # another index in a folder: its keys join, none goes
+        self.assertEqual(sorted(tuple(k) for k in json.loads(self.kept())), sorted(a + other))
+        self.assertFalse(os.path.exists(self.file + '.cg-tmp'))
+
+    def test_an_index_that_forgot_nothing_makes_no_file(self):
+        memdb.connect(self.db).close()
+        indexdir.keep_forgets(self.db)
+        self.assertFalse(os.path.exists(self.file))
+
+    def test_the_stand_in_index_forgets_the_keys_whatever_it_has_or_lacks_and_sends_nothing(self):
+        (key,) = self.forget(self.db, 'secret one')
+        indexdir.keep_forgets(self.db)
+        with contextlib.closing(memdb.connect(self.standin)) as conn:
+            put(conn, 'S', 'secret one', vec=REAL)
+            put(conn, 'S', 'other', pos=2)
+        indexdir.apply_forgets(self.standin)
+        indexdir.apply_forgets(self.standin)  # a second time changes nothing
+        with contextlib.closing(memdb.connect(self.standin)) as conn:
+            self.assertEqual(texts_of(conn), ['other'])
+            self.assertEqual(conn.execute('SELECT count(*) FROM vecs').fetchone(), (0,))
+            self.assertEqual(conn.execute('SELECT conv, cls, hash, n FROM forgotten').fetchall(), [key])
+            self.assertEqual(conn.execute('SELECT count(*) FROM outbox').fetchone(), (0,))
+
+    def test_a_file_that_is_missing_or_cannot_be_read_is_no_forget_and_no_error_and_makes_no_index(self):
+        for raw in (None, b'', b'{', b'\xff\xfe', b'{"a": 1}', b'[1]', b'[["a", "b", "c"]]', b'[["a", ["b"], "c", 1]]', b'null'):
+            with self.subTest(raw=raw):
+                if raw is None:
+                    if os.path.exists(self.file):
+                        os.remove(self.file)
+                else:
+                    with open(self.file, 'wb') as f:
+                        f.write(raw)
+                indexdir.apply_forgets(self.standin)
+                self.assertFalse(os.path.exists(self.standin))
+        (key,) = self.forget(self.db, 'secret one')
+        indexdir.keep_forgets(self.db)  # and the next run writes it anew
+        self.assertEqual([tuple(k) for k in json.loads(self.kept())], [key])
+
+    def test_a_file_that_cannot_be_written_stops_no_run(self):
+        self.forget(self.db, 'secret one')
+        with mock.patch.object(crypto, 'atomic_write', side_effect=OSError('disk full')):
+            indexdir.keep_forgets(self.db)
+        self.assertFalse(os.path.exists(self.file))
 
 
 class OwnBatchTest(unittest.TestCase):
