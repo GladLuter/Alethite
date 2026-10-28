@@ -693,6 +693,14 @@ class CgTest(unittest.TestCase):
         with open(os.path.join(home, indexdir.FORGETS), encoding='utf-8') as f:  # so a new index on C: in a second outage forgets it too
             self.assertEqual(len(json.load(f)), 1)
 
+    def test_a_failing_remark_does_not_replace_the_error_of_the_command_nor_stop_keep_forgets(self):
+        far = os.path.join(self.tmp, 'far')
+        self.home_dir(indexDir=far)
+        memdb.connect(os.path.join(far, 'index.db')).close()
+        with mock.patch.object(indexdir, 'remark', side_effect=OSError('disk')), mock.patch.object(indexdir, 'keep_forgets') as keep,                 mock.patch.object(cg, '_status', side_effect=RuntimeError('boom')):
+            code, out, _ = self.main_home('status')
+        self.assertEqual((code, out, keep.call_count), (1, {'error': 'RuntimeError: boom'}, 1))
+
     def test_the_prompt_hooks_lessons_match_does_not_open_the_index_again_to_keep_forgets(self):
         far = os.path.join(self.tmp, 'far')
         self.home_dir(indexDir=far)

@@ -21,7 +21,7 @@ from transcripts import find_session, last_usage, project_key
 
 
 INDEX_FREE = ('last-turn', 'compress', 'handoff')  # the commands that read no index: no merge waits for them, and they still work when the index cannot be used
-SHORT = (*INDEX_FREE, 'lessons-match')  # the runs that do not merge, and (it reads the index, writes no forget) do not open it again to keep forgets
+SHORT = (*INDEX_FREE, 'lessons-match')  # the runs that do not merge, nor open the index again to keep forgets (lessons-match reads it and writes no forget)
 
 
 class _Help(Exception):
@@ -504,7 +504,8 @@ def main(argv):
             out, code = a.fn(a), 0
         finally:
             if a.where:
-                indexdir.remark(a.where)
+                with contextlib.suppress(OSError):  # it must not replace the command's own exception, nor stop keep_forgets
+                    indexdir.remark(a.where)
                 if a.where.configured and not a.where.fallback and a.cmd not in SHORT:  # this run, or the merge before it, may have made forgets or taken some in
                     indexdir.keep_forgets(a.db)
         note = merged or indexdir.notice(a.where)

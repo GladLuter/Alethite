@@ -549,6 +549,12 @@ class AbsorbTest(unittest.TestCase):
         self.assertEqual(self.absorb()['records'], 0)
         self.assertEqual(self.a.execute('SELECT id, pushed FROM keys ORDER BY id').fetchall(), [(sent, 1), (unsent, 0)])
 
+    def test_a_record_with_another_hash_is_not_marked_sent(self):
+        other = put(self.a, 'S', 'mine', pos=1)
+        put(self.b, 'S', 'theirs', pos=1, pushed=1)  # the same conv, pos and kind, another text
+        self.assertEqual(self.absorb()['records'], 1)
+        self.assertEqual(self.a.execute('SELECT pushed FROM keys WHERE id = ?', (other,)).fetchone(), (0,))
+
     def test_vectors_of_another_model_stay_behind(self):
         self.model('m1', 'm2')
         put(self.b, 'S', 'fresh', vec=REAL)
