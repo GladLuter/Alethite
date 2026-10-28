@@ -32,7 +32,7 @@ export const indexProblemOf = (stdout: string): string | undefined => {
   }
 }
 
-type Vectors ={ model: string | null; with_vectors: number; total: number; failed?: number; updated: string | null }
+type Vectors = { model: string | null; with_vectors: number; total: number; failed?: number; updated: string | null }
 type Project = { key: string; convs: number }
 
 // embedCmd: the terminal command that finishes the vectors, shown while some records have none.
