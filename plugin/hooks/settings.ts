@@ -1,4 +1,4 @@
-// The mod's own settings file, one per computer, beside the index: %USERPROFILE%\.claude\cacheguard\settings.json.
+// The mod's own settings file, one per computer, in the mod's home folder: %USERPROFILE%\.claude\cacheguard\settings.json.
 // Its keys are the manifest's userConfig fields; a value there wins over /config (pluginConfigs in Claude Code's settings.json).
 import { T } from './text'
 

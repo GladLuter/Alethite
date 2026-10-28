@@ -156,7 +156,7 @@ def _cipher(s, flag=None):
 
 
 def _key(a):
-    """The key beside the index, None when there is none. A settings file that cannot be read shows none, as it does to memdb.connect: the
+    """The key in the settings file of the index (the home one for an index in its folder), None when there is none. A settings file that cannot be read shows none, as it does to memdb.connect: the
     index it opened is plain then, and a sync refuses an encrypted share (share_needs_join) rather than write open data into it. The same
     for a file that cannot be opened (an editor holds it, no right to read it): `_settings` lives with that too. Not for an encrypted index:
     it was opened with the key a moment ago, and a file that fails now must not turn its records into an open sync."""
@@ -454,7 +454,7 @@ def _parser():
     s.add_argument('--limit', type=int, default=2)
     s.add_argument('--timeout', type=float, default=5)  # the owner waits for this one: a cold Ollama is skipped, not waited for
     s = add('maintain', _maintain)
-    s.add_argument('--settings')  # the mod's settings file; beside the index by default
+    s.add_argument('--settings')  # the mod's settings file; the index's own by default (the home one for an index in its folder)
     s.add_argument('--embed-seconds', type=float, default=300)
     s.add_argument('--sync-seconds', type=float, default=60)
     s = add('job', _job)
