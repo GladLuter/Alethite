@@ -409,6 +409,12 @@ class MergeTest(unittest.TestCase):
                 self.assertEqual(f.read(), text)
         self.assertEqual(os.listdir(old), ['S2.md'])
 
+    def test_the_lock_files_of_the_temporary_index_go_with_it_and_those_of_the_index_stay(self):
+        self.two()
+        self.assertEqual(self.merge(), t('index_merged', dir=self.far, home=self.home, n=2))
+        self.assertEqual(sorted(os.listdir(self.home)), [])
+        self.assertEqual(sorted(n for n in os.listdir(self.far) if n.endswith('.lock')), sorted('index.db.%s.lock' % n for n in indexdir.LOCKS))
+
     def check_pair(self, db_key, src_key):
         self.two(db_key, src_key)
         self.assertEqual(self.merge(db_key or src_key), t('index_merged', dir=self.far, home=self.home, n=2))
@@ -534,6 +540,14 @@ class AbsorbTest(unittest.TestCase):
         self.assertEqual(self.a.execute('SELECT c.text, v.vec FROM vecs v JOIN chunks c ON c.rowid = v.chunk ORDER BY c.pos').fetchall(), [('shared', REAL), ('fresh', OTHER)])
         self.assertEqual(self.absorb(), {'records': 0, 'vectors': 0, 'forgets': 0})
         self.assertEqual(self.a.execute('SELECT count(*) FROM chunks').fetchone(), (3,))
+
+    def test_a_record_both_have_is_sent_here_when_the_temporary_index_sent_it(self):
+        sent = put(self.a, 'S', 'sent there', pos=1)
+        unsent = put(self.a, 'S', 'sent nowhere', pos=2)
+        put(self.b, 'S', 'sent there', pos=1, pushed=1)
+        put(self.b, 'S', 'sent nowhere', pos=2)
+        self.assertEqual(self.absorb()['records'], 0)
+        self.assertEqual(self.a.execute('SELECT id, pushed FROM keys ORDER BY id').fetchall(), [(sent, 1), (unsent, 0)])
 
     def test_vectors_of_another_model_stay_behind(self):
         self.model('m1', 'm2')

@@ -154,6 +154,9 @@ def _absorb(conn):
             memdb.set_report(conn, conv, rid)
         records += 1
         vectors += same and take(tid, rid, conv)
+    # a record both have, which the temporary index put into its batches: it is not sent again from here
+    conn.execute('UPDATE main.keys SET pushed = 1 WHERE pushed = 0 AND EXISTS (SELECT 1 FROM tmp.keys k WHERE k.pushed = 1 AND k.conv = keys.conv '
+                 'AND k.cls = keys.cls AND k.hash = keys.hash AND k.n = keys.n)')
     if same:  # a record both have, and only the temporary index has its vector
         for mid, tid, conv, vec_pushed in conn.execute(
                 'SELECT m.id, k.id, m.conv, k.vec_pushed FROM tmp.keys k JOIN main.keys m ON m.conv = k.conv AND m.cls = k.cls AND m.hash = k.hash AND m.n = k.n '
@@ -222,6 +225,11 @@ def merge_back(where, key):
             # for /cg-health: a merge done by the background job is told nowhere else
             conn.execute("INSERT OR REPLACE INTO meta VALUES('merge_done', ?)", (json.dumps(dict(fields, n=done['records'])),))
         encrypt._remove(src)
+        for lock in held:  # Windows will not delete a lock file that is open
+            lock.close()
+        for name in LOCKS:
+            with contextlib.suppress(OSError):
+                os.remove('%s.%s.lock' % (src, name))
         with contextlib.suppress(OSError):  # a mark left beside no index does nothing, and no failure may stay on record once the index is gone
             os.remove(os.path.join(fields['home'], MARK))
         return t('index_merged', n=done['records'], **fields)
