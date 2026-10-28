@@ -118,6 +118,13 @@ class StatsTest(unittest.TestCase):
         self.assertEqual(sorted(opened), sorted(set(opened)))
         self.assertEqual(len(opened), 2)
 
+    def test_a_transcript_older_than_since_is_skipped(self):  # its lines carry dates inside the period, only the file mtime says it is stale
+        self.write('P/OLD.jsonl', [owner_line('[cg-handoff]\nстарое[/cg-handoff]', '2026-10-06T10:00:00.000Z')])
+        old = os.path.join(self.projects, 'P', 'OLD.jsonl')
+        self.assertEqual(metrics(self.projects, self.conn, '2026-10-01')['handoffs'], 1)  # fresh file: counted
+        os.utime(old, (1788000000, 1788000000))  # 2026-08-29
+        self.assertEqual(metrics(self.projects, self.conn, '2026-10-01')['handoffs'], 0)
+
     def test_note_without_messages_or_limits(self):
         m = metrics(self.projects, self.conn, '2030-01-01')
         n = note_markdown(m, 'PC-1', '2030-01-02', [], 0)
