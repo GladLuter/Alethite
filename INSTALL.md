@@ -128,34 +128,60 @@ After `git pull` and `/reload-plugins`:
 
 Optional, and Windows only. The index (with its backup `index.before-stage2.db`) and everything a computer puts in the sync folder are encrypted. In the folder anyone can read the computer's name, the batch numbers, their count and sizes, and the label of a generation (`gen-0001\generation.json`) also names the cipher, the key's fingerprint and the date. The fingerprint does not give the key away.
 - The key sits in `settings.json`, protected by Windows (DPAPI). On another computer or under another Windows account the file gives no key.
-- Without the `sqlcipher3` package and without `/cg-encrypt on`, nothing changes for you.
+- Until you run `/cg-encrypt on`, nothing changes for you.
 
-1. **Install the package** on each computer from an ordinary PowerShell window, not from inside Claude: the `pip` of Claude puts packages into its own sandbox, and the background job will not see them.
+**The ciphers.** The index and the sync folder are encrypted each in its own way, and each computer chooses them itself:
+- The index, key `indexCipher`:
+  - `sqlcipher` (the default): SQLCipher, needs the `sqlcipher3` package;
+  - `efs`: the file encryption of Windows itself. It needs Windows Pro (or Enterprise, Education) and an NTFS drive. There is no package to install. The whole mod folder `%USERPROFILE%\.claude\cacheguard` goes under EFS, and the index folder too if it is another one: the index, its journal, the backups, the handoffs, `settings.json`, `forgotten.json`.
+- The sync folder, key `shareCipher`:
+  - `sqlcipher` (the default): SQLCipher, needs the `sqlcipher3` package;
+  - `cryptography`: AES-GCM, built into Windows (`bcrypt.dll`), no packages. The `cryptography` package is no longer needed.
+- **Smart App Control** may refuse to load `sqlcipher3`, because its module is not signed. Under it only `efs` and `cryptography` work, and a computer with that pair never loads `sqlcipher3`.
+- Each computer writes its own subfolder in the sync folder in its own cipher and reads the others' by the label of the generation. If another computer's subfolder is written with SQLCipher and `sqlcipher3` does not load here, `/cg-health` names that computer and advises moving it to AES-GCM.
+
+1. **Choose the ciphers** on each computer in `%USERPROFILE%\.claude\cacheguard\settings.json`. For example, EFS and AES-GCM:
+   ```json
+   {
+     "indexCipher": "efs",
+     "shareCipher": "cryptography"
+   }
+   ```
+   If you choose nothing, both stay `sqlcipher`. `/cg-encrypt on` and `join` take the ciphers from this file and write them back beside the key.
+2. **Install the `sqlcipher3` package**, only if you need it: for the `sqlcipher` cipher (of the index or of the folder), and once, to move an index that is already encrypted with SQLCipher over to EFS. Install it on each computer from an ordinary PowerShell window, not from inside Claude: the `pip` of Claude puts packages into its own sandbox, and the background job will not see them.
    ```powershell
    python -m pip install sqlcipher3
    ```
-   If you choose `"shareCipher": "cryptography"`, also install `python -m pip install cryptography`.
-2. **The first computer:** `/reload-plugins`, then `/cg-encrypt on`. The "Claude-CacheGuard" windows may appear behind other windows.
+   For `efs` and `cryptography` this step is not needed.
+3. **The first computer:** `/reload-plugins`, then `/cg-encrypt on`. The "Claude-CacheGuard" windows may appear behind other windows.
+   - With `efs` the command first checks that the drive can do EFS. If it cannot (Windows Home, or a drive that is not NTFS), it refuses before any key is made and changes nothing.
    - The first window shows the **recovery code**, once. Ctrl+C copies the text of the window: paste the code into a password manager. Without it the encrypted history cannot be read if the computers or their Windows accounts are lost.
    - The question "Is the recovery code saved?" defaults to No. Encryption starts only after Yes.
-   - The index and its backup are encrypted. The unencrypted copies (`index.db.plain`) are deleted only after Yes. After No they stay, and `/cg-encrypt on` asks again.
-   - The sync folder: the computer puts its own subfolder out again, encrypted. The older unencrypted data there is deleted only after Yes, and only once the new data is fully out.
-3. **The second computer:** `git pull`, `/reload-plugins`, `/cg-encrypt join`. The recovery code is entered in a window with hidden input. One key serves all computers, so `on` on the second one refuses and points to `join`.
-4. **Check:** `/cg-health` on both computers says "Encryption: on (sqlcipher)". If something is unfinished, the lines under it say what to repeat. `/cg-encrypt status` shows the state alone.
+   - The index and its backup are encrypted. With `sqlcipher` the unencrypted copies (`index.db.plain`) are deleted only after Yes. After No they stay, and `/cg-encrypt on` asks again.
+   - With `efs` the mod folder and the index folder go under the encryption of Windows, and a SQLCipher index becomes an ordinary database under EFS with 16 KB pages. There is never an unencrypted copy outside EFS, so there is no question about `index.db.plain`.
+   - The sync folder: the computer puts its own subfolder out again, in the cipher you chose. The older data there (unencrypted or in another cipher) is deleted only after Yes, and only once the new data is fully out.
+4. **The second computer:** `git pull`, `/reload-plugins`, its own ciphers in `settings.json` (step 1), `/cg-encrypt join`. The recovery code is entered in a window with hidden input. One key serves all computers, so `on` on the second one refuses and points to `join`.
+   - If you change the cipher of the folder on the first computer (for example, SQLCipher to AES-GCM), join the second one only after that. Otherwise it will see a SQLCipher generation, which it cannot open under Smart App Control.
+5. **Check:** `/cg-health` on both computers says, for example, "Encryption: on (index: EFS, sync folder: AES-GCM)". The brackets name the cipher of the index and of the folder: SQLCipher, EFS or AES-GCM. If something is unfinished, the lines under it say what to repeat. `/cg-encrypt status` shows the state alone.
 
 What else to know:
 - **Commands:** `/cg-encrypt on | join | off | status`. With no argument it runs `status`.
-  - `off` decrypts the index, puts this computer's subfolder out unencrypted again, and removes the key from `settings.json`. Turn it off on each computer. A new `on` makes a new key, and the other computers join again.
+  - `off` decrypts the index (with EFS it takes the Windows encryption off both folders), puts this computer's subfolder out unencrypted again, and removes the key from `settings.json`. Turn it off on each computer. A new `on` makes a new key, and the other computers join again.
   - If the key is lost (another Windows account, a reinstall): `/cg-encrypt join` with the recovery code.
   - If both the key and the code are lost, this computer can no longer read what it encrypted. Turn encryption off (`off`) on the other computers and delete this computer's folder in the sync folder by hand, and its encrypted `index.db` too if one is left (the mod builds a new one from the conversations on disk). Then turn encryption on again: `on` on one computer, `join` with the new code on the others.
 - **Until the second computer has joined**, the first takes nothing from it, and `/cg-health` names it: "run `join` on it". Its history is not lost: after `join` it puts it out encrypted.
 - **The time limit.** One run is limited to about 10 minutes (the limit of the desktop app). A big first push may not fit: the reply says it is not finished. Repeat `/cg-encrypt on` (or `join`): it goes on from where it stopped, and every step is safe to repeat. The background job also pushes the rest, but the older unencrypted data in the folder is deleted only by repeating the command, after Yes.
-- **How the folder is encrypted** is the `shareCipher` key in `settings.json`: `sqlcipher` (the default) or `cryptography`. `/cg-encrypt on` and `join` write it into the file themselves, and the file wins over `/config`, so change it later in the file, then `/reload-plugins` and `/cg-encrypt on`. A computer reads the others' data whichever way it was encrypted, if the package is installed.
-- **Speed.** On the encrypted index `recall` is about 0.08 s slower (measured 2026-10-27 on 24.7 thousand vectors). The gap grows with the number of vectors.
+- **The ciphers** are the keys `indexCipher` (`sqlcipher`, the default, or `efs`) and `shareCipher` (`sqlcipher`, the default, or `cryptography`, which is AES-GCM) in `settings.json`. `/cg-encrypt on` and `join` write them into the file themselves, and the file wins over `/config`, so change them later in the file, then `/reload-plugins` and `/cg-encrypt on`. A computer reads the others' data in any cipher it can open itself: SQLCipher only when `sqlcipher3` is installed.
+- **Speed.** On the encrypted index `recall` is about 0.08 s slower (measured 2026-10-27 on 24.7 thousand vectors). The gap grows with the number of vectors. A measurement of 2026-11-02 on a copy of the real index (25.3 thousand vectors, median of 20 runs): one search takes 290 ms with SQLCipher and 170 ms with EFS, 16 KB pages in both.
+- **What you accept with EFS:**
+  - A copy of the index on a FAT or exFAT stick, over the network or through `copyfile` comes out unencrypted. The mod itself never copies the index out.
+  - The files open only under the same Windows account. If an index under EFS does not open (another user, a lost certificate), the mod says so and does not make a new empty index over it.
+  - If you reinstall Windows without a backup of the certificate, the index has to be built again from the sync folder. A copy of the certificate is optional, and the mod does not make one: in `certmgr.msc` open "Personal", find the certificate whose purpose is "Encrypting File System" and export it with the private key and a password.
+  - A file that a chat or the background job holds open is not encrypted by EFS: the command says the files are busy. Repeat it in a minute.
 - **What stays plain:**
   - Claude Code's conversations, `%USERPROFILE%\.claude\projects\*.jsonl`;
   - the auto-memory files of each project on the local disk (`.md`): Claude Code reads them;
-  - the handoffs, the `handoffs` folder beside the index: the same text goes into the chat unencrypted.
+  - the handoffs, the `handoffs` folder beside the index: the same text goes into the chat unencrypted. With EFS the files themselves are encrypted on the disk.
   - `forgotten.json` in `%USERPROFILE%\.claude\cacheguard`, made only when the index lives in another folder: the keys of the records deleted with `forget`. They are hashes, with no text.
 
 ## The index in another folder
@@ -170,13 +196,14 @@ For a computer that is short of space on C:. The index grows with every chat, an
 The background job and the `recall` and `lesson_save` tools use the new folder on their own. Nothing needs reinstalling.
 
 What else to know:
-- **What moves:** `index.db`, its backup `index.before-stage2.db` (if there is one), the `handoffs` folder and the background job's `job.xml`. An encrypted index moves encrypted.
+- **What moves:** `index.db`, its backup `index.before-stage2.db` (if there is one), the `handoffs` folder and the background job's `job.xml`. An encrypted index moves encrypted. An index under EFS stays under EFS: the target folder is encrypted before the copy.
 - **What stays on C:** the `settings.json` file (it holds the encryption key and the new `indexDir` line) and Claude Code's conversations, `%USERPROFILE%\.claude\projects`.
 - **A refusal.** The command changes nothing and names the reason if:
   - the folder is not on a local fixed disk (network paths, network disks and removable disks do not fit) or lies inside OneDrive
   - the folder already holds another `index.db`, and the command does not write over a foreign index
   - the target disk lacks space (it needs the size of the index files plus 200 MB)
   - an `index.db.plain` lies beside the index, so finish `/cg-encrypt on` first
+  - the index is under EFS and the target drive cannot encrypt files (it needs NTFS): choose a folder on an NTFS drive, or turn the encryption off first (`/cg-encrypt off`)
   - what was saved on C: while the folder was away is not merged yet (see below).
 - **If the folder or the `index.db` in it is gone** (the disk was unplugged, the folder deleted), the mod says so in a toast, once per session, and in a `/cg-health` line: "the index in D:\CacheGuard is not available, working with …". It works with the index on C: and leaves `indexDir` alone.
   - If the standard folder already holds an index (the old copy after No), the work goes on with it. If not, a new one is made only when C: has at least 2 GB free. Otherwise the commands that read the index answer with an error that names the paths and the numbers, and nothing is created. The ones that need no index still work: the handoff of New worker, the token count and the compression preview. While this lasts, the status line says "Index unavailable, details in /cg-health", and every message you send gets a toast with the reason.
@@ -195,7 +222,7 @@ What else to know:
 - **The index and the vectors** live in `%USERPROFILE%\.claude\cacheguard\index.db` and never get into the repository. Each computer keeps its own index; the shared sync folder only carries batches between them.
 - **If the index has moved** with `/cg-index-dir`, it is in the folder you chose (see "The index in another folder").
 - **`/cg-index rebuild`** re-reads every transcript and adds only what is missing: the vectors stay and nothing is deleted.
-- **Settings:** a file of its own, `%USERPROFILE%\.claude\cacheguard\settings.json`, one per computer. It stays in this folder even when the index has moved. The keys: `language`, `compression`, `syncDir`, `bandMinTokens` and `bandIdleMinutes` (the band thresholds), `showLimits` (the limits line), `python` (the Python command, if it is `py`, not `python`), `embedModel`, `lessons` and `lessonsMinScore` (the lessons), `shareCipher` (the sync folder encryption), `indexDir` (the index folder). The table with the defaults is in [README.md](README.md).
+- **Settings:** a file of its own, `%USERPROFILE%\.claude\cacheguard\settings.json`, one per computer. It stays in this folder even when the index has moved. The keys: `language`, `compression`, `syncDir`, `bandMinTokens` and `bandIdleMinutes` (the band thresholds), `showLimits` (the limits line), `python` (the Python command, if it is `py`, not `python`), `embedModel`, `lessons` and `lessonsMinScore` (the lessons), `indexCipher` (the index encryption), `shareCipher` (the sync folder encryption), `indexDir` (the index folder). The table with the defaults is in [README.md](README.md).
   - The mod creates the file at the first start with all the current values, so you only open it and edit. A file may hold just the keys you change.
   - The mod reads it at every load: the start of a chat and `/reload-plugins`. After an edit, type `/reload-plugins`.
   - Its values win over `/config`. The desktop app has no settings window for mods, so the settings live in a file. `/config` in a terminal `claude` still works, but where they differ, the file wins.

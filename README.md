@@ -45,8 +45,13 @@ So the expensive part is not what is typed, but coming back to a big, idle chat.
 
 **Encryption** (stage 5, Windows, optional). The index on disk and everything a computer puts in the sync folder are encrypted. The key sits in `settings.json`, protected by Windows.
 - `/cg-encrypt on` turns it on. The recovery code is shown once, in a window, and belongs in a password manager. A second computer joins with `join`.
+- The ciphers are chosen in `settings.json`, one for the index (`indexCipher`) and one for the sync folder (`shareCipher`). Left alone, both stay SQLCipher.
+  - Index: SQLCipher (needs the `sqlcipher3` package) or EFS, the file encryption of Windows itself (needs Windows Pro and an NTFS drive, no packages).
+  - Sync folder: SQLCipher or AES-GCM, which is built into Windows, no packages.
+- Smart App Control may refuse to load `sqlcipher3`, so under it only EFS and AES-GCM work. The `cryptography` package is no longer needed.
+- With EFS, a copy of the index on a USB stick or over the network comes out unencrypted, and the files open only under the same Windows account.
 - Claude Code's own transcripts, each project's auto-memory files and the handoffs stay plain.
-- Without the `sqlcipher3` package and without `/cg-encrypt on`, nothing changes for you.
+- Until you run `/cg-encrypt on`, nothing changes for you.
 
 **Languages.** English (default), Russian, Ukrainian: the interface, the texts for the model and the handoff.
 
@@ -80,7 +85,8 @@ The file `%USERPROFILE%\.claude\cacheguard\settings.json` is one per computer an
 | `embedModel` | Ollama embedding model | `"embeddinggemma"` |
 | `lessons` | bring lessons back to messages and commands | `true` |
 | `lessonsMinScore` | how close a message must be (0–1) | `0.45` |
-| `shareCipher` | how the sync folder is encrypted (`/cg-encrypt on` writes it itself) | `"sqlcipher"` (also `"cryptography"`) |
+| `indexCipher` | how the index is encrypted (`/cg-encrypt on` writes it itself) | `"sqlcipher"` (also `"efs"`) |
+| `shareCipher` | how the sync folder is encrypted (`/cg-encrypt on` writes it itself). `"cryptography"` means the AES-GCM of Windows, no package needed | `"sqlcipher"` (also `"cryptography"`) |
 | `indexDir` | the index folder (written by `/cg-index-dir`, do not edit by hand) | no key (the index is in the standard folder) |
 
 The file may hold only the keys you change. For example:
@@ -97,7 +103,8 @@ The file may hold only the keys you change. For example:
 - The Claude Code desktop app (engine 2.1.295 or newer);
 - Python 3.8+ with numpy;
 - Ollama for the search by meaning (optional);
-- the `sqlcipher3` package for encryption (optional, Windows only);
+- the `sqlcipher3` package for the SQLCipher ciphers (optional, Windows only);
+- Windows Pro and an NTFS drive for the EFS cipher (optional);
 - git.
 
 Installation: [INSTALL.md](INSTALL.md).
