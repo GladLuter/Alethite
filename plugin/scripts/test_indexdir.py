@@ -416,6 +416,24 @@ class MergeTest(unittest.TestCase):
                 self.assertEqual(f.read(), text)
         self.assertEqual(os.listdir(old), ['S2.md'])
 
+    def test_merge_back_efs(self):  # both indexes are plain SQLite in folders under EFS: the records come over, the handoffs stay encrypted
+        for folder in (self.home, self.far):
+            os.makedirs(folder, exist_ok=True)
+            crypto.efs_encrypt(folder)
+        self.two()
+        old = os.path.join(self.home, 'handoffs')
+        os.makedirs(old)
+        with open(os.path.join(old, 'S1.md'), 'w') as f:
+            f.write('handoff')
+        self.assertTrue(crypto.efs_on(self.src) and crypto.efs_on(os.path.join(old, 'S1.md')))
+        self.assertEqual(self.merge(), t('index_merged', dir=self.far, home=self.home, n=2))
+        d = self.index(self.db)
+        self.assertEqual(texts_of(d), ['alpha one', 'beta two', 'delta four', 'gamma three'])
+        moved = os.path.join(self.far, 'handoffs', 'S1.md')
+        self.assertEqual([crypto.efs_on(p) for p in (self.db, moved)], [True, True])
+        self.assertEqual([os.path.exists(p) for p in (self.src, self.mark)], [False, False])
+        self.free()
+
     def test_the_lock_files_of_the_temporary_index_go_with_it_and_those_of_the_index_stay(self):
         self.two()
         self.assertEqual(self.merge(), t('index_merged', dir=self.far, home=self.home, n=2))
@@ -1056,6 +1074,63 @@ class MoveTest(unittest.TestCase):
         self.assertEqual(str(e.exception), t('key_missing'))
         self.assertEqual(self.tree(self.home), before)
         self.assertFalse(os.path.exists(self.target))
+
+    def efs_home(self):
+        """full_home in a home folder that EFS holds from the start (the files are born encrypted, as `/cg-encrypt on` leaves them), with a key."""
+        crypto.efs_encrypt(self.home)
+        self.full_home()
+        key = secrets.token_bytes(32)
+        crypto.save_key(self.settings, key, 'cryptography', 'efs')
+        return key
+
+    def test_move_efs_index(self):  # the target folder is encrypted before anything is copied into it: only what is born there is under EFS
+        key = self.efs_home()
+        want = {n: counts(os.path.join(self.home, n)) for n in ('index.db', 'index.before-stage2.db')}
+        self.assertTrue(all(crypto.efs_on(os.path.join(self.home, *p)) for p in (('index.db',), ('handoffs', 'S1.md'), ('job.xml',))))
+        out = self.move(key=key, ui=FakeUI([False]))
+        self.assertTrue(out['done'])
+        for name, rows in want.items():
+            self.assertEqual(counts(os.path.join(self.target, name)), rows)
+        for p in ((), ('index.db',), ('index.before-stage2.db',), ('handoffs',), ('handoffs', 'S1.md'), ('job.xml',)):
+            self.assertTrue(crypto.efs_on(os.path.join(self.target, *p)), p)
+        self.assertEqual(sorted(os.listdir(self.target)), ['handoffs', 'index.before-stage2.db', 'index.db', 'job.xml'])  # no .cg-move
+        self.assertEqual(self.fields()['indexDir'], self.target)
+
+    def test_a_move_with_no_index_under_efs_makes_the_empty_one_in_an_encrypted_folder(self):  # EFS is told by the folder of the settings alone
+        crypto.efs_encrypt(self.home)
+        self.assertTrue(self.move()['done'])
+        self.assertEqual([crypto.efs_on(p) for p in (self.target, self.new_db())], [True, True])
+        self.assertFalse(crypto.is_encrypted(self.new_db()))
+
+    def test_move_efs_to_volume_without_efs_refused(self):
+        self.efs_home()
+        before, was = self.tree(self.home), self.fields()
+        no_drive = OSError(0, 'The device is not ready', None, 21)  # a drive that is not ready: told, never a traceback
+        for patch, text in ((mock.patch.object(crypto, 'efs_supported', return_value=False), t('index_dir_no_efs', dir=self.target)),
+                            (mock.patch.object(crypto, 'efs_supported', side_effect=no_drive), t('efs_failed', dir=self.target, e=no_drive))):
+            with patch as supported, self.assertRaises(ValueError) as e:
+                self.move()
+            supported.assert_called_once_with(self.target)
+            self.assertEqual(str(e.exception), text)
+            self.assertFalse(os.path.exists(self.target))  # no folder, no copy
+            self.assertEqual((self.tree(self.home), self.fields()), (before, was))  # indexDir is not there
+            self.assertEqual(crypto.INDEX_DIRS, set())
+
+    def test_move_efs_needs_no_volume_check_without_efs(self):  # a plain index moves to a volume that has no EFS, as it always did
+        self.full_home()
+        with mock.patch.object(crypto, 'efs_supported', side_effect=AssertionError) as supported:
+            self.assertTrue(self.move(ui=FakeUI([False]))['done'])
+        supported.assert_not_called()
+        self.assertFalse(crypto.efs_on(self.target))
+
+    def test_a_refusal_of_efs_on_the_target_is_told_and_nothing_is_copied(self):
+        self.efs_home()
+        err = OSError(0, 'The request is not supported', None, 50)
+        with mock.patch.object(crypto, 'efs_encrypt', side_effect=err), self.assertRaises(ValueError) as e:
+            self.move()
+        self.assertEqual(str(e.exception), t('efs_failed', dir=self.target, e=err))
+        self.assertEqual(os.listdir(self.target), [])  # the folder alone: no index in it, plain or not
+        self.assertNotIn('indexDir', self.fields())
 
     def test_a_target_inside_the_old_folder_is_not_hit_by_the_deletion(self):
         self.full_home()

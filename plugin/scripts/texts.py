@@ -137,6 +137,7 @@ EN = {
     # indexdir.py move: /cg-index-dir and its windows
     'index_dir_windows_only': 'moving the index to another folder works on Windows only for now',
     'index_dir_not_local': '{dir} is not on a disk inside this computer. Give a full path on a local fixed disk, for example D:\\CacheGuard. Network paths, network drives and removable disks do not fit. Nothing was changed',
+    'index_dir_no_efs': 'the index is encrypted by EFS, and the drive of {dir} cannot encrypt files with EFS (it needs an NTFS drive), so it is not copied there in clear. Choose a folder on an NTFS drive, or turn the encryption off first with /cg-encrypt off. Nothing was changed',
     'index_dir_cloud': '{dir} lies in a folder that a cloud service syncs (OneDrive). The index changes all the time and the sync can damage it. Choose a folder outside OneDrive. Nothing was changed',
     'index_dir_here': 'the index is in {dir} already, nothing was moved',
     'index_dir_permanent': 'the index stays in {dir} for good: the setting indexDir is removed and nothing was copied. An index left in the earlier index folder is not used any more',
@@ -285,6 +286,7 @@ RU = {
 
     'index_dir_windows_only': 'перенос индекса в другую папку пока работает только на Windows',
     'index_dir_not_local': '{dir} не на диске внутри этого компьютера. Укажите полный путь на локальном несъёмном диске, например D:\\CacheGuard. Сетевые пути, сетевые диски и съёмные диски не подходят. Ничего не изменено',
+    'index_dir_no_efs': 'индекс зашифрован EFS, а диск папки {dir} не умеет шифровать файлы средствами EFS (нужен диск NTFS), поэтому в открытом виде туда он не копируется. Выберите папку на диске NTFS или сначала выключите шифрование командой /cg-encrypt off. Ничего не изменено',
     'index_dir_cloud': '{dir} лежит в папке, которую синхронизирует облачный сервис (OneDrive). Индекс меняется постоянно, и синхронизация может его испортить. Выберите папку вне OneDrive. Ничего не изменено',
     'index_dir_here': 'индекс уже лежит в {dir}, ничего не перенесено',
     'index_dir_permanent': 'индекс остаётся в {dir} насовсем: настройка indexDir убрана, ничего не скопировано. Индекс, оставшийся в прежней папке индекса, больше не используется',
@@ -433,6 +435,7 @@ UK = {
 
     'index_dir_windows_only': 'перенесення індексу в іншу теку поки що працює лише на Windows',
     'index_dir_not_local': "{dir} не на диску всередині цього комп'ютера. Вкажіть повний шлях на локальному незнімному диску, наприклад D:\\CacheGuard. Мережеві шляхи, мережеві диски та знімні диски не підходять. Нічого не змінено",
+    'index_dir_no_efs': 'індекс зашифрований EFS, а диск теки {dir} не вміє шифрувати файли засобами EFS (потрібен диск NTFS), тож у відкритому вигляді туди він не копіюється. Оберіть теку на диску NTFS або спершу вимкніть шифрування командою /cg-encrypt off. Нічого не змінено',
     'index_dir_cloud': '{dir} лежить у теці, яку синхронізує хмарний сервіс (OneDrive). Індекс змінюється постійно, і синхронізація може його зіпсувати. Оберіть теку поза OneDrive. Нічого не змінено',
     'index_dir_here': 'індекс уже лежить у {dir}, нічого не перенесено',
     'index_dir_permanent': 'індекс лишається в {dir} назавжди: налаштування indexDir прибрано, нічого не скопійовано. Індекс, що залишився в попередній теці індексу, більше не використовується',

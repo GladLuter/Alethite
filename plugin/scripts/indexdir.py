@@ -468,18 +468,28 @@ def _switch(out, where, target, key, ui, drive_type, free):
     if key is None and any(crypto.is_encrypted(a) for a, _ in pairs):
         raise ValueError(t('key_missing'))
     crypto._read(settings)  # a settings file that cannot be read stops the move here, not after the copy
+    efs = crypto.efs_on(src) or crypto.efs_on(os.path.dirname(settings))  # an index under EFS goes into a folder under EFS only, or nowhere
+    if efs:
+        try:
+            supported = crypto.efs_supported(folder)
+        except OSError as e:  # a drive that is not ready
+            raise ValueError(t('efs_failed', dir=folder, e=e)) from None
+        if not supported:
+            raise ValueError(t('index_dir_no_efs', dir=folder))
     if not os.path.exists(new_db):  # a copy of an earlier try has taken its room already
         need, room = sum(os.path.getsize(a) for a, _ in pairs) + SPARE, free(_existing(folder))
         if room < need:
             raise ValueError(t('index_dir_no_space', dir=folder, need=-(-need // MB), free=room // MB))
     field = None if n == home else folder  # the home folder is "no indexDir"
+    os.makedirs(folder, exist_ok=True)
+    if efs:  # before any file is made in it: what is born in an encrypted folder is encrypted, a file renamed in from outside stays plain
+        encrypt._efs_do(crypto.efs_encrypt, folder)
     if not pairs:  # an index nowhere: the first one is made in the target
         crypto.INDEX_DIRS.add(n)
         memdb.connect(new_db).close()
         crypto.set_fields(settings, {'indexDir': field})
         out['done'] = True
         return None
-    os.makedirs(folder, exist_ok=True)
     copies = [b + '.cg-move' for _, b in pairs]
     try:
         stamps = [_copy(a, c, key) for (a, _), c in zip(pairs, copies)]
