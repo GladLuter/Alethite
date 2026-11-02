@@ -122,10 +122,14 @@ def _open(path):
         return crypto.open_db(path, key, page=crypto.INDEX_PAGE)
     if crypto.is_encrypted(path):  # never a new index over the one that is there
         raise ValueError(t('key_missing'))
-    if key and not crypto.efs_on(os.path.dirname(path)):  # a new index of indexCipher efs: its folder is encrypted before the file is made
-        crypto.efs_encrypt(os.path.dirname(path))
+    folder = os.path.dirname(path)
+    if key and not crypto.efs_on(folder):  # a new index of indexCipher efs: its folder is encrypted before the file is made
+        try:
+            crypto.efs_encrypt(folder)
+        except OSError as e:
+            raise ValueError(t('efs_failed', dir=folder, e=e)) from None
     conn = crypto.plain_db(path)
-    if crypto.efs_on(os.path.dirname(path)):  # a new index under EFS: the 16 KB pages of the encrypted one, as the vector read is faster with them
+    if crypto.efs_on(folder):  # a new index under EFS: the 16 KB pages of the encrypted one, as the vector read is faster with them
         conn.execute('PRAGMA page_size = %d' % crypto.INDEX_PAGE)
     return conn
 

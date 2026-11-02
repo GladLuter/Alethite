@@ -231,6 +231,15 @@ class EncryptedIndexTest(unittest.TestCase):
         self.assertTrue(crypto.efs_on(self.db))
 
     @dpapi
+    def test_a_refusal_of_efs_on_the_folder_of_a_new_index_is_told(self):
+        crypto.save_key(self.settings, KEY, 'cryptography', 'efs')
+        err = OSError(0, 'The request is not supported', None, 50)  # what a Windows without EFS answers
+        with mock.patch.object(crypto, 'efs_encrypt', side_effect=err), self.assertRaises(ValueError) as cm:
+            connect(self.db)
+        self.assertEqual(str(cm.exception), t('efs_failed', dir=os.path.dirname(self.db), e=err))
+        self.assertFalse(os.path.exists(self.db))
+
+    @dpapi
     def test_a_new_index_with_a_key_is_sqlcipher_unless_indexcipher_is_efs(self):
         for index_cipher in (None, 'sqlcipher'):
             crypto.save_key(self.settings, KEY, 'cryptography', index_cipher)

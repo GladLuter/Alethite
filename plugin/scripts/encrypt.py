@@ -6,6 +6,7 @@ import contextlib
 import os
 import secrets
 import shutil
+import sqlite3
 import stat
 import time
 
@@ -203,14 +204,29 @@ def _efs_probe(db):
     _efs_do(crypto.efs_encrypt, dirs[0])
 
 
+def _unlistable(e):
+    """The onerror of os.walk: a folder that cannot be listed is told (a walk that skipped it would leave its files in clear), one that is gone is not."""
+    if not isinstance(e, FileNotFoundError):
+        raise ValueError(t('efs_failed', dir=e.filename, e=e)) from None
+
+
 def _efs_all(db, fn, want):
-    """`fn` on every folder and file of both folders whose EFS bit is not `want` yet, a folder before what lies in it (from then on a file made
-    there is born encrypted). Not the lock files: they are empty, and the caller holds them open."""
+    """`fn` on every folder and file of both folders whose EFS bit is not `want` yet. Encrypting goes top-down, a folder before what lies in
+    it (from then on a file made there is born encrypted); decrypting bottom-up, a folder after its files, so a cut leaves the top folder
+    under EFS and a repeat of `off` still sees it. Not the lock files: they are empty, and the caller holds them open."""
+    def one(p):
+        try:
+            fn(p)
+        except OSError:
+            if os.path.lexists(p):  # one that is gone between the listing and the call needs nothing (EncryptFileW tells it as "access denied")
+                raise
+
     for top in _efs_dirs(db):
-        for d, _, names in os.walk(top):
-            for p in [d] + [os.path.join(d, n) for n in names if not n.endswith('.lock')]:
+        for d, _, names in os.walk(top, topdown=want, onerror=_unlistable):
+            items = [d] + [os.path.join(d, n) for n in names if not n.endswith('.lock')]
+            for p in items if want else reversed(items):
                 if crypto.efs_on(p) != want:
-                    _efs_do(fn, p)
+                    _efs_do(one, p)
 
 
 def _to_efs(path, key):
@@ -219,6 +235,9 @@ def _to_efs(path, key):
     _remove(path + '.cg-new')  # a whole copy of a run that died, in whichever form
     if not _size(path):
         return
+    folder = os.path.dirname(path)
+    if not crypto.efs_on(folder):  # never a plain copy outside EFS
+        raise ValueError(t('efs_unsupported', dir=folder))
     if crypto.is_encrypted(path):
         _convert(path, key, None, page=crypto.INDEX_PAGE)
         return
@@ -227,6 +246,10 @@ def _to_efs(path, key):
         if conn.execute('PRAGMA page_size').fetchone()[0] < crypto.INDEX_PAGE:
             conn.execute('PRAGMA page_size = %d' % crypto.INDEX_PAGE)
             conn.execute('VACUUM')
+    except sqlite3.OperationalError as e:
+        if 'locked' in str(e):  # a chat holds the write lock; nothing was changed
+            raise ValueError(t('encrypt_busy')) from None
+        raise
     finally:
         conn.close()
 
@@ -367,8 +390,11 @@ def off(db, sync_dir, machine, ui, model=MODEL, memory_dir=None, project_cwd=Non
         _remove(path + '.cg-new')  # of a run that died: a plain copy of the encrypted index
         if crypto.is_encrypted(path):
             _convert(path, key, None)
-    if any(map(crypto.efs_on, _efs_dirs(db))):  # no walk through a folder that EFS does not hold
+    if any(map(crypto.efs_on, _efs_dirs(db) + _files(db))):  # no walk through folders and files that EFS does not hold
         _efs_all(db, crypto.efs_decrypt, False)
+    if key and not _size(db):  # no index to flag: the connect below would make one under the key, and under EFS again
+        crypto.save_key(settings, None)
+        key = None
     machine = machine or sync.machine_name()
     notes = []
     with contextlib.closing(memdb.connect(db)) as conn:

@@ -711,7 +711,9 @@ class EncryptTest(unittest.TestCase):
         a = self.a
         folder = os.path.dirname(a.db)
         err = OSError(0, 'The request is not supported', None, 50)  # what a Windows without EFS answers
+        no_drive = OSError(0, 'The device is not ready', None, 21)  # a drive that is not there or not ready: told, never a traceback
         refusals = [(mock.patch.object(crypto, 'efs_supported', return_value=False), t('efs_unsupported', dir=folder)),
+                    (mock.patch.object(crypto, 'efs_supported', side_effect=no_drive), t('efs_failed', dir=folder, e=no_drive)),
                     (mock.patch.object(crypto, 'efs_encrypt', side_effect=err), t('efs_failed', dir=folder, e=err))]
         for patch, text in refusals:
             for fn in (encrypt.on, encrypt.join):
@@ -796,6 +798,115 @@ class EncryptTest(unittest.TestCase):
         conn.close()
         self.assertEqual(self.counts(a.conn), before)
         self.assertEqual(encrypt.status(a.db), {'on': False, 'db': 'plain', 'key': 'missing', 'notes': []})
+
+    def efs_paths(self, c, folder, backup, handoff):
+        return (folder, c.db, backup, os.path.dirname(handoff), handoff, crypto.settings_path(c.db))
+
+    def page_size(self, path):
+        conn = sqlite3.connect(path)
+        try:
+            return conn.execute('PRAGMA page_size').fetchone()[0]
+        finally:
+            conn.close()
+
+    def test_efs_off_cut_in_the_walk_is_finished_by_a_repeat(self):  # the top folder is the last to go: while anything is left, a repeat still sees EFS
+        a = self.a
+        folder, backup, handoff, lock = self.efs_files(a)
+        paths = self.efs_paths(a, folder, backup, handoff)
+        self.assertTrue(self.efs(a)['done'])
+        real = crypto.efs_decrypt
+
+        def busy(path):
+            if os.path.basename(path) == 'index.db':
+                raise OSError(0, 'in use', None, 32)
+            return real(path)
+
+        with mock.patch.object(crypto, 'efs_decrypt', busy), mock.patch('time.sleep'), self.assertRaises(ValueError) as cm:
+            self.cmd(encrypt.off, a, FakeUI())
+        self.assertEqual(str(cm.exception), t('encrypt_busy'))
+        self.assertTrue(crypto.efs_on(folder) and crypto.efs_on(a.db))
+        self.assertIsNotNone(self.key(a))  # the key goes last: the repeat is an `off` like the first
+        self.assertTrue(self.cmd(encrypt.off, a, FakeUI())['done'])
+        self.assertEqual([crypto.efs_on(p) for p in paths], [False] * len(paths))
+        self.assertIsNone(self.key(a))
+
+    def test_efs_off_finds_an_encrypted_file_in_a_plain_folder(self):  # the folder was decrypted by hand
+        a = self.a
+        self.assertTrue(self.efs(a)['done'])
+        crypto.efs_decrypt(os.path.dirname(a.db))
+        self.assertTrue(crypto.efs_on(a.db))
+        self.assertTrue(self.cmd(encrypt.off, a, FakeUI())['done'])
+        self.assertFalse(crypto.efs_on(a.db))
+
+    def test_efs_off_with_no_index_makes_no_new_one_under_efs(self):  # the connect of off sees the key and indexCipher efs of the settings
+        a = self.a
+        folder, backup, handoff, lock = self.efs_files(a)
+        self.assertTrue(self.efs(a)['done'])
+        a.close()
+        os.remove(a.db)
+        res = encrypt.off(a.db, None, a.name, FakeUI(), memory_dir=a.memory, project_cwd=a.cwd)
+        self.assertEqual((res['done'], self.key(a)), (True, None))
+        for p in self.efs_paths(a, folder, backup, handoff):
+            self.assertFalse(crypto.efs_on(p), p)
+        self.assertEqual(encrypt.status(a.db), {'on': False, 'db': 'plain', 'key': 'missing', 'notes': []})
+
+    def test_efs_a_folder_that_cannot_be_listed_is_told_and_nothing_is_converted(self):
+        a = self.a
+        folder, backup, handoff, lock = self.efs_files(a)
+        sub, real = os.path.dirname(handoff), os.scandir
+        err = PermissionError(13, 'Access is denied', sub, 5)
+
+        def scandir(path):
+            if os.path.basename(os.fspath(path)) == 'handoffs':
+                raise err
+            return real(path)
+
+        with mock.patch('os.scandir', scandir), self.assertRaises(ValueError) as cm:
+            self.efs(a)
+        self.assertEqual(str(cm.exception), t('efs_failed', dir=sub, e=err))
+        self.assertEqual(self.page_size(a.db), 4096)
+
+    def test_efs_a_folder_that_is_not_there_is_nothing_to_walk(self):
+        db = os.path.join(self.root, 'nowhere', 'index.db')
+        encrypt._efs_all(db, crypto.efs_encrypt, True)
+        self.assertFalse(os.path.exists(os.path.dirname(db)))
+
+    def test_efs_a_file_that_is_gone_between_the_walk_and_the_call_is_skipped(self):  # a chat's journal, say
+        a = self.a
+        folder, backup, handoff, lock = self.efs_files(a)
+        real = crypto.efs_encrypt
+
+        def encrypt_file(path):
+            if os.path.basename(path) == 'S1.md':
+                os.remove(path)
+            return real(path)
+
+        with mock.patch.object(crypto, 'efs_encrypt', encrypt_file):
+            self.assertTrue(self.efs(a)['done'])
+        self.assertFalse(os.path.exists(handoff))
+        self.assertTrue(crypto.efs_on(backup))
+        self.assert_plain_16k(a.db)
+
+    def test_nothing_plain_is_written_while_the_folder_is_not_under_efs(self):
+        a = self.a
+        with self.assertRaises(ValueError) as cm:
+            encrypt._to_efs(a.db, None)
+        self.assertEqual(str(cm.exception), t('efs_unsupported', dir=os.path.dirname(a.db)))
+        self.assertEqual(self.page_size(a.db), 4096)
+
+    def test_a_vacuum_against_a_busy_index_is_told_as_busy(self):
+        a = self.a
+        crypto.efs_encrypt(os.path.dirname(a.db))  # _to_efs works in a folder that EFS holds
+        real = crypto.plain_db
+        holder = sqlite3.connect(a.db, isolation_level=None)
+        holder.execute('BEGIN IMMEDIATE')  # a chat takes none of our locks: it can hold the write lock
+        try:
+            with mock.patch.object(crypto, 'plain_db', lambda p: real(p, timeout=0.05)), self.assertRaises(ValueError) as cm:
+                encrypt._to_efs(a.db, None)
+        finally:
+            holder.close()
+        self.assertEqual(str(cm.exception), t('encrypt_busy'))
+        self.assertEqual(self.page_size(a.db), 4096)
 
     def test_off_without_efs_leaves_the_folders_alone(self):
         a = self.a
