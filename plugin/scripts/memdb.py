@@ -107,7 +107,7 @@ def _open(path):
     # a plain index never costs a look at the key: a broken settings file must not stop whoever has not turned encryption on. An empty
     # file is no index yet (sqlite makes the file on the first write), so it is new like no file at all
     if os.path.exists(path) and os.path.getsize(path) and not crypto.is_encrypted(path):
-        return sqlite3.connect(path, isolation_level=None, timeout=30)
+        return crypto.plain_db(path)
     try:
         key = crypto.load_key(crypto.settings_path(path))
     except (crypto.SettingsBroken, OSError):
@@ -117,11 +117,18 @@ def _open(path):
         if crypto.is_encrypted(path):
             raise
         key = None
-    if key:
+    # an index there is SQLCipher; a new one with a key is, unless the settings say EFS: plain, in a folder under EFS (sqlcipher3 may not load)
+    if key and (crypto.is_encrypted(path) or crypto._read(crypto.settings_path(path)).get('indexCipher') != 'efs'):
         return crypto.open_db(path, key, page=crypto.INDEX_PAGE)
     if crypto.is_encrypted(path):  # never a new index over the one that is there
         raise ValueError(t('key_missing'))
-    return sqlite3.connect(path, isolation_level=None, timeout=30)
+    folder = os.path.dirname(path)
+    if key and not crypto.efs_on(folder):  # a new index of indexCipher efs: its folder is encrypted before the file is made
+        crypto.efs_do(crypto.efs_encrypt, folder)
+    conn = crypto.plain_db(path)
+    if crypto.efs_on(folder):  # a new index under EFS: the 16 KB pages of the encrypted one, as the vector read is faster with them
+        conn.execute('PRAGMA page_size = %d' % crypto.INDEX_PAGE)
+    return conn
 
 
 def lock(db, name, wait):

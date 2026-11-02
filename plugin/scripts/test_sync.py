@@ -1049,18 +1049,18 @@ class SyncTest(unittest.TestCase):
         self.assertIsNone(memdb.meta(a.conn, 'share_plain'))
         self.assertEqual((b.sync()['errors'], b.rows()), ([], 4))  # and a computer with no key reads it again
 
-    def test_a_cipher_whose_package_is_missing_is_an_error_of_that_computer_only(self):
+    def test_a_sqlcipher_generation_that_cannot_be_opened_is_an_error_of_that_computer_only(self):
         a, b = self.pair('package')
         key = secrets.token_bytes(32)
-        self.swap(a, b, key)
-        a.sync(key=key, cipher='cryptography')  # a new generation of A
-        with mock.patch.dict(sys.modules, {'cryptography.hazmat.primitives.ciphers.aead': None}):
-            r, r2 = b.sync(key=key), b.sync(key=key, cipher='cryptography')
-        error = t('cipher_missing', pkg='cryptography')
-        self.assertEqual(r['errors'], [{'where': 'pull', 'machine': 'AIJ-HP', 'error': error}])
+        self.swap(a, b, key, 'cryptography')
+        a.sync(key=key, cipher='sqlcipher')  # a new generation of A
+        with mock.patch.dict(sys.modules, {'sqlcipher3': None}):
+            r, r2 = b.sync(key=key, cipher='cryptography'), b.sync(key=key, cipher='sqlcipher')
+        self.assertEqual(r['errors'], [{'where': 'pull', 'machine': 'AIJ-HP', 'error': t('peer_sqlcipher_unreadable', machine='AIJ-HP')}])
+        error = t('cipher_missing', pkg='sqlcipher3')
         self.assertEqual((r2['errors'], os.listdir(os.path.join(b.share, 'MTLAPTOP'))), ([{'where': 'sync', 'error': error}], ['gen-0001']))  # no label
-        self.assertEqual(self.peer_row(b, 'AIJ-HP'), (1, 1, '[]', error))  # still at the generation it was, nothing reset
-        self.assertEqual((b.sync(key=key)['errors'], self.peer_row(b, 'AIJ-HP')), ([], (2, 1, '[]', None)))
+        self.assertEqual(self.peer_row(b, 'AIJ-HP'), (1, 1, '[]', t('peer_sqlcipher_unreadable', machine='AIJ-HP')))  # still at the generation it was
+        self.assertEqual((b.sync(key=key, cipher='cryptography')['errors'], self.peer_row(b, 'AIJ-HP')), ([], (2, 1, '[]', None)))
 
     def test_a_start_killed_before_its_reset_is_repaired_by_the_next_sync(self):  # the label is out, the marks still say 'out already'
         self.ready(self.a)

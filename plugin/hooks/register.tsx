@@ -322,12 +322,13 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
 
 export const register: Register = (on, options) => {
   // the settings: /config's values now, the mod's own file over them once session.start has read it
-  let syncDir: string, shareCipher: string, minTokens: number, idleMinutes: number, showLimits: boolean, python: string, embedModel: string, compression: Compression
+  let syncDir: string, shareCipher: string, indexCipher: string, minTokens: number, idleMinutes: number, showLimits: boolean, python: string, embedModel: string, compression: Compression
   let isLessonsOn: boolean, lessonsMinScore: number
   const apply = (o: Record<string, unknown>) => {
     setLanguage(o.language as string)
     syncDir = (o.syncDir as string).trim().replace(/^"(.*)"$/, '$1') // Explorer's "Copy as path" puts quotes around it
     shareCipher = (o.shareCipher as string | undefined) ?? 'sqlcipher' // sqlcipher or cryptography; any other word is refused by cg.py, not turned into the other
+    indexCipher = (o.indexCipher as string | undefined) ?? 'sqlcipher' // sqlcipher or efs; likewise refused by cg.py when unknown
     minTokens = o.bandMinTokens as number
     idleMinutes = o.bandIdleMinutes as number
     showLimits = o.showLimits as boolean
@@ -531,7 +532,13 @@ export const register: Register = (on, options) => {
   // cuts a process.run at 10 minutes (1_800_000 is refused outright), so cg.py keeps its own waits near 190 s of locks and 120 s of push
   // (ENCRYPT_WAITS, ENCRYPT_PUSH_SECONDS); a run cut all the same is safe to repeat. The state asks nothing.
   on('command.run', { command: 'cg-encrypt' }, async ($, e) => {
-    const args = encryptArgs(e.args, syncDir, shareCipher, embedModel)
+    try {
+      // a chat that was not reloaded after the settings were edited holds the old ciphers, and the flags below would turn the index back: the file as it is now decides
+      if (settingsFile && (await $.fs.exists(settingsFile))) apply(withFile(options, await $.fs.read(settingsFile)).options)
+    } catch (err) {
+      await fail($, 'settings', `${settingsFile}: ${message(err)}`)
+    }
+    const args = encryptArgs(e.args, syncDir, shareCipher, indexCipher, embedModel)
     if (args === null) return { text: T.cgEncryptUsage }
     const isState = args[1] === 'status'
     try {

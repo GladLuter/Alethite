@@ -10,6 +10,7 @@ from unittest import mock
 import crypto
 import memdb
 from memdb import connect, cut, expand, owner_count, status, update, word_hits
+from test_crypto import deny_read, hold
 from texts import t
 from transcripts import project_key
 
@@ -172,6 +173,136 @@ class EncryptedIndexTest(unittest.TestCase):
         open(self.db, 'wb').close()
         connect(self.db).close()
         self.assertTrue(crypto.is_encrypted(self.db))
+
+    def pragma(self, name):
+        conn = connect(self.db)
+        try:
+            return conn.execute('PRAGMA ' + name).fetchone()[0]
+        finally:
+            conn.close()
+
+    @dpapi
+    def test_connect_keeps_temp_in_memory(self):  # %TEMP% is not under EFS
+        self.assertEqual(self.pragma('temp_store'), 2)  # a new index
+        self.assertEqual(self.pragma('temp_store'), 2)  # an open one
+        os.remove(self.db)
+        crypto.save_key(self.settings, KEY)
+        self.assertEqual(self.pragma('temp_store'), 2)  # a new encrypted one
+        self.assertEqual(self.pragma('temp_store'), 2)  # an encrypted one again
+
+    @dpapi
+    def test_new_index_in_efs_folder_has_16k_pages(self):
+        self.assertEqual(self.pragma('page_size'), 4096)  # an ordinary folder
+        crypto.efs_encrypt(os.path.dirname(self.db))
+        self.assertEqual(self.pragma('page_size'), 4096)  # an index that is there keeps its pages
+        os.remove(self.db)
+        self.assertEqual(self.pragma('page_size'), 16384)  # a new one
+        self.assertTrue(crypto.efs_on(self.db))
+        self.assertEqual(self.pragma('page_size'), 16384)
+
+    @dpapi
+    def test_an_empty_file_in_efs_folder_is_a_new_index(self):
+        crypto.efs_encrypt(os.path.dirname(self.db))
+        open(self.db, 'wb').close()
+        self.assertEqual(self.pragma('page_size'), 16384)
+
+    @dpapi
+    def test_a_new_index_with_a_key_and_indexcipher_efs_is_plain_under_efs_and_loads_no_sqlcipher3(self):
+        crypto.save_key(self.settings, KEY, 'cryptography', 'efs')
+        crypto.efs_encrypt(os.path.dirname(self.db))
+        with mock.patch.dict(sys.modules, {'sqlcipher3': None}):  # an import of it is an ImportError
+            self.assertEqual(self.pragma('page_size'), 16384)
+        self.assertEqual(self.raw()[:16], b'SQLite format 3\x00')
+        self.assertTrue(crypto.efs_on(self.db))
+
+    @dpapi
+    def test_that_new_index_is_made_in_a_folder_that_EFS_holds_already(self):
+        crypto.save_key(self.settings, KEY, 'cryptography', 'efs')
+        folder, seen, real = os.path.dirname(self.db), [], crypto.plain_db
+
+        def spy(path, *a, **kw):
+            seen.append((crypto.efs_on(folder), os.path.exists(path)))
+            return real(path, *a, **kw)
+
+        self.assertFalse(crypto.efs_on(folder))
+        with mock.patch.object(crypto, 'plain_db', spy), mock.patch.dict(sys.modules, {'sqlcipher3': None}):
+            connect(self.db).close()
+        self.assertEqual(seen, [(True, False)])  # the folder under EFS, the file not there yet
+        self.assertTrue(crypto.efs_on(self.db))
+
+    @dpapi
+    def test_a_refusal_of_efs_on_the_folder_of_a_new_index_is_told(self):
+        crypto.save_key(self.settings, KEY, 'cryptography', 'efs')
+        err = OSError(0, 'The request is not supported', None, 50)  # what a Windows without EFS answers
+        with mock.patch.object(crypto, 'efs_encrypt', side_effect=err), self.assertRaises(ValueError) as cm:
+            connect(self.db)
+        self.assertEqual(str(cm.exception), t('efs_failed', dir=os.path.dirname(self.db), e=err))
+        self.assertFalse(os.path.exists(self.db))
+
+    @dpapi
+    def test_a_folder_of_a_new_index_that_is_in_use_is_waited_for_like_in_encrypt(self):  # Windows error 32, not a failure
+        crypto.save_key(self.settings, KEY, 'cryptography', 'efs')
+        real, calls = crypto.efs_encrypt, []
+
+        def busy(path, times=2):
+            calls.append(path)
+            if len(calls) <= times:
+                raise OSError(0, 'in use', None, 32)
+            return real(path)
+
+        with mock.patch.object(crypto, 'efs_encrypt', busy), mock.patch('time.sleep'):
+            connect(self.db).close()
+        self.assertEqual((len(calls), crypto.efs_on(self.db)), (3, True))
+        os.remove(self.db)
+        crypto.efs_decrypt(os.path.dirname(self.db))
+        with mock.patch.object(crypto, 'efs_encrypt', lambda path: busy(path, 10 ** 6)), mock.patch('time.sleep'), self.assertRaises(ValueError) as cm:
+            connect(self.db)
+        self.assertEqual(str(cm.exception), t('encrypt_busy'))
+
+    @dpapi
+    def test_a_new_index_with_a_key_is_sqlcipher_unless_indexcipher_is_efs(self):
+        for index_cipher in (None, 'sqlcipher'):
+            crypto.save_key(self.settings, KEY, 'cryptography', index_cipher)
+            connect(self.db).close()
+            self.assertTrue(crypto.is_encrypted(self.db))
+            self.assertFalse(crypto.efs_on(os.path.dirname(self.db)))
+            os.remove(self.db)
+
+    @dpapi
+    def test_an_encrypted_index_opens_with_its_key_whatever_indexcipher_says(self):  # an `on` to efs that was cut before the conversion
+        old = crypto.open_db(self.db, KEY, page=crypto.INDEX_PAGE)
+        old.execute('CREATE TABLE x(y)')  # sqlite makes the file on the first write
+        old.close()
+        crypto.save_key(self.settings, KEY, 'cryptography', 'efs')
+        connect(self.db).close()
+        self.assertTrue(crypto.is_encrypted(self.db))
+
+    def efs_index(self):
+        crypto.efs_encrypt(os.path.dirname(self.db))
+        connect(self.db).close()
+        self.assertTrue(crypto.efs_on(self.db))
+        return os.path.getsize(self.db), os.stat(self.db).st_mtime_ns
+
+    def assert_untouched(self, before):
+        self.assertEqual((os.path.getsize(self.db), os.stat(self.db).st_mtime_ns), before)
+        self.assertEqual(os.listdir(os.path.dirname(self.db)), ['index.db'])  # no new index beside it
+
+    @dpapi
+    def test_efs_index_denied_is_an_error(self):  # "access denied" (5) of a file that EFS holds: never a new empty index in its place
+        before = self.efs_index()
+        deny_read(self, self.db)
+        with self.assertRaises(ValueError) as cm:
+            connect(self.db)
+        self.assertEqual(str(cm.exception), t('index_efs_denied', path=self.db))
+        self.assert_untouched(before)
+
+    @dpapi
+    def test_a_busy_efs_index_is_not_denied(self):  # in use (32): the owner would be told to remove a good index; the error stays what it was
+        before = self.efs_index()
+        hold(self, self.db)
+        with self.assertRaises(PermissionError):
+            connect(self.db)
+        self.assert_untouched(before)
 
     def test_peers_gen_added(self):
         old = sqlite3.connect(self.db)

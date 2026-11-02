@@ -214,7 +214,7 @@ export const en = {
   encryptUnfinished: 'cg-encrypt: not finished. Repeating the command is safe: it goes on from where it stopped.',
   encryptTimeout: (action: string) => `did not finish in 10 minutes and was stopped. Every step is safe to repeat: run /cg-encrypt ${action} again, or check /cg-encrypt status.`,
   cgEncryptFailed: 'cg-encrypt: did not work, the reason is in the toast.',
-  healthEncryptionOn: (cipher: string) => `Encryption: on (${cipher})`,
+  healthEncryptionOn: (index: string, share: string) => `Encryption: on (index: ${index}, sync folder: ${share})`,
   healthEncryptionOff: 'Encryption: off',
 
   // the folder of the index (/cg-index-dir)

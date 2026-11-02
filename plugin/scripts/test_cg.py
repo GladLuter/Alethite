@@ -437,6 +437,21 @@ class CgTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('shareCipher', out['error'])  # the setting is named, no KeyError of the cipher table
 
+    def test_encrypt_takes_the_index_cipher_from_the_line_or_the_settings(self):
+        calls = []
+        with mock.patch.object(encrypt, 'on', lambda *a, **kw: calls.append(kw['index_cipher']) or {'done': True}):
+            self.main_json('encrypt', 'on')  # nothing set: sqlcipher
+            self.main_json('encrypt', 'on', '--index-cipher', 'efs')
+            self.settings(indexCipher='efs')
+            self.main_json('encrypt', 'on')  # the setting
+            self.main_json('encrypt', 'on', '--index-cipher', 'sqlcipher')  # given on the line: the line wins
+            code, _, _ = self.main_json('encrypt', 'on', '--index-cipher', 'rot13')
+        self.assertEqual((calls, code), (['sqlcipher', 'efs', 'efs', 'sqlcipher'], 1))  # the flag knows two ciphers only
+        self.settings(indexCipher='rot13')
+        with mock.patch.object(encrypt, 'on', side_effect=AssertionError):
+            code, out, _ = self.main_json('encrypt', 'on')
+        self.assertEqual((code, out['error']), (1, 'ValueError: ' + t('index_cipher_bad', value='rot13')))  # the setting is named, no KeyError
+
     @unittest.skipUnless(os.name == 'nt', 'DPAPI is Windows only')
     def test_maintain_encrypted(self):
         share = self.share_dir()
