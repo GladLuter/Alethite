@@ -145,7 +145,7 @@ const box = (on: any, draft: string, log: string[], gate: Promise<unknown> = Pro
   return state
 }
 const withMemory = { value: { ...usage, context: { ...usage.context, breakdown: { memoryFiles: [{ path: 'C:/mem/memory/MEMORY.md', type: 'AutoMem', tokens: 1 }] } } } }
-const handoffOk = (_: unknown, e: { argv: string[] }) => (e.argv.includes('handoff') ? ran(JSON.stringify({ text: '[cg-handoff]x[/cg-handoff]', path: 'C:/h/id.md' })) : noTurn())
+const handoffOk = (_: unknown, e: { argv: string[] }) => (e.argv.includes('handoff') ? ran(JSON.stringify({ text: '[al-handoff]x[/al-handoff]', path: 'C:/h/id.md' })) : noTurn())
 const mountBand = async ($: any) => {
   await $.command.run({ command: 'cg-band', args: '' })
   return $.ui.mount({ plugin: 'cacheguard', surface: 'terminal', component: 'AbovePrompt', props } as never)
@@ -194,7 +194,7 @@ test('new worker, send at once: /clear, then handoff + draft as the first messag
   await ui.press({ key: 'launch' })
   await ui.press({ key: 'send' })
 
-  expect(log).toEqual(['/clear', 'submit [cg-handoff]x[/cg-handoff]\n\nпродолжаем']) // no /model
+  expect(log).toEqual(['/clear', 'submit [al-handoff]x[/al-handoff]\n\nпродолжаем']) // no /model
   expect(state.text).toBe('')
   const a = argvs[0]!
   expect(a.slice(a.indexOf('handoff'))).toEqual(['handoff', '--session', 'id', '--today', expect.stringMatching(/^\d{4}-\d\d-\d\d$/), '--memory-dir', 'C:/mem/memory', '--compress', 'ultra'])
@@ -214,7 +214,7 @@ test('new worker, pick the model myself: /clear, handoff + draft left in the box
   await ui.press({ key: 'pick' })
 
   expect(log).toEqual(['/clear']) // no submit, no /model
-  expect(state.text).toBe('[cg-handoff]x[/cg-handoff]\n\nпродолжаем')
+  expect(state.text).toBe('[al-handoff]x[/al-handoff]\n\nпродолжаем')
   expect(toasts).toEqual([T.toast(T.pickThenEnter)])
   expect(await buttons(ui)).toEqual(['launch', 'stay']) // not armed, not busy
   expect(await ui.findAll({ type: 'Button', text: T.busy })).toEqual([])
@@ -1023,7 +1023,7 @@ const lessonRig = async ($: any, on: any, found: object[] = [{ ...lesson, score:
 }
 const typed = ($: any, text: string, extra: object = {}) => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' }, ...extra })
 // the gate's denial of the lesson above, between the marks the index cuts out (transcripts.py)
-const gateText = () => ['[cg-lessons]', T.lessonGate('Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos'), '[/cg-lessons]'].join('\n')
+const gateText = () => ['[al-lessons]', T.lessonGate('Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos'), '[/al-lessons]'].join('\n')
 
 test('lesson_save: the fields go to cg.py one item each, the owner gets a toast, the model the lesson', async ($, on) => {
   const { m } = await lessonRig($, on)
@@ -1042,7 +1042,7 @@ test('lessons: one that fits goes beside the owner\'s message once a chat, in th
   expect(ofCg(m, 'lessons-match')).toEqual([])
   await typed($, 'опять 429 на сборке, что делать?')
   await typed($, 'опять 429 на сборке, что делать?')
-  expect(contexts[3]).toEqual([['[cg-lessons]', T.lessonsIntro, '- Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos', '[/cg-lessons]'].join('\n')])
+  expect(contexts[3]).toEqual([['[al-lessons]', T.lessonsIntro, '- Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos', '[/al-lessons]'].join('\n')])
   expect(contexts[4]).toEqual([]) // shown once in this chat
   const [match, ...more] = ofCg(m, 'lessons-match')
   expect(match!.argv).toEqual(['lessons-match', '--cwd', 'C:/w', '--text=опять 429 на сборке, что делать?', '--model', 'embeddinggemma', '--min-score', '0.45', '--limit', '2', '--timeout', '3'])

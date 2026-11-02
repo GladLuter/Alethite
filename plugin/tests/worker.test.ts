@@ -14,7 +14,7 @@ const fake = (o: { draft?: string; handoffError?: string; clearError?: string; s
     handoff: async () => {
       calls.push('handoff')
       if (o.handoffError) throw new Error(o.handoffError)
-      return { text: '[cg-handoff]\nтело\n[/cg-handoff]', path: 'C:/h/old.md' }
+      return { text: '[al-handoff]\nтело\n[/al-handoff]', path: 'C:/h/old.md' }
     },
     clear: async () => {
       calls.push('clear')
@@ -69,7 +69,7 @@ test('ok: order and message shape', async () => {
   const { io, calls, sent } = fake({ draft: 'продолжаем' })
   expect(await launch(io, 'send')).toBe('sent')
   expect(calls).toEqual(['draft', 'handoff', 'clear', 'submit', 'emptyBox'])
-  expect(sent[0]!.startsWith('[cg-handoff]')).toBe(true)
+  expect(sent[0]!.startsWith('[al-handoff]')).toBe(true)
   expect(sent[0]!.endsWith('\n\nпродолжаем')).toBe(true)
 })
 
@@ -94,7 +94,7 @@ test('fill mode: handoff and draft are left in the box for the owner to send, no
   const { io, calls, filled } = fake({ draft: 'продолжаем' })
   expect(await launch(io, 'fill')).toBe('ready')
   expect(calls).toEqual(['draft', 'handoff', 'clear', 'fill'])
-  expect(filled).toEqual(['[cg-handoff]\nтело\n[/cg-handoff]\n\nпродолжаем'])
+  expect(filled).toEqual(['[al-handoff]\nтело\n[/al-handoff]\n\nпродолжаем'])
 })
 
 test('fill mode: the box refuses the text: the reason and the saved path in one toast', async () => {

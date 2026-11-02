@@ -630,6 +630,13 @@ class MemdbTest(unittest.TestCase):
         found = [self.conn.execute('SELECT kind, text FROM chunks WHERE rowid = ?', (h['id'],)).fetchone() for h in search(self.conn, 'проба кнопки')]
         self.assertEqual(sorted(found), [('owner', 'mcp__cacheguard__recall: проба кнопки'), ('owner', 'проба кнопки'), ('tool', 'Bash: проба кнопки')])
 
+    def test_word_hits_skip_tool_chunks_of_both_names(self):
+        ins = "INSERT INTO chunks(text, conv, pos, ts, kind) VALUES(?, 'S', ?, ?, 'tool')"
+        for i, text in enumerate(('mcp__cacheguard__recall: проба кнопки', 'mcp__alethite__recall: проба кнопки', 'Bash: проба кнопки')):
+            self.conn.execute(ins, (text, i, TS))
+        self.assertEqual([self.conn.execute('SELECT text FROM chunks WHERE rowid = ?', (h['id'],)).fetchone()[0] for h in search(self.conn, 'проба кнопки')],
+                         ['Bash: проба кнопки'])
+
     def test_resumed_session_copy_is_one_hit(self):
         # Claude Code copies the history of a resumed session into the new transcript: the same message under two convs
         later = '2026-10-14T10:00:00.000Z'

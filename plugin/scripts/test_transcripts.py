@@ -83,6 +83,18 @@ class TranscriptsTest(unittest.TestCase):
         # the owner writing about the marker keeps every word
         self.assertEqual(strip_handoff('Что делает [cg-handoff] в начале? Поправь README.'), 'Что делает [cg-handoff] в начале? Поправь README.')
 
+    def test_old_and_new_handoff_blocks_are_cut(self):  # the rename: transcripts of both times
+        path = self.write('s.jsonl', [u('a [cg-handoff]x[/cg-handoff] b [al-handoff]y[/al-handoff] c')])
+        self.assertEqual([t.split() for t in self.owner_texts(path)], [['a', 'b', 'c']])
+
+    def test_old_and_new_lessons_blocks_are_cut(self):
+        path = self.write('s.jsonl', [u('a [cg-lessons]x[/cg-lessons] b [al-lessons]y[/al-lessons] c')])
+        self.assertEqual([t.split() for t in self.owner_texts(path)], [['a', 'b', 'c']])
+
+    def test_tool_calls_of_both_names_are_skipped(self):
+        path = self.write('s.jsonl', [a([tool('mcp__cacheguard__recall', query='q'), tool('mcp__alethite__recall', query='q'), tool('Bash', command='ls')])])
+        self.assertEqual([r['text'] for r in read_records(path)[0]], ['Bash: ls'])
+
     def test_a_lone_surrogate_does_not_stop_the_file(self):
         path = self.write('s.jsonl', [json.dumps(u('ok \ud83d cut')), u('дальше')])  # the line holds the escape, as Claude Code writes it
         self.assertEqual(self.owner_texts(path), ['ok ? cut', 'дальше'])

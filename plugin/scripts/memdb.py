@@ -9,7 +9,7 @@ import time
 import crypto
 from redact import redact
 from texts import t
-from transcripts import lp, project_key, read_records
+from transcripts import MOD_TOOL_PREFIXES, lp, project_key, read_records
 
 DB_PATH = os.path.join(crypto.HOME_DIR, 'index.db')
 _SCHEMA = """
@@ -45,7 +45,7 @@ IN_PROJECT = """(:p IS NULL
 _SEARCH = """
 SELECT conv, pos, ts, kind, snippet(chunks, 0, '«', '»', '…', 24),
        (SELECT parent FROM convs WHERE convs.conv = chunks.conv), rowid
-FROM chunks WHERE chunks MATCH :q AND NOT (kind = 'tool' AND text GLOB 'mcp__cacheguard__*') AND """ + IN_PROJECT + """
+FROM chunks WHERE chunks MATCH :q AND NOT (kind = 'tool' AND (""" + ' OR '.join("text GLOB '%s*'" % p for p in MOD_TOOL_PREFIXES) + """)) AND """ + IN_PROJECT + """
 ORDER BY bm25(chunks) * CASE WHEN kind IN ('sub', 'tool') THEN 0.5 ELSE 1.0 END LIMIT :n
 """
 

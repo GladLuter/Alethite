@@ -9,8 +9,8 @@ export type Found = { id: number; conv: string; pos: number; text: string; score
 
 export const FIELDS = ['action', 'symptom', 'cause', 'fix', 'trigger'] as const
 // the marks the index cuts out of the owner's words (transcripts.py), whatever the engine keeps of the context
-export const START = '[cg-lessons]'
-export const END = '[/cg-lessons]'
+export const START = '[al-lessons]'
+export const END = '[/al-lessons]'
 const LESSON_CHARS = 600 // one lesson in the context; two at most a message: about 300 tokens when they fit, none when they do not
 
 // Each value one `--field=…` item: one starting with `-` must not be read as a flag. An empty or a non-text value is left out, and

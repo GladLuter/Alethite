@@ -4,16 +4,21 @@ import os
 import posixpath
 import re
 
-HANDOFF_START = '[cg-handoff]'
-HANDOFF_END = '[/cg-handoff]'
+HANDOFF_START = '[al-handoff]'
+HANDOFF_END = '[/al-handoff]'
+# the transcripts written before the rename hold the old names, so the marks and the mod's tools are read in both
+MOD_TOOL_PREFIXES = ('mcp__alethite__', 'mcp__cacheguard__')
+_OPEN, _CLOSE = r'\[(?:al|cg)-handoff\]', r'\[/(?:al|cg)-handoff\]'
+HANDOFF_MARK = re.compile('%s|%s' % (_OPEN, _CLOSE))
+HANDOFF_BLOCK = re.compile(r'%s.*?(?:%s|\Z)' % (_OPEN, _CLOSE), re.S)
 # a whole block anywhere, an unclosed one only at the start: a mention of the marker in the owner's text must not cut the rest of it
-_HANDOFF = re.compile(r'\A\s*%s.*?(?:%s|\Z)|%s.*?%s' % ((re.escape(HANDOFF_START), re.escape(HANDOFF_END)) * 2), re.S)
+_HANDOFF = re.compile(r'\A\s*%s.*?(?:%s|\Z)|%s.*?%s' % ((_OPEN, _CLOSE) * 2), re.S)
 # user text Claude Code injects without isMeta: cc_token_audit.INJECTED plus the echo of a typed slash command
 INJECTED = re.compile(r'\s*<(task-notification|local-command-|system-reminder|command-(?:name|message)>)')
 _REMINDER = re.compile(r'<system-reminder>.*?</system-reminder>', re.S)
 # the lessons the mod put beside the owner's message (stage 4), wherever the engine keeps that context: not the owner's words;
 # a closed block only (the mod writes both marks): a mention of the mark in the owner's text must not cut the rest of it
-_LESSONS = re.compile(r'\[cg-lessons\].*?\[/cg-lessons\]', re.S)
+_LESSONS = re.compile(r'\[(?:al|cg)-lessons\].*?\[/(?:al|cg)-lessons\]', re.S)
 _WORKTREE = re.compile(r'[\\/]\.claude[\\/]worktrees(?:[\\/].*)?$')
 _ARGS = ('command', 'file_path', 'notebook_path', 'path', 'pattern', 'skill', 'url', 'query', 'description')
 _USAGE = ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'output_tokens')
@@ -28,7 +33,7 @@ def lp(p):
 
 
 def strip_handoff(text):
-    """Cut every [cg-handoff] block, up to its end marker or, without one, to the end of the text."""
+    """Cut every [al-handoff] (or old [cg-handoff]) block, up to its end marker or, without one, to the end of the text."""
     return _HANDOFF.sub('', text)
 
 
@@ -124,7 +129,7 @@ def _items(o, sub):
         for b in _blocks(m.get('content')):
             if b.get('type') == 'text' and isinstance(b.get('text'), str) and b['text'].strip():
                 out.append(('sub' if sub else 'claude', b['text'].strip(), None))
-            elif b.get('type') == 'tool_use' and not str(b.get('name')).startswith('mcp__cacheguard__'):  # the summary of a recall would be the top hit of the very query that made it
+            elif b.get('type') == 'tool_use' and not str(b.get('name')).startswith(MOD_TOOL_PREFIXES):  # the summary of a recall would be the top hit of the very query that made it
                 out.append(_tool(b))
     return out
 
