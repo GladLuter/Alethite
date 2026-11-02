@@ -402,7 +402,7 @@ def _refuse(conn, peer, error, report):
 def _refusal(gen, key, peer, strict):
     """Why we do not read the current generation of `peer` at all, in words for the owner, else None: with `strict` (another computer's
     generation that has batches) an encrypted computer takes nothing open, and a generation is read only with the key it was written
-    under and the package of its cipher."""
+    under and, for SQLCipher, with its package here."""
     if not gen.cipher:
         return t('peer_plain', machine=peer) if key and strict else None
     if not key:
@@ -410,9 +410,9 @@ def _refusal(gen, key, peer, strict):
     if gen.fingerprint != crypto.fingerprint(key):
         return t('peer_other_key', machine=peer)
     try:
-        crypto.need(gen.cipher)
-    except ValueError as e:
-        return str(e)
+        crypto.need(gen.cipher)  # only SQLCipher has a package to miss; the line tells the owner what to do on the other computer
+    except ValueError:
+        return t('peer_sqlcipher_unreadable', machine=peer)
 
 
 def _passing(e):

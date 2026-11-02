@@ -21,8 +21,9 @@ PREFIX = 'dpapi:'
 CIPHERS = ('sqlcipher', 'cryptography')
 EXT = {None: '.jsonl.gz', 'sqlcipher': '.sqlcipher', 'cryptography': '.aesgcm'}
 INDEX_PAGE = 16384  # the encrypted index only: the vector read of recall is 0.2 s slower with the default 4096; containers keep 4096 (their format)
-# the module each cipher imports, lazily: without the package the mod works as before with the encryption off
-_MODULE = {'sqlcipher': 'sqlcipher3', 'cryptography': 'cryptography.hazmat.primitives.ciphers.aead'}
+# the package a cipher imports, lazily: without it the mod works as before with the encryption off. 'cryptography' is AES-GCM of Windows' own
+# bcrypt.dll and needs none (a package's unsigned .pyd may be blocked by Smart App Control)
+_MODULE = {'sqlcipher': 'sqlcipher3'}
 
 
 HOME_DIR = os.path.join(os.path.expanduser('~'), '.claude', 'cacheguard')  # the mod's own folder: the settings, and the index unless moved
@@ -165,11 +166,12 @@ def save_key(settings, key, cipher=None):
 
 
 def need(cipher):
-    """The package of `cipher` is there, or an error that says how to install it."""
-    try:
-        importlib.import_module(_MODULE[cipher])
-    except ImportError:
-        raise ValueError(t('cipher_missing', pkg=_MODULE[cipher].split('.')[0])) from None
+    """The package of `cipher` is there, or an error that says how to install it; AES-GCM has none, so for it this always passes."""
+    if cipher in _MODULE:
+        try:
+            importlib.import_module(_MODULE[cipher])
+        except ImportError:
+            raise ValueError(t('cipher_missing', pkg=_MODULE[cipher])) from None
 
 
 def is_encrypted(path):
@@ -216,14 +218,72 @@ def _scratch():
                 os.remove(p)
 
 
+_P, _L, _W = ctypes.c_void_p, ctypes.c_ulong, ctypes.c_wchar_p
+
+
+class _AuthInfo(ctypes.Structure):  # BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO; ctypes pads it like MSVC (88 bytes on x64)
+    _fields_ = [('cbSize', _L), ('dwInfoVersion', _L), ('pbNonce', _P), ('cbNonce', _L), ('pbAuthData', _P), ('cbAuthData', _L),
+                ('pbTag', _P), ('cbTag', _L), ('pbMacContext', _P), ('cbMacContext', _L), ('cbAAD', _L), ('cbData', ctypes.c_ulonglong),
+                ('dwFlags', _L)]
+
+
+_TAG_MISMATCH = 0xC000A002  # STATUS_AUTH_TAG_MISMATCH
+_CNG = {  # the arguments of the calls _gcm makes; a handle is 64-bit, so a void pointer and not the int default
+    'BCryptOpenAlgorithmProvider': [_P, _W, _W, _L],
+    'BCryptSetProperty': [_P, _W, _P, _L, _L],
+    'BCryptGenerateSymmetricKey': [_P, _P, _P, _L, _P, _L, _L],
+    'BCryptEncrypt': [_P, _P, _L, _P, _P, _L, _P, _L, _P, _L],
+    'BCryptDecrypt': [_P, _P, _L, _P, _P, _L, _P, _L, _P, _L],
+    'BCryptDestroyKey': [_P],
+    'BCryptCloseAlgorithmProvider': [_P, _L],
+}
+
+
+def _chk(status):
+    if status < 0:  # an NTSTATUS: warnings and information (>= 0) are no failure
+        raise OSError('CNG failed, NTSTATUS 0x%08X' % (status & 0xFFFFFFFF))
+
+
+def _gcm(decrypt, key, nonce, data, aad, tag):
+    """AES-256-GCM by Windows CNG (bcrypt.dll), nothing to install. Encrypts `data` into (ciphertext, tag), or decrypts it into (text, tag)
+    after checking `tag`: None when the tag does not match (a wrong key, aad or nonce, or a changed byte). Any other failure is an OSError."""
+    if len(key) != 32 or len(nonce) != 12 or len(tag) != 16:
+        raise ValueError('_gcm: a 32-byte key, a 12-byte nonce and a 16-byte tag')
+    if len(data) > 0x7FFFFFFF or len(aad) > 0x7FFFFFFF:  # the ULONG lengths would wrap silently
+        raise ValueError('_gcm: data or aad over 2 GB')
+    bc, buf, ref = ctypes.WinDLL('bcrypt'), ctypes.create_string_buffer, ctypes.byref
+    for name, args in _CNG.items():
+        fn = getattr(bc, name)
+        fn.argtypes, fn.restype = args, ctypes.c_long
+    alg, hkey = _P(), _P()
+    _chk(bc.BCryptOpenAlgorithmProvider(ref(alg), 'AES', None, 0))
+    try:
+        mode = ctypes.create_unicode_buffer('ChainingModeGCM')
+        _chk(bc.BCryptSetProperty(alg, 'ChainingMode', mode, ctypes.sizeof(mode), 0))
+        _chk(bc.BCryptGenerateSymmetricKey(alg, ref(hkey), None, 0, buf(key, 32), 32, 0))  # no key object buffer: Windows 8 and later
+        try:
+            n, a, g = buf(nonce, 12), buf(aad), buf(tag, 16)
+            info = _AuthInfo(ctypes.sizeof(_AuthInfo), 1, ctypes.addressof(n), 12, ctypes.addressof(a), len(aad), ctypes.addressof(g), 16)
+            d, out, done = buf(data), buf(len(data) + 1), _L()
+            st = (bc.BCryptDecrypt if decrypt else bc.BCryptEncrypt)(hkey, d, len(data), ref(info), None, 0, out, len(data), ref(done), 0)
+            if decrypt and (st & 0xFFFFFFFF) == _TAG_MISMATCH:
+                return None
+            _chk(st)
+            return out.raw[:len(data)], g.raw
+        finally:
+            _chk(bc.BCryptDestroyKey(hkey))
+    finally:
+        _chk(bc.BCryptCloseAlgorithmProvider(alg, 0))
+
+
 def seal(lines, cipher, key, aad):
     """The lines, compressed and sealed; `aad` ties the container to its place, so a copy moved elsewhere does not open."""
     need(cipher)
     body = gzip.compress('\n'.join(lines).encode('utf-8'), mtime=0)
     if cipher == 'cryptography':
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         nonce = os.urandom(12)
-        return nonce + AESGCM(key).encrypt(nonce, body, aad.encode('utf-8'))
+        ct, tag = _gcm(False, key, nonce, body, aad.encode('utf-8'), bytes(16))
+        return nonce + ct + tag
     with _scratch() as path:
         conn = open_db(path, key)
         try:
@@ -236,13 +296,10 @@ def seal(lines, cipher, key, aad):
 
 
 def _gcm_body(data, key, aad):
-    from cryptography.exceptions import InvalidTag
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    gcm = AESGCM(key)
-    try:
-        return gcm.decrypt(data[:12], data[12:], aad.encode('utf-8'))
-    except (InvalidTag, ValueError):  # ValueError: shorter than a nonce
+    if len(data) < 28:  # shorter than a nonce and a tag
         return None
+    opened = _gcm(True, key, data[:12], data[12:-16], aad.encode('utf-8'), data[-16:])
+    return opened and opened[0]
 
 
 def _db_body(data, key, aad):

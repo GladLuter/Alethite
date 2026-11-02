@@ -174,20 +174,91 @@ class SettingsTest(unittest.TestCase):
 
 LINES = ['{"a":"секрет-маркер"}', 'x' * 10000]
 AAD = 'A/1/batch-00000001'
-MODULES = {'sqlcipher': ['sqlcipher3'], 'cryptography': ['cryptography', 'cryptography.hazmat', 'cryptography.hazmat.primitives',
-                                                         'cryptography.hazmat.primitives.ciphers', 'cryptography.hazmat.primitives.ciphers.aead']}
+# AES-GCM recorded once from the cryptography package (AESGCM(KEY).encrypt with NONCE): (data, aad, ciphertext as hex, tag as hex);
+# files written by the old code must open, and the test imports no package
+NONCE = bytes(range(100, 112))
+RECORDED = [
+    (b'', '',
+     '',
+     '609bd50f6ad76df665f048ba8c5fd706'),
+    (b'', 'aad',
+     '',
+     '9edc85d37715943677af73627fac7583'),
+    (bytes(i * 7 % 251 for i in range(1000)), 'A/1/batch-00000001',
+     ('481cd07365ca7caf065d19a58e3e089432b5788f07ff69d30f7e1af53f687791740eae354d1a9412e0d7530dc4028d814e07'
+      'fb8d51323eae7765377446311234cd4008d437a3d4f38966fd540faf1dd55e39577bf198e9adad88b643f586d2f224c02ac1'
+      'ad806ca551132e32a107a9f03d0dad2bfa3bf064e527f6dda9ce894fbd09050cc280fbeb0e8783d96a6aad7a92ccef5f706c'
+      'a8a70dd2341cb84ec397e44aa5d5004b7f45c7eb1b3624bb7513721a3f5032bf41d559293e7effc4549c934f6184dd69f78b'
+      'd3e7f4c5e88e49ca899841dc62b4ff47f41516cfcecc21dc7062eea8f8e443516cd1d85a3acc2076fe63bb6839153514211d'
+      'ee6b2530ef875459bbb8426fd982e66abff48fd89b9c3b11ec820a89cda112919fb28894b172dbfb03765c4e8fd120df18c9'
+      'af94bcda7f6edd64dd9eec71aa6ed0df1a03b6c848be1bf3121806f2a7f4300fdb312873ea8c604dfc826a56214a082c9e0e'
+      '71d017500d7c81e7cffbbb80acfa7c28dd434480f400c1a383c47c967737ae574640cfa68f8d7a461cd17933889150cea3b5'
+      'f11233319230c9a7f63e5519929cb7a1e19cc4d0419f3dee4e9c4d0c74f2077b7a9b07b68f494fda46b6c2d5130a86264cde'
+      'd68e2995e6d5896432c88cf0c2f344f137e85166a47e77791e7988f0adc8593281627dab63393b93143b3f680cb9b66306e8'
+      '5e5e044c6d78d6f881ac3db6e552bd9d09c7e8189d21a8942c111b4b534eb262829869105ea7e1037d8d139fd991d58bdc4c'
+      'a5ea9e7aad4ed79f1a421ffe15ae9d3fdd7ec23b99e388c55fdcfc5017a46519cbcdb5b056de060268b3b2d7f393dfadedeb'
+      'd7d9a8ac38000553b11cbdf75004aa9e0f093b8db16b181232fc288b2ce5bde0579fe2a6c2bdad193775e54ddda6dfcbeca8'
+      '81d0c1d57a9b42e5b477bc74eed65f99ea058f0dc1fa104414989112762c302dafbf664eaec1ca8ae3045db978e0fb219bd0'
+      '19290acc31551d671718a20991e0a61f7bc7561123f8499b1afdf7eb1f804636c89e8b3d6862eec8a98e204c32a11fa5f768'
+      'a815b23bbc766f16a0606696ecf95627ccfa6b2bc96f1d4b9c11c2507582164903de87f4944eb292d477a77fe03ecedeb726'
+      '7d4de7618745d5c25c9bb821b877b6863c4c602daee571030975fec7c2707721416976cb31e60ba590cec3dccb539a094608'
+      'ea18099dda47ad8fc8a61f7d44e9c6078ed4d4e3e2717bcf4c4e280461676ebd1c4ceb46b4aeb5dc2f98c547f6ddc9137c70'
+      '24505049ffbb79bf5f9ce5dd9499ec2885621afa503cd84056e392e5eeb1f35ae1d30dba438057e5def80a93141aec747c19'
+      'afe4c394507446f5b1a98715b1b211a2fe9b398f538140ff198e1a38c2eb13373990cc263bb427bc53a35bc3588943d1020d'),
+     '79505ee198f376b993e3833f6a2d942d'),
+]
 
 
 class SealTest(unittest.TestCase):
     def test_need(self):
-        for cipher, mods in MODULES.items():
-            with self.subTest(cipher):
-                crypto.need(cipher)
-                with mock.patch.dict(sys.modules, dict.fromkeys(mods)):  # None: the import of the package fails
-                    bad(self, crypto.need, t('cipher_missing', pkg=mods[0]), cipher)
-                    bad(self, crypto.seal, t('cipher_missing', pkg=mods[0]), LINES, cipher, KEY, AAD)
-                    bad(self, crypto.unseal, t('cipher_missing', pkg=mods[0]), b'', cipher, KEY, AAD)
-                self.assertIn('python -m pip install ' + mods[0], t('cipher_missing', pkg=mods[0]))
+        crypto.need('sqlcipher')
+        with mock.patch.dict(sys.modules, {'sqlcipher3': None}):  # None: the import of the package fails
+            bad(self, crypto.need, t('cipher_missing', pkg='sqlcipher3'), 'sqlcipher')
+            bad(self, crypto.seal, t('cipher_missing', pkg='sqlcipher3'), LINES, 'sqlcipher', KEY, AAD)
+            bad(self, crypto.unseal, t('cipher_missing', pkg='sqlcipher3'), b'', 'sqlcipher', KEY, AAD)
+        self.assertIn('python -m pip install sqlcipher3', t('cipher_missing', pkg='sqlcipher3'))
+
+    def test_cryptography_cipher_needs_no_package(self):  # its AES-GCM is Windows' own bcrypt.dll
+        with mock.patch.dict(sys.modules, {'cryptography': None, 'cryptography.hazmat.primitives.ciphers.aead': None}):
+            crypto.need('cryptography')
+            data = crypto.seal(LINES, 'cryptography', KEY, AAD)
+            self.assertEqual(crypto.unseal(data, 'cryptography', KEY, AAD), LINES)
+
+    def test_gcm_spec_vector(self):  # test case 16 of the GCM specification; seal's nonce is random, so the vector goes through _gcm
+        key = bytes.fromhex('feffe9928665731c6d6a8f9467308308' * 2)
+        iv = bytes.fromhex('cafebabefacedbaddecaf888')
+        text = bytes.fromhex('d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a72'
+                             '1c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39')
+        aad = bytes.fromhex('feedfacedeadbeeffeedfacedeadbeefabaddad2')
+        sealed = bytes.fromhex('522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa'
+                               '8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662')
+        tag = bytes.fromhex('76fc6ece0f4e1768cddf8853bb2d551b')
+        self.assertEqual(crypto._gcm(False, key, iv, text, aad, bytes(16)), (sealed, tag))
+        self.assertEqual(crypto._gcm(True, key, iv, sealed, aad, tag), (text, tag))
+
+    def test_gcm_recorded_vectors(self):
+        for data, aad, ct, tag in RECORDED:
+            with self.subTest(size=len(data), aad=aad):
+                ct, tag = bytes.fromhex(ct), bytes.fromhex(tag)
+                self.assertEqual(crypto._gcm(False, KEY, NONCE, data, aad.encode(), bytes(16)), (ct, tag))
+                self.assertEqual(crypto._gcm(True, KEY, NONCE, ct, aad.encode(), tag), (data, tag))
+                self.assertIsNone(crypto._gcm(True, KEY, NONCE, ct, aad.encode(), bytes(16)))
+                self.assertEqual(crypto._gcm_body(NONCE + ct + tag, KEY, aad), data)  # the file layout of the old code: nonce, ciphertext, tag
+
+    def test_gcm_refuses_what_is_no_tag_mismatch(self):
+        with self.assertRaises(OSError):
+            crypto._chk(-1073741811)  # STATUS_INVALID_PARAMETER
+        for args in [(b'k' * 16, bytes(12), b'', b'', bytes(16)), (KEY, bytes(8), b'', b'', bytes(16)), (KEY, bytes(12), b'', b'', bytes(8))]:
+            with self.assertRaises(ValueError):
+                crypto._gcm(False, *args)
+
+    def test_gcm_tamper(self):
+        data = crypto.seal(LINES, 'cryptography', KEY, AAD)
+        flip = lambda i: data[:i] + bytes([data[i] ^ 1]) + data[i + 1:]
+        for args in [(data, bytes(32), AAD), (data, KEY, 'A/1/batch-00000002'), (flip(0), KEY, AAD), (flip(12), KEY, AAD),
+                     (flip(len(data) - 17), KEY, AAD), (flip(len(data) - 16), KEY, AAD), (flip(len(data) - 1), KEY, AAD),
+                     (data[:-1], KEY, AAD), (data[:15], KEY, AAD)]:
+            bad(self, crypto.unseal, t('seal_broken'), args[0], 'cryptography', *args[1:])
 
     def test_seal_roundtrip(self):
         self.assertEqual(crypto.CIPHERS, ('sqlcipher', 'cryptography'))
