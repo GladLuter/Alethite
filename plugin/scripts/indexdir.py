@@ -104,7 +104,7 @@ def _connect(path, key):
     """The index at `path`: an open one as it is, an encrypted one with `key`."""
     import encrypt
     if not crypto.is_encrypted(path):
-        return sqlite3.connect(path, isolation_level=None, timeout=30)
+        return crypto.plain_db(path)
     if not key:
         raise ValueError(t('key_missing'))
     return encrypt._open(path, key)

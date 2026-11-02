@@ -11,6 +11,8 @@ import importlib
 import json
 import os
 import re
+import sqlite3
+import stat
 import tempfile
 
 from texts import t
@@ -174,6 +176,39 @@ def need(cipher):
             raise ValueError(t('cipher_missing', pkg=_MODULE[cipher])) from None
 
 
+def efs_supported(path):
+    """The volume of the nearest folder of `path` that exists can encrypt with EFS (NTFS does; FAT, exFAT and some network drives do not)."""
+    d = os.path.abspath(path)
+    while not os.path.isdir(d) and os.path.dirname(d) != d:
+        d = os.path.dirname(d)
+    k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    root, flags = ctypes.create_unicode_buffer(32768), ctypes.c_uint32()
+    if not (k32.GetVolumePathNameW(d, root, len(root)) and k32.GetVolumeInformationW(root, None, 0, None, None, ctypes.byref(flags), None, 0)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return bool(flags.value & 0x20000)  # FILE_SUPPORTS_ENCRYPTION
+
+
+def efs_on(path):
+    """The file or folder is encrypted by EFS; one that is not there is not."""
+    try:
+        return bool(getattr(os.stat(path), 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_ENCRYPTED)
+    except FileNotFoundError:
+        return False
+
+
+def _efs(call, path, *more):
+    if not getattr(ctypes.WinDLL('advapi32', use_last_error=True), call)(path, *more):
+        raise ctypes.WinError(ctypes.get_last_error())  # an OSError with winerror; a file in use is for the caller to retry
+
+
+def efs_encrypt(path):
+    _efs('EncryptFileW', path)
+
+
+def efs_decrypt(path):
+    _efs('DecryptFileW', path, 0)
+
+
 def is_encrypted(path):
     """By the header: an open SQLite file begins with its magic, an encrypted one with random bytes. No file or an empty one is not."""
     try:
@@ -181,7 +216,23 @@ def is_encrypted(path):
             head = f.read(16)
     except FileNotFoundError:
         return False
+    except PermissionError:  # shortcut: open() gives the same error for EFS's refusal and for a file in use, so under EFS both read as the refusal
+        if efs_on(path):
+            raise ValueError(t('index_efs_denied', path=path)) from None
+        raise
     return bool(head) and head != b'SQLite format 3\x00'
+
+
+def plain_db(path, timeout=30):
+    """The open SQLite database at `path`, no implicit transactions. An index that EFS holds for another user is an error, never a new one."""
+    try:
+        conn = sqlite3.connect(path, isolation_level=None, timeout=timeout)
+    except sqlite3.OperationalError as e:
+        if 'unable to open' in str(e) and efs_on(path):
+            raise ValueError(t('index_efs_denied', path=path)) from None
+        raise
+    conn.execute('PRAGMA temp_store = MEMORY')  # %TEMP% is not under EFS: nothing of the index may spill there in clear
+    return conn
 
 
 def open_db(path, key, timeout=30, page=None):
@@ -195,6 +246,7 @@ def open_db(path, key, timeout=30, page=None):
         conn.execute('PRAGMA key = "x\'%s\'"' % key.hex())
         if page:
             conn.execute('PRAGMA cipher_page_size = %d' % page)
+        conn.execute('PRAGMA temp_store = MEMORY')  # as in plain_db
         conn.execute('SELECT count(*) FROM sqlite_master')
     except sqlcipher3.DatabaseError as e:
         conn.close()

@@ -626,6 +626,10 @@ class AbsorbTest(unittest.TestCase):
                          [('M1', 5, '[4]', 0), ('M2', 1, '[]', 1), ('M3', 4, '[]', 0), ('M4', 2, '[]', 0)])  # the one that has gone further, a new generation beats a long run
         self.assertEqual(a.execute('SELECT * FROM files ORDER BY path').fetchall(), [('p1', 200, 190), ('p2', 50, 50), ('p3', 10, 10)])
 
+    def test_the_index_is_opened_with_temp_in_memory(self):  # %TEMP% is not under EFS
+        with contextlib.closing(indexdir._connect(self.db, None)) as conn:
+            self.assertEqual(conn.execute('PRAGMA temp_store').fetchone()[0], 2)
+
     def test_a_key_that_did_not_come_over_is_no_merge_at_all(self):
         put(self.b, 'S', 'good', pos=1)
         put(self.b, 'S', 'broken', pos=2)

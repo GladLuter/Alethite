@@ -173,6 +173,50 @@ class EncryptedIndexTest(unittest.TestCase):
         connect(self.db).close()
         self.assertTrue(crypto.is_encrypted(self.db))
 
+    def pragma(self, name):
+        conn = connect(self.db)
+        try:
+            return conn.execute('PRAGMA ' + name).fetchone()[0]
+        finally:
+            conn.close()
+
+    @dpapi
+    def test_connect_keeps_temp_in_memory(self):  # %TEMP% is not under EFS
+        self.assertEqual(self.pragma('temp_store'), 2)  # a new index
+        self.assertEqual(self.pragma('temp_store'), 2)  # an open one
+        os.remove(self.db)
+        crypto.save_key(self.settings, KEY)
+        self.assertEqual(self.pragma('temp_store'), 2)  # a new encrypted one
+        self.assertEqual(self.pragma('temp_store'), 2)  # an encrypted one again
+
+    @dpapi
+    def test_new_index_in_efs_folder_has_16k_pages(self):
+        self.assertEqual(self.pragma('page_size'), 4096)  # an ordinary folder
+        crypto.efs_encrypt(os.path.dirname(self.db))
+        self.assertEqual(self.pragma('page_size'), 4096)  # an index that is there keeps its pages
+        os.remove(self.db)
+        self.assertEqual(self.pragma('page_size'), 16384)  # a new one
+        self.assertTrue(crypto.efs_on(self.db))
+        self.assertEqual(self.pragma('page_size'), 16384)
+
+    @dpapi
+    def test_an_empty_file_in_efs_folder_is_a_new_index(self):
+        crypto.efs_encrypt(os.path.dirname(self.db))
+        open(self.db, 'wb').close()
+        self.assertEqual(self.pragma('page_size'), 16384)
+
+    def test_efs_index_denied_is_an_error(self):
+        connect(self.db).close()
+        before = (os.path.getsize(self.db), os.stat(self.db).st_mtime_ns)
+        refuse = mock.patch.object(sqlite3, 'connect', side_effect=sqlite3.OperationalError('unable to open database file'))
+        with refuse, mock.patch.object(crypto, 'efs_on', return_value=True), self.assertRaises(ValueError) as cm:
+            connect(self.db)
+        self.assertEqual(str(cm.exception), t('index_efs_denied', path=self.db))
+        self.assertEqual((os.path.getsize(self.db), os.stat(self.db).st_mtime_ns), before)
+        self.assertEqual(os.listdir(os.path.dirname(self.db)), ['index.db'])
+        with refuse, self.assertRaises(sqlite3.OperationalError):  # the same refusal of a folder that EFS does not hold stays as it is
+            connect(self.db)
+
     def test_peers_gen_added(self):
         old = sqlite3.connect(self.db)
         old.execute("CREATE TABLE peers(machine TEXT PRIMARY KEY, last_batch INTEGER NOT NULL DEFAULT 0, skipped TEXT NOT NULL DEFAULT '[]', "

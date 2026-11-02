@@ -383,6 +383,38 @@ class DbTest(unittest.TestCase):
         finally:
             holder.close()
 
+    def test_temp_store_is_memory(self):  # %TEMP% is not under EFS: a sorting or a big query must not spill into it in clear
+        plain, enc = crypto.plain_db(self.path), crypto.open_db(self.path + '.enc', KEY)
+        try:
+            self.assertEqual(plain.execute('PRAGMA temp_store').fetchone()[0], 2)
+            self.assertEqual(enc.execute('PRAGMA temp_store').fetchone()[0], 2)
+            self.assertIsNone(plain.isolation_level)
+        finally:
+            plain.close()
+            enc.close()
+
+    def test_plain_db_denied_by_efs(self):
+        with open(self.path, 'wb') as f:
+            f.write(b'x')
+        refuse = mock.patch.object(sqlite3, 'connect', side_effect=sqlite3.OperationalError('unable to open database file'))
+        with refuse, mock.patch.object(crypto, 'efs_on', return_value=True):
+            bad(self, crypto.plain_db, t('index_efs_denied', path=self.path), self.path)
+        with refuse, mock.patch.object(crypto, 'efs_on', return_value=False), self.assertRaises(sqlite3.OperationalError):  # a refusal that is not EFS's stays as it is
+            crypto.plain_db(self.path)
+        with mock.patch.object(sqlite3, 'connect', side_effect=sqlite3.OperationalError('disk I/O error')), \
+                mock.patch.object(crypto, 'efs_on', return_value=True), self.assertRaises(sqlite3.OperationalError):
+            crypto.plain_db(self.path)
+
+    @dpapi
+    def test_header_of_an_efs_file_that_is_refused_is_efs_denied(self):  # the read of the header fails first, as Windows says "access denied"
+        crypto.efs_encrypt(os.path.dirname(self.path))
+        with open(self.path, 'wb') as f:
+            f.write(b'x')
+        with mock.patch('builtins.open', side_effect=PermissionError(13, 'Permission denied')):
+            bad(self, crypto.is_encrypted, t('index_efs_denied', path=self.path), self.path)
+            with mock.patch.object(crypto, 'efs_on', return_value=False), self.assertRaises(PermissionError):  # outside EFS it is as it was
+                crypto.is_encrypted(self.path)
+
     def test_is_encrypted(self):
         self.assertFalse(crypto.is_encrypted(self.path))  # no file
         open(self.path, 'wb').close()
@@ -396,6 +428,42 @@ class DbTest(unittest.TestCase):
         c.execute('CREATE TABLE t(x)')
         c.close()
         self.assertTrue(crypto.is_encrypted(self.path + '.enc'))
+
+
+@dpapi
+class EfsTest(unittest.TestCase):
+    def setUp(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.dir = d.name
+
+    def test_efs_roundtrip(self):
+        self.assertTrue(crypto.efs_supported(self.dir))
+        self.assertTrue(crypto.efs_supported(os.path.join(self.dir, 'not', 'there', 'yet')))  # the nearest folder that exists answers
+        crypto.efs_encrypt(self.dir)
+        self.assertTrue(crypto.efs_on(self.dir))
+        p = os.path.join(self.dir, 'f.bin')
+        with open(p, 'wb') as f:
+            f.write(b'content')
+        self.assertTrue(crypto.efs_on(p))  # a file made in an encrypted folder is encrypted
+        crypto.efs_decrypt(p)
+        self.assertFalse(crypto.efs_on(p))
+        with open(p, 'rb') as f:
+            self.assertEqual(f.read(), b'content')
+        crypto.efs_decrypt(self.dir)
+        self.assertFalse(crypto.efs_on(self.dir))
+
+    def test_efs_on_missing_is_false(self):
+        self.assertFalse(crypto.efs_on(os.path.join(self.dir, 'nothing')))
+
+    def test_a_failure_is_an_oserror_with_the_windows_code(self):
+        missing = os.path.join(self.dir, 'nothing')
+        with self.assertRaises(OSError) as cm:
+            crypto.efs_decrypt(missing)
+        self.assertEqual(cm.exception.winerror, 2)  # ERROR_FILE_NOT_FOUND
+        with self.assertRaises(OSError) as cm:
+            crypto.efs_encrypt(missing)
+        self.assertIsNotNone(cm.exception.winerror)  # which one differs: EncryptFileW says "access denied" here
 
 
 if __name__ == '__main__':
