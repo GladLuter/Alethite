@@ -92,6 +92,8 @@ class EncryptedIndexTest(unittest.TestCase):
         try:
             self.assertEqual(update(conn, self.projects)['rows'], 1)
             self.assertEqual(len(search(conn, 'зашифрованноеслово')), 1)
+            self.assertEqual(len(search(conn, 'зашифрованноеслово', project=['c:\\нет', project_key('C:\\a')])), 1)  # json_each in SQLCipher
+            self.assertEqual(search(conn, 'зашифрованноеслово', project=['c:\\нет']), [])
         finally:
             conn.close()
         self.assertTrue(crypto.is_encrypted(self.db))
@@ -583,10 +585,15 @@ class MemdbTest(unittest.TestCase):
         self.write('P1/S1/subagents/workflows/wf_1/agent-a1.jsonl', [owner_line('найди ёжик', cwd='')])  # no cwd: the project comes from the parent
         self.write('P2/S2.jsonl', [owner_line('ёжик в другом проекте', cwd='C:\\b')])
         self.update()
-        hits = search(self.conn, 'ёжик', project=project_key('C:\\a'))
+        hits = search(self.conn, 'ёжик', project=[project_key('C:\\a')])
         self.assertEqual({h['conv'] for h in hits}, {'S1', 'agent-a1'})
         self.assertEqual({h['parent'] for h in hits}, {'', 'S1'})
         self.assertEqual(len(search(self.conn, 'ёжик')), 3)
+        # several keys (a project and its aliases): the conversations of all of them, a subagent still with its parent's
+        both = search(self.conn, 'ёжик', project=[project_key('C:\\b'), project_key('C:\\a')])
+        self.assertEqual({h['conv'] for h in both}, {'S1', 'agent-a1', 'S2'})
+        self.assertEqual({h['conv'] for h in search(self.conn, 'ёжик', project=[project_key('C:\\b'), project_key('C:\\нет')])}, {'S2'})
+        self.assertEqual(search(self.conn, 'ёжик', project=[]), [])
 
     def test_hit_carries_the_chunk_rowid(self):
         self.write('P/S.jsonl', [owner_line('первое'), owner_line('второе ёжик')])

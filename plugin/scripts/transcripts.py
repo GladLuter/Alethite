@@ -58,6 +58,13 @@ def project_key(cwd, home=None):
     return key
 
 
+def project_keys(cwd, aliases, home=None):
+    """The keys a project folder reads its memory under: its own, then those of the old folders that `aliases` ({new: [old, ...]})
+    names for it. A folder that was renamed or moved keeps the conversations indexed under its old path."""
+    key = project_key(cwd, home)
+    return list(dict.fromkeys([key] + [project_key(o, home) for n, olds in aliases.items() if project_key(n, home) == key for o in olds]))
+
+
 def _load(raw):
     try:
         o = json.loads(raw.decode('utf-8', errors='replace'))

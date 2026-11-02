@@ -445,8 +445,8 @@ class SyncTest(unittest.TestCase):
         for c in (self.a, self.b):
             key = project_key(c.cwd, c.home)
             self.assertEqual(key, '~\\work\\proj')
-            self.assertEqual({h['conv'] for h in search(c.conn, 'ответ', project=key)}, {'SA', 'SB'})
-            self.assertEqual(search(c.conn, 'ответ', project=project_key('C:\\_git\\other', c.home)), [])
+            self.assertEqual({h['conv'] for h in search(c.conn, 'ответ', project=[key])}, {'SA', 'SB'})
+            self.assertEqual(search(c.conn, 'ответ', project=[project_key('C:\\_git\\other', c.home)]), [])
 
     # 8. short memory
     def test_a_fact_from_the_i3_comes_into_the_laptops_memory(self):

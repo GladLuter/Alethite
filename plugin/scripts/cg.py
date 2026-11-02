@@ -17,7 +17,7 @@ import memdb
 import texts
 import vectors
 from compress import LEVELS, compress
-from transcripts import find_session, last_usage, project_key
+from transcripts import find_session, last_usage, project_key, project_keys
 
 
 INDEX_FREE = ('last-turn', 'compress', 'handoff')  # the commands that read no index: no merge waits for them, and they still work when the index cannot be used
@@ -59,8 +59,8 @@ def _status(a):
     out['job'] = json.loads(memdb.meta(conn, 'job_last') or 'null')  # the background job's last run (stage 4), for /cg-health
     out['index_dir'] = indexdir.status(conn, a.where)
     if a.cwd:  # the scope of «в этом проекте»: a key that matches no conversation makes the project search find nothing
-        key = project_key(a.cwd)
-        out['project'] = {'key': key, 'convs': conn.execute('SELECT count(*) FROM convs WHERE ' + memdb.IN_PROJECT, {'p': key}).fetchone()[0]}
+        keys = project_keys(a.cwd, _aliases(a))
+        out['project'] = {'key': keys[0], 'convs': conn.execute('SELECT count(*) FROM convs WHERE ' + memdb.IN_PROJECT, {'p': json.dumps(keys)}).fetchone()[0]}
     return out
 
 
@@ -70,7 +70,7 @@ def _recall(a):
         upd = memdb.update(conn, a.projects)  # seconds when nothing is new
     except Exception as e:  # e.g. the index stays locked by another run: what it already holds is still searched
         upd = {'errors': [memdb._error(a.projects, e)]}
-    hits, vector = vectors.hybrid_search(conn, a.query, None if a.all else project_key(a.cwd), a.limit, model=a.model, also=a.also)
+    hits, vector = vectors.hybrid_search(conn, a.query, None if a.all else project_keys(a.cwd, _aliases(a)), a.limit, model=a.model, also=a.also)
     return {'hits': _squeeze(hits, 'snippet', a.compress), 'errors': upd['errors'], 'vector': vector}
 
 
@@ -127,6 +127,13 @@ def _settings(path):
         return {}, str(e)
     except (ValueError, OSError) as e:  # a file that cannot be decoded, or one that an editor holds or the owner may not read
         return {}, '%s: %s' % (path, e)
+
+
+def _aliases(a):
+    """settings.projectAliases, {new folder: [old folders]}: a project reads the memory of its old folders too. Anything else than
+    that shape is ignored whole, and so is a broken settings file: an alias is a help to the search, never a reason for it to fail."""
+    s = _settings(crypto.settings_path(a.db))[0].get('projectAliases')
+    return s if isinstance(s, dict) and all(isinstance(v, list) and all(isinstance(o, str) for o in v) for v in s.values()) else {}
 
 
 def _sync_dir(s):
@@ -362,11 +369,11 @@ def _lesson_save(a):
 
 
 def _lessons(a):
-    return {'lessons': lessons.listing(memdb.connect(a.db), None if a.all else project_key(a.cwd))}
+    return {'lessons': lessons.listing(memdb.connect(a.db), None if a.all else project_keys(a.cwd, _aliases(a)))}
 
 
 def _lessons_match(a):
-    found, state = lessons.match(memdb.connect(a.db), a.text, project_key(a.cwd), a.model, a.min_score, a.limit, timeout=a.timeout)
+    found, state = lessons.match(memdb.connect(a.db), a.text, project_keys(a.cwd, _aliases(a)), a.model, a.min_score, a.limit, timeout=a.timeout)
     return {'lessons': found, 'vector': state}
 
 

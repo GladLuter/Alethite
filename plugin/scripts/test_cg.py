@@ -189,6 +189,63 @@ class CgTest(unittest.TestCase):
         rows = self.run_cg('expand', '--conv', hit['conv'], '--pos', str(hit['pos']), '--compress', 'ultra')[1]['rows']
         self.assertIn('Bash: ' + command, [r['text'] for r in rows])
 
+    def aliases(self, value):  # the mod's settings lie beside the index
+        os.makedirs(os.path.dirname(self.db), exist_ok=True)
+        with open(os.path.join(os.path.dirname(self.db), 'settings.json'), 'w', encoding='utf-8') as f:
+            json.dump({'projectAliases': value}, f)
+
+    def test_recall_from_new_folder_sees_old_project_with_alias(self):  # the folder was renamed: its conversations are keyed to the old path
+        self.write('A/S1.jsonl', [owner_line('ёжик в старой папке', cwd='C:\\old\\proj')])
+        self.write('B/S2.jsonl', [owner_line('ёжик в новой папке', cwd='C:\\new\\proj')])
+        self.write('C/S3.jsonl', [owner_line('ёжик в чужой папке', cwd='C:\\other')])
+        self.aliases({'C:\\new\\proj': ['C:\\old\\proj']})
+        hits = lambda cwd: sorted(h['conv'] for h in self.run_cg('recall', '--query', 'ёжик', '--cwd', cwd)[1]['hits'])
+        self.assertEqual(hits('C:\\new\\proj'), ['S1', 'S2'])
+        self.assertEqual(hits('C:\\New\\Proj\\.claude\\worktrees\\w1'), ['S1', 'S2'])  # a worktree is the same project
+        self.assertEqual(hits('C:\\old\\proj'), ['S1'])  # the alias goes one way: from the new folder to the old
+
+    def test_recall_without_alias_does_not_see_old_project(self):
+        self.write('A/S1.jsonl', [owner_line('ёжик в старой папке', cwd='C:\\old\\proj')])
+        self.assertEqual(self.run_cg('recall', '--query', 'ёжик', '--cwd', 'C:\\new\\proj')[1]['hits'], [])
+        self.aliases({'C:\\elsewhere': ['C:\\old\\proj']})  # an alias of another folder is no alias of this one
+        self.assertEqual(self.run_cg('recall', '--query', 'ёжик', '--cwd', 'C:\\new\\proj')[1]['hits'], [])
+
+    def test_lessons_listing_and_match_see_alias(self):
+        conn = memdb.connect(self.db)
+        lessons.save(conn, project_key('C:\\old\\proj'), {'action': 'запустил сборку', 'symptom': 'HTTP 429 от GitHub', 'cause': 'частые вызовы API'})
+        conn.close()
+        listed = lambda: [l['text'] for l in self.run_cg('lessons', '--cwd', 'C:\\new\\proj')[1]['lessons']]
+        # lessons-match asks no model when the project has no lessons ('ok'); with one it goes on and says there are no vectors of this model
+        matched = lambda: self.run_cg('lessons-match', '--cwd', 'C:\\new\\proj', '--text', '429', '--model', 'nosuch')[1]['vector']
+        self.assertEqual((listed(), matched()), ([], 'ok'))
+        self.aliases({'C:\\new\\proj': ['C:\\old\\proj']})
+        self.assertIn('Action: запустил сборку', listed()[0])
+        self.assertIn('nosuch', matched())
+
+    def test_lesson_saved_under_new_key(self):  # a write keeps one key: the folder's own
+        self.aliases({'C:\\new\\proj': ['C:\\old\\proj']})
+        out = self.run_cg('lesson-save', '--cwd', 'C:\\new\\proj', '--action', 'a', '--symptom', 's', '--cause', 'c', '--model', 'nosuch')[1]
+        conn = memdb.connect(self.db)
+        self.addCleanup(conn.close)
+        self.assertEqual(conn.execute('SELECT project FROM conv_projects WHERE conv = ?', (out['conv'],)).fetchall(), [(project_key('C:\\new\\proj'),)])
+
+    def test_malformed_aliases_are_ignored(self):
+        self.write('A/S1.jsonl', [owner_line('ёжик в старой папке', cwd='C:\\old\\proj')])
+        for bad in (['x'], {'C:\\new': 'C:\\old'}, {'C:\\new\\proj': ['C:\\old\\proj', 5]}, {'C:\\new\\proj': ['C:\\old\\proj'], 'C:\\x': 'C:\\y'}, 'C:\\old\\proj', None):
+            self.aliases(bad)
+            code, out = self.run_cg('recall', '--query', 'ёжик', '--cwd', 'C:\\new\\proj')
+            self.assertEqual((code, out['hits']), (0, []), bad)  # the good pair beside the bad item goes too: the value is taken whole or not at all
+
+    def test_status_project_counts_alias(self):
+        self.write('A/S1.jsonl', [owner_line('там', cwd='C:\\old\\proj')])
+        self.write('A/S1/subagents/agent-a1.jsonl', [owner_line('суб', cwd='')])
+        self.write('B/S2.jsonl', [owner_line('здесь', cwd='C:\\new\\proj')])
+        self.run_cg('index')
+        status = lambda: self.run_cg('status', '--cwd', 'C:\\new\\proj')[1]['project']
+        self.assertEqual(status(), {'key': project_key('C:\\new\\proj'), 'convs': 1})
+        self.aliases({'C:\\new\\proj': ['C:\\old\\proj']})
+        self.assertEqual(status(), {'key': project_key('C:\\new\\proj'), 'convs': 3})
+
     def test_recall_takes_other_wordings_and_reads_an_error_as_it_is(self):  # stage 4
         err = {'type': 'tool_result', 'tool_use_id': 't1', 'content': 'HTTP 429: the limit of 120 requests per hour', 'is_error': True}
         self.write('P/S1.jsonl', [owner_line('запусти ещё раз'), dict(type='user', timestamp=TS, cwd='C:\\a', message={'role': 'user', 'content': [err]})])

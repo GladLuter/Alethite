@@ -37,10 +37,11 @@ CREATE TABLE IF NOT EXISTS peers(machine TEXT PRIMARY KEY, last_batch INTEGER NO
 CREATE TABLE IF NOT EXISTS mem_files(project TEXT, name TEXT, source TEXT NOT NULL, src_name TEXT NOT NULL, hash TEXT NOT NULL,
   PRIMARY KEY(project, name));
 """
-# a table with a `conv` column and the parameter :p (NULL = every project); a subagent belongs to its parent's project
-IN_PROJECT = """(:p IS NULL
-  OR conv IN (SELECT conv FROM conv_projects WHERE project = :p)
-  OR conv IN (SELECT c.conv FROM convs c JOIN conv_projects p ON p.conv = c.parent WHERE p.project = :p))"""
+# a table with a `conv` column and the parameter :p, json.dumps of None (every project) or of a list of project keys (a project and its
+# aliases); a subagent belongs to its parent's project
+IN_PROJECT = """(:p = 'null'
+  OR conv IN (SELECT conv FROM conv_projects WHERE project IN (SELECT value FROM json_each(:p)))
+  OR conv IN (SELECT c.conv FROM convs c JOIN conv_projects p ON p.conv = c.parent WHERE p.project IN (SELECT value FROM json_each(:p))))"""
 # the mod's own tool calls are no memory; rows of them from before transcripts.py stopped emitting them are left out here
 _SEARCH = """
 SELECT conv, pos, ts, kind, snippet(chunks, 0, '«', '»', '…', 24),
@@ -317,11 +318,12 @@ def status(conn):
 
 
 def word_hits(conn, query, project=None, n=50):
-    """At most `n` hits containing all the words of the query, else any of them; best first, repeats still in."""
+    """At most `n` hits containing all the words of the query, else any of them; best first, repeats still in. `project`: None (every
+    project) or a list of project keys."""
     terms = ['"%s"' % w for w in re.findall(r'\w+', query)]
     rows = []
     for q in ((' '.join(terms), ' OR '.join(terms)) if terms else ()):
-        rows = conn.execute(_SEARCH, {'q': q, 'p': project, 'n': n}).fetchall()
+        rows = conn.execute(_SEARCH, {'q': q, 'p': json.dumps(project), 'n': n}).fetchall()
         if rows:
             break
     return [{'conv': conv, 'parent': parent or '', 'ts': ts, 'kind': kind, 'pos': pos, 'snippet': snippet, 'id': rowid}
