@@ -206,6 +206,48 @@ class EncryptedIndexTest(unittest.TestCase):
         open(self.db, 'wb').close()
         self.assertEqual(self.pragma('page_size'), 16384)
 
+    @dpapi
+    def test_a_new_index_with_a_key_and_indexcipher_efs_is_plain_under_efs_and_loads_no_sqlcipher3(self):
+        crypto.save_key(self.settings, KEY, 'cryptography', 'efs')
+        crypto.efs_encrypt(os.path.dirname(self.db))
+        with mock.patch.dict(sys.modules, {'sqlcipher3': None}):  # an import of it is an ImportError
+            self.assertEqual(self.pragma('page_size'), 16384)
+        self.assertEqual(self.raw()[:16], b'SQLite format 3\x00')
+        self.assertTrue(crypto.efs_on(self.db))
+
+    @dpapi
+    def test_that_new_index_is_made_in_a_folder_that_EFS_holds_already(self):
+        crypto.save_key(self.settings, KEY, 'cryptography', 'efs')
+        folder, seen, real = os.path.dirname(self.db), [], crypto.plain_db
+
+        def spy(path, *a, **kw):
+            seen.append((crypto.efs_on(folder), os.path.exists(path)))
+            return real(path, *a, **kw)
+
+        self.assertFalse(crypto.efs_on(folder))
+        with mock.patch.object(crypto, 'plain_db', spy), mock.patch.dict(sys.modules, {'sqlcipher3': None}):
+            connect(self.db).close()
+        self.assertEqual(seen, [(True, False)])  # the folder under EFS, the file not there yet
+        self.assertTrue(crypto.efs_on(self.db))
+
+    @dpapi
+    def test_a_new_index_with_a_key_is_sqlcipher_unless_indexcipher_is_efs(self):
+        for index_cipher in (None, 'sqlcipher'):
+            crypto.save_key(self.settings, KEY, 'cryptography', index_cipher)
+            connect(self.db).close()
+            self.assertTrue(crypto.is_encrypted(self.db))
+            self.assertFalse(crypto.efs_on(os.path.dirname(self.db)))
+            os.remove(self.db)
+
+    @dpapi
+    def test_an_encrypted_index_opens_with_its_key_whatever_indexcipher_says(self):  # an `on` to efs that was cut before the conversion
+        old = crypto.open_db(self.db, KEY, page=crypto.INDEX_PAGE)
+        old.execute('CREATE TABLE x(y)')  # sqlite makes the file on the first write
+        old.close()
+        crypto.save_key(self.settings, KEY, 'cryptography', 'efs')
+        connect(self.db).close()
+        self.assertTrue(crypto.is_encrypted(self.db))
+
     def efs_index(self):
         crypto.efs_encrypt(os.path.dirname(self.db))
         connect(self.db).close()

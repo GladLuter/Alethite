@@ -117,10 +117,13 @@ def _open(path):
         if crypto.is_encrypted(path):
             raise
         key = None
-    if key:
+    # an index there is SQLCipher; a new one with a key is, unless the settings say EFS: plain, in a folder under EFS (sqlcipher3 may not load)
+    if key and (crypto.is_encrypted(path) or crypto._read(crypto.settings_path(path)).get('indexCipher') != 'efs'):
         return crypto.open_db(path, key, page=crypto.INDEX_PAGE)
     if crypto.is_encrypted(path):  # never a new index over the one that is there
         raise ValueError(t('key_missing'))
+    if key and not crypto.efs_on(os.path.dirname(path)):  # a new index of indexCipher efs: its folder is encrypted before the file is made
+        crypto.efs_encrypt(os.path.dirname(path))
     conn = crypto.plain_db(path)
     if crypto.efs_on(os.path.dirname(path)):  # a new index under EFS: the 16 KB pages of the encrypted one, as the vector read is faster with them
         conn.execute('PRAGMA page_size = %d' % crypto.INDEX_PAGE)
