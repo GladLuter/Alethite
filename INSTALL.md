@@ -176,7 +176,7 @@ What else to know:
 - **What you accept with EFS:**
   - A copy of the index on a FAT or exFAT stick, over the network or through `copyfile` comes out unencrypted. The mod itself never copies the index out.
   - The files open only under the same Windows account. If an index under EFS does not open (another user, a lost certificate), the mod says so and does not make a new empty index over it.
-  - If you reinstall Windows without a backup of the certificate, the index has to be built again from the sync folder. A copy of the certificate is optional, and the mod does not make one: in `certmgr.msc` open "Personal", find the certificate whose purpose is "Encrypting File System" and export it with the private key and a password.
+  - If you reinstall Windows without a backup of the certificate, the old index cannot be opened. Delete it, and the mod builds a new one from the conversations on disk. A copy of the certificate is optional, and the mod does not make one. To make it, run `cipher /x <file>`: Windows asks for a password and saves the EFS certificate and key to a `.pfx` file protected by it.
   - A file that a chat or the background job holds open is not encrypted by EFS: the command says the files are busy. Repeat it in a minute.
 - **What stays plain:**
   - Claude Code's conversations, `%USERPROFILE%\.claude\projects\*.jsonl`;
