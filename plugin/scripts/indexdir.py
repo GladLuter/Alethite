@@ -492,6 +492,8 @@ def _switch(out, where, target, key, ui, drive_type, free):
             raise ValueError(t('efs_failed', dir=folder, e=e)) from None
         if not supported:
             raise ValueError(t('index_dir_no_efs', dir=folder))
+        if n != home:  # the home folder is the mod's own; any other is walked whole by `encrypt on` and `off`
+            encrypt._own_only(folder)
     if not os.path.exists(new_db):  # a copy of an earlier try has taken its room already
         need, room = sum(os.path.getsize(a) for a, _ in pairs) + SPARE, free(_existing(folder))
         if room < need:

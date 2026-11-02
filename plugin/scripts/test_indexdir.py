@@ -1116,6 +1116,21 @@ class MoveTest(unittest.TestCase):
             self.assertEqual((self.tree(self.home), self.fields()), (before, was))  # indexDir is not there
             self.assertEqual(crypto.INDEX_DIRS, set())
 
+    def test_move_efs_into_a_folder_with_files_of_the_owner_is_refused_before_anything_is_copied(self):  # `on` and `off` would walk and change them
+        self.efs_home()
+        report = os.path.join(self.target, 'report.txt')
+        self.write(report, 'the owner\'s file')
+        before, was = self.tree(self.home, self.target), self.fields()
+        with self.assertRaises(ValueError) as e:
+            self.move()
+        self.assertEqual(str(e.exception), t('efs_foreign_files', dir=self.target))
+        self.assertEqual((self.tree(self.home, self.target), self.fields()), (before, was))  # no .cg-move, no index, indexDir is not there
+        self.assertEqual((crypto.efs_on(self.target), crypto.efs_on(report), crypto.INDEX_DIRS), (False, False, set()))
+        os.remove(report)  # a folder of its own, with the names of the mod only, is no refusal
+        self.write(os.path.join(self.target, 'handoffs', 'other.md'))
+        self.write(os.path.join(self.target, 'job.xml'))
+        self.assertTrue(self.move(ui=FakeUI([False]))['done'])
+
     def test_move_efs_needs_no_volume_check_without_efs(self):  # a plain index moves to a volume that has no EFS, as it always did
         self.full_home()
         with mock.patch.object(crypto, 'efs_supported', side_effect=AssertionError) as supported:

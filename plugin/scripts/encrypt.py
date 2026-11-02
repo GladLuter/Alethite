@@ -202,9 +202,21 @@ def _efs_do(fn, path):
     raise ValueError(t('encrypt_busy'))
 
 
+def _own_only(folder):
+    """EFS takes everything that lies in a folder, so an index folder that is not the mod's own one may hold only what the mod makes in it: the
+    index files and their copies, journals and locks (index.*), `handoffs` and job.xml. Else it is told, and nothing is changed."""
+    try:
+        names = [n.lower() for n in os.listdir(folder)]
+    except OSError as e:
+        _unlistable(e)  # a folder that is not there yet holds nothing
+        return
+    if any(not (n.startswith('index.') or n in ('handoffs', 'job.xml')) for n in names):
+        raise ValueError(t('efs_foreign_files', dir=folder))
+
+
 def _efs_probe(db):
-    """Before the key, the code or any file: the volumes of both folders have EFS, and the first EncryptFileW (on the mod's folder) goes through.
-    A Windows Home refuses it here."""
+    """Before the key, the code or any file: the volumes of both folders have EFS, the index's folder holds nothing but the mod's files, and the
+    first EncryptFileW (on the mod's folder) goes through. A Windows Home refuses it here."""
     dirs = _efs_dirs(db)
     for d in dirs:
         try:
@@ -213,6 +225,8 @@ def _efs_probe(db):
             raise ValueError(t('efs_failed', dir=d, e=e)) from None
         if not supported:
             raise ValueError(t('efs_unsupported', dir=d))
+    if len(dirs) > 1 and crypto.norm(dirs[1]) != crypto.norm(dirs[0]):
+        _own_only(dirs[1])
     _efs_do(crypto.efs_encrypt, dirs[0])
 
 
@@ -320,6 +334,8 @@ def _encrypt(db, sync_dir, cipher, machine, ui, key, notes, index_cipher, **kw):
         _efs_all(db, crypto.efs_encrypt, True)  # all of it first: what _to_efs writes beside a file is born encrypted
         for path in _files(db):
             _to_efs(path, key)
+            if os.path.exists(path + '.plain'):  # of an earlier `on` whose question was answered No
+                _drop_plain(path + '.plain', ui, notes)
     else:
         for path in _files(db):
             _encrypt_file(path, key, ui, notes)

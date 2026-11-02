@@ -707,6 +707,19 @@ class EncryptTest(unittest.TestCase):
         self.assertEqual([os.path.exists(a.db + s) for s in ('.plain', '.cg-new')], [False, False])
         self.assertEqual(encrypt.status(a.db)['db'], 'efs')
 
+    def test_efs_on_asks_about_the_open_copy_an_earlier_on_left(self):  # "No" to the question, then EFS: /cg-health says to repeat on, so on must be able to delete it
+        a = self.a
+        plain = a.db + '.plain'
+        self.assertEqual(self.on(a, FakeUI([True, False]))['notes'], [t('note_plain_kept', path=plain)])
+        ui = FakeUI([False])
+        res = self.efs(a, ui, 'sqlcipher')
+        self.assertEqual((res['done'], res['notes'], ui.asked), (False, [t('note_plain_kept', path=plain)], [t('dlg_delete_plain', path=plain)]))
+        self.assertEqual((os.path.exists(plain), encrypt.status(a.db)['notes']), (True, [t('note_plain_kept', path=plain)]))
+        again = FakeUI()
+        self.assertTrue(self.efs(a, again, 'sqlcipher')['done'])
+        self.assertEqual((os.path.exists(plain), again.asked), (False, [t('dlg_delete_plain', path=plain)]))
+        self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'efs', 'key': 'ok', 'notes': []})
+
     def test_efs_on_unsupported_changes_nothing(self):
         a = self.a
         folder = os.path.dirname(a.db)
@@ -724,6 +737,46 @@ class EncryptTest(unittest.TestCase):
                 self.assertEqual((ui.shown, ui.asked, ui.entries), ([], [], 0))
                 self.assertEqual((os.path.exists(crypto.settings_path(a.db)), os.listdir(self.share)), (False, []))
                 self.assertEqual([crypto.efs_on(p) for p in (folder, a.db)], [False, False])
+
+    def apart(self, c):
+        """The mod's home folder is one of its own and the index of `c` lies in another folder, as after /cg-index-dir: (home, that folder)."""
+        home, folder = os.path.join(self.root, 'home-' + c.name), os.path.dirname(c.db)
+        os.makedirs(home)
+        for p in (mock.patch.object(crypto, 'HOME_DIR', home), mock.patch.object(crypto, 'INDEX_DIRS', {crypto.norm(folder)})):
+            p.start()
+            self.addCleanup(p.stop)
+        return home, folder
+
+    def test_efs_refuses_an_index_folder_that_holds_files_of_the_owner(self):  # EFS walks the whole folder: on would encrypt them, off take EFS off
+        a = self.a
+        home, folder = self.apart(a)
+        report = os.path.join(folder, 'project', 'report.txt')
+        os.makedirs(os.path.dirname(report))
+        with open(report, 'w', encoding='utf-8') as f:
+            f.write('the owner\'s file')
+        for fn in (encrypt.on, encrypt.join):
+            ui = FakeUI(code=crypto.make_code(secrets.token_bytes(32)))
+            with self.assertRaises(ValueError) as cm:
+                self.cmd(fn, a, ui, 'cryptography', index_cipher='efs')
+            self.assertEqual(str(cm.exception), t('efs_foreign_files', dir=folder))
+            self.assertEqual((ui.shown, ui.asked, ui.entries), ([], [], 0))  # before the code window
+            self.assertEqual((os.path.exists(crypto.settings_path(a.db)), os.listdir(self.share)), (False, []))  # no key, no ciphers
+            self.assertEqual([crypto.efs_on(p) for p in (home, folder, os.path.dirname(report), report, a.db)], [False] * 5)
+            with open(report, encoding='utf-8') as f:
+                self.assertEqual(f.read(), 'the owner\'s file')
+
+    def test_efs_in_an_index_folder_of_its_own_beside_a_home_folder(self):  # the names the mod makes there are no foreign files
+        a = self.a
+        home, folder = self.apart(a)
+        folder, backup, handoff, lock = self.efs_files(a)
+        job = os.path.join(folder, 'job.xml')
+        with open(job, 'w', encoding='utf-8') as f:
+            f.write('<Task/>')
+        self.assertTrue(self.efs(a)['done'])
+        paths = (home, crypto.settings_path(a.db), folder, a.db, backup, os.path.dirname(handoff), handoff, job)
+        self.assertEqual([crypto.efs_on(p) for p in paths], [True] * len(paths))
+        self.assertTrue(self.cmd(encrypt.off, a, FakeUI())['done'])
+        self.assertEqual([crypto.efs_on(p) for p in paths], [False] * len(paths))
 
     def busy(self, times):
         """An efs_encrypt that finds the index in use `times` times (a sharing violation, 32); `.calls` counts them."""
