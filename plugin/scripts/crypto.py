@@ -196,6 +196,19 @@ def efs_on(path):
         return False
 
 
+def _efs_denied(path):
+    """EFS holds `path` and Windows answers "access denied" (5) to a read of it. open() and SQLite tell no Windows code, so the file is tried
+    once more with the plain API: a file in use (32), any other code, or no failure at all is no refusal and the caller's error stands."""
+    if not efs_on(path):
+        return False
+    import _winapi
+    try:
+        _winapi.CloseHandle(_winapi.CreateFile(path, _winapi.GENERIC_READ, 7, 0, _winapi.OPEN_EXISTING, 0, 0))  # 7: share read, write and delete
+    except OSError as e:
+        return e.winerror == 5
+    return False
+
+
 def _efs(call, path, *more):
     if not getattr(ctypes.WinDLL('advapi32', use_last_error=True), call)(path, *more):
         raise ctypes.WinError(ctypes.get_last_error())  # an OSError with winerror; a file in use is for the caller to retry
@@ -216,8 +229,8 @@ def is_encrypted(path):
             head = f.read(16)
     except FileNotFoundError:
         return False
-    except PermissionError:  # shortcut: open() gives the same error for EFS's refusal and for a file in use, so under EFS both read as the refusal
-        if efs_on(path):
+    except PermissionError:  # the same error for a refusal and for a file in use: _efs_denied tells which
+        if _efs_denied(path):
             raise ValueError(t('index_efs_denied', path=path)) from None
         raise
     return bool(head) and head != b'SQLite format 3\x00'
@@ -228,7 +241,7 @@ def plain_db(path, timeout=30):
     try:
         conn = sqlite3.connect(path, isolation_level=None, timeout=timeout)
     except sqlite3.OperationalError as e:
-        if 'unable to open' in str(e) and efs_on(path):
+        if 'unable to open' in str(e) and _efs_denied(path):
             raise ValueError(t('index_efs_denied', path=path)) from None
         raise
     conn.execute('PRAGMA temp_store = MEMORY')  # %TEMP% is not under EFS: nothing of the index may spill there in clear

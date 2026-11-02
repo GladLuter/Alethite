@@ -16,6 +16,19 @@ KEY = bytes(range(32))
 dpapi = unittest.skipUnless(os.name == 'nt', 'DPAPI is Windows only')
 
 
+def deny_read(test, path):
+    """Windows refuses the current user a read of `path`, as EFS does for the file of another user; the cleanup gives it back."""
+    subprocess.run(['icacls', path, '/deny', os.environ['USERNAME'] + ':(R,RD)'], check=True, capture_output=True)
+    test.addCleanup(subprocess.run, ['icacls', path, '/reset'], capture_output=True)
+
+
+def hold(test, path):
+    """Another program has `path` open without sharing: a read of it fails as a file in use."""
+    import _winapi
+    handle = _winapi.CreateFile(path, _winapi.GENERIC_READ, 0, 0, _winapi.OPEN_EXISTING, 0, 0)
+    test.addCleanup(_winapi.CloseHandle, handle)
+
+
 def bad(test, fn, text, *args):
     """fn(*args) raises a ValueError whose message is exactly `text`: the key or the code never rides along in it."""
     with test.assertRaises(ValueError) as cm:
@@ -393,27 +406,49 @@ class DbTest(unittest.TestCase):
             plain.close()
             enc.close()
 
-    def test_plain_db_denied_by_efs(self):
-        with open(self.path, 'wb') as f:
-            f.write(b'x')
-        refuse = mock.patch.object(sqlite3, 'connect', side_effect=sqlite3.OperationalError('unable to open database file'))
-        with refuse, mock.patch.object(crypto, 'efs_on', return_value=True):
-            bad(self, crypto.plain_db, t('index_efs_denied', path=self.path), self.path)
-        with refuse, mock.patch.object(crypto, 'efs_on', return_value=False), self.assertRaises(sqlite3.OperationalError):  # a refusal that is not EFS's stays as it is
-            crypto.plain_db(self.path)
-        with mock.patch.object(sqlite3, 'connect', side_effect=sqlite3.OperationalError('disk I/O error')), \
-                mock.patch.object(crypto, 'efs_on', return_value=True), self.assertRaises(sqlite3.OperationalError):
+    def an_index(self, efs):
+        """An index.db with a table; `efs`: in a folder that EFS holds."""
+        if efs:
+            crypto.efs_encrypt(os.path.dirname(self.path))
+        c = crypto.plain_db(self.path)
+        c.execute('CREATE TABLE t(x)')
+        c.close()
+        self.assertEqual(crypto.efs_on(self.path), efs)
+
+    # open() and SQLite tell no Windows code (winerror is None, SQLite says "unable to open"): what Windows answered decides, and only
+    # "access denied" under EFS is a refusal of EFS; the tests make the real thing, an ACL that denies the read and a file held without sharing
+    @dpapi
+    def test_efs_refusal_is_index_efs_denied(self):
+        self.an_index(True)
+        before = (os.path.getsize(self.path), os.stat(self.path).st_mtime_ns)
+        deny_read(self, self.path)
+        for fn in (crypto.is_encrypted, crypto.plain_db):
+            bad(self, fn, t('index_efs_denied', path=self.path), self.path)
+        self.assertEqual((os.path.getsize(self.path), os.stat(self.path).st_mtime_ns), before)
+        self.assertEqual(os.listdir(os.path.dirname(self.path)), ['index.db'])
+
+    @dpapi
+    def test_a_file_in_use_under_efs_is_no_refusal(self):  # sharing violation (32): the owner would be told to remove a good index
+        self.an_index(True)
+        hold(self, self.path)
+        with self.assertRaises(PermissionError):
+            crypto.is_encrypted(self.path)
+        with self.assertRaises(sqlite3.OperationalError):
             crypto.plain_db(self.path)
 
     @dpapi
-    def test_header_of_an_efs_file_that_is_refused_is_efs_denied(self):  # the read of the header fails first, as Windows says "access denied"
-        crypto.efs_encrypt(os.path.dirname(self.path))
-        with open(self.path, 'wb') as f:
-            f.write(b'x')
-        with mock.patch('builtins.open', side_effect=PermissionError(13, 'Permission denied')):
-            bad(self, crypto.is_encrypted, t('index_efs_denied', path=self.path), self.path)
-            with mock.patch.object(crypto, 'efs_on', return_value=False), self.assertRaises(PermissionError):  # outside EFS it is as it was
-                crypto.is_encrypted(self.path)
+    def test_a_refusal_outside_efs_stays_as_it_was(self):
+        self.an_index(False)
+        deny_read(self, self.path)
+        with self.assertRaises(PermissionError):
+            crypto.is_encrypted(self.path)
+        with self.assertRaises(sqlite3.OperationalError):
+            crypto.plain_db(self.path)
+
+    def test_only_unable_to_open_is_looked_at(self):
+        with mock.patch.object(sqlite3, 'connect', side_effect=sqlite3.OperationalError('disk I/O error')), \
+                mock.patch.object(crypto, '_efs_denied', side_effect=AssertionError('looked')), self.assertRaises(sqlite3.OperationalError):
+            crypto.plain_db(self.path)
 
     def test_is_encrypted(self):
         self.assertFalse(crypto.is_encrypted(self.path))  # no file

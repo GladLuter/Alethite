@@ -10,6 +10,7 @@ from unittest import mock
 import crypto
 import memdb
 from memdb import connect, cut, expand, owner_count, status, update, word_hits
+from test_crypto import deny_read, hold
 from texts import t
 from transcripts import project_key
 
@@ -205,17 +206,32 @@ class EncryptedIndexTest(unittest.TestCase):
         open(self.db, 'wb').close()
         self.assertEqual(self.pragma('page_size'), 16384)
 
-    def test_efs_index_denied_is_an_error(self):
+    def efs_index(self):
+        crypto.efs_encrypt(os.path.dirname(self.db))
         connect(self.db).close()
-        before = (os.path.getsize(self.db), os.stat(self.db).st_mtime_ns)
-        refuse = mock.patch.object(sqlite3, 'connect', side_effect=sqlite3.OperationalError('unable to open database file'))
-        with refuse, mock.patch.object(crypto, 'efs_on', return_value=True), self.assertRaises(ValueError) as cm:
+        self.assertTrue(crypto.efs_on(self.db))
+        return os.path.getsize(self.db), os.stat(self.db).st_mtime_ns
+
+    def assert_untouched(self, before):
+        self.assertEqual((os.path.getsize(self.db), os.stat(self.db).st_mtime_ns), before)
+        self.assertEqual(os.listdir(os.path.dirname(self.db)), ['index.db'])  # no new index beside it
+
+    @dpapi
+    def test_efs_index_denied_is_an_error(self):  # "access denied" (5) of a file that EFS holds: never a new empty index in its place
+        before = self.efs_index()
+        deny_read(self, self.db)
+        with self.assertRaises(ValueError) as cm:
             connect(self.db)
         self.assertEqual(str(cm.exception), t('index_efs_denied', path=self.db))
-        self.assertEqual((os.path.getsize(self.db), os.stat(self.db).st_mtime_ns), before)
-        self.assertEqual(os.listdir(os.path.dirname(self.db)), ['index.db'])
-        with refuse, self.assertRaises(sqlite3.OperationalError):  # the same refusal of a folder that EFS does not hold stays as it is
+        self.assert_untouched(before)
+
+    @dpapi
+    def test_a_busy_efs_index_is_not_denied(self):  # in use (32): the owner would be told to remove a good index; the error stays what it was
+        before = self.efs_index()
+        hold(self, self.db)
+        with self.assertRaises(PermissionError):
             connect(self.db)
+        self.assert_untouched(before)
 
     def test_peers_gen_added(self):
         old = sqlite3.connect(self.db)

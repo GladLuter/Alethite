@@ -93,7 +93,7 @@ EN = {
     'seal_broken': 'a sealed file does not open: it is damaged, it was moved from its place, or it was written under another key',
     'key_wrong': 'this key does not open the encrypted index: enter the recovery code of the right key with /cg-encrypt join',
     'key_missing': 'the index is encrypted and this computer has no key for it: enter the recovery code with /cg-encrypt join',
-    'index_efs_denied': 'the index {path} is encrypted by EFS and this Windows account cannot open it (another user, or the certificate is lost): restore the certificate, or remove the file and build the index again from the sync folder',
+    'index_efs_denied': 'the index {path} is encrypted by EFS and this Windows account cannot open it (another user, or the certificate is lost): first check that no other program holds the file and try again; only if that does not help, restore the certificate or remove the file and build the index again from the sync folder',
 
     # encrypt.py: the commands that turn encryption on and off, and the windows they ask in
     'encrypt_unsupported': 'encryption of the index and the sync folder works on Windows only for now',
@@ -241,7 +241,7 @@ RU = {
     'seal_broken': 'запечатанный файл не открывается: он повреждён, перенесён со своего места или записан под другим ключом',
     'key_wrong': 'этот ключ не открывает зашифрованный индекс: введите код восстановления нужного ключа командой /cg-encrypt join',
     'key_missing': 'индекс зашифрован, а ключа на этом компьютере нет: введите код восстановления командой /cg-encrypt join',
-    'index_efs_denied': 'индекс {path} зашифрован EFS, а эта учётная запись Windows не может его открыть (другой пользователь или утерян сертификат): восстановите сертификат или уберите файл и соберите индекс заново из папки синхронизации',
+    'index_efs_denied': 'индекс {path} зашифрован EFS, а эта учётная запись Windows не может его открыть (другой пользователь или утерян сертификат): сначала проверьте, что файл не занят другой программой, и повторите; только если не помогло, восстановите сертификат или уберите файл и соберите индекс заново из папки синхронизации',
 
     'encrypt_unsupported': 'шифрование индекса и папки синхронизации пока работает только в Windows',
     'encrypt_use_join': '{machine} уже выкладывает зашифрованное под ключом, которого на этом компьютере нет: не начинайте другой, введите его код восстановления командой /cg-encrypt join',
@@ -386,7 +386,7 @@ UK = {
     'seal_broken': 'запечатаний файл не відкривається: він пошкоджений, перенесений зі свого місця або записаний під іншим ключем',
     'key_wrong': 'цей ключ не відкриває зашифрований індекс: введіть код відновлення потрібного ключа командою /cg-encrypt join',
     'key_missing': "індекс зашифрований, а ключа на цьому комп'ютері немає: введіть код відновлення командою /cg-encrypt join",
-    'index_efs_denied': 'індекс {path} зашифрований EFS, а цей обліковий запис Windows не може його відкрити (інший користувач або втрачено сертифікат): відновіть сертифікат або приберіть файл і зберіть індекс заново з теки синхронізації',
+    'index_efs_denied': 'індекс {path} зашифрований EFS, а цей обліковий запис Windows не може його відкрити (інший користувач або втрачено сертифікат): спершу перевірте, що файл не зайнятий іншою програмою, і повторіть; лише якщо не допомогло, відновіть сертифікат або приберіть файл і зберіть індекс заново з теки синхронізації',
 
     'encrypt_unsupported': 'шифрування індексу й теки синхронізації поки працює лише у Windows',
     'encrypt_use_join': "{machine} уже викладає зашифроване під ключем, якого на цьому комп'ютері немає: не починайте інший, введіть його код відновлення командою /cg-encrypt join",
