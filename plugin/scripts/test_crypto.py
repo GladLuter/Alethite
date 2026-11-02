@@ -109,11 +109,33 @@ class HomeTest(unittest.TestCase):
         busy = PermissionError(13, 'in use', None, 32)
         with mock.patch('os.rename', side_effect=busy) as rename, mock.patch('time.sleep') as sleep:
             self.assertEqual(crypto.move_home(), [t('home_move_failed', old=self.old, new=self.new, e=busy)])
-        self.assertEqual(rename.call_count, 100)
+        self.assertEqual((rename.call_count, sleep.call_count), (100, 99))  # a wait between the tries, none after the last
         sleep.assert_called_with(0.1)
         self.assertEqual(crypto.HOME_DIR, self.old)  # this process goes on in the folder that is still there
         self.assertFalse(os.path.exists(self.new))
         self.assertEqual(len(self.files(self.old)), 3)
+
+    def test_move_home_without_wait_tries_once(self):  # a command the mod kills after 8 s cannot wait 10 s for the folder
+        self.fill(self.old)
+        busy = PermissionError(13, 'in use', None, 32)
+        with mock.patch('os.rename', side_effect=busy) as rename, mock.patch('time.sleep') as sleep:
+            self.assertEqual(crypto.move_home(wait=False), [t('home_move_failed', old=self.old, new=self.new, e=busy)])
+        self.assertEqual((rename.call_count, sleep.call_count, crypto.HOME_DIR), (1, 0, self.old))
+        self.assertEqual(crypto.move_home(self.old, self.new, wait=False), [])  # and a free folder moves at the first try
+        self.assertEqual((os.path.exists(self.old), len(self.files(self.new))), (False, 3))
+
+    def test_move_home_lost_race_is_no_failure(self):  # another first run moved the folder between our checks and our rename
+        real = os.rename
+        for err in (FileNotFoundError(2, 'gone', None, 2), FileExistsError(80, 'exists', None, 183)):
+            self.fill(self.old)
+
+            def other_run(old, new, err=err):
+                real(old, new)
+                raise err
+            with mock.patch('os.rename', side_effect=other_run), mock.patch('time.sleep'):
+                self.assertEqual(crypto.move_home(), [], err)
+            self.assertEqual((crypto.HOME_DIR, os.path.exists(self.old), len(self.files(self.new))), (self.new, False, 3), err)  # no old folder is made again
+            real(self.new, self.old)  # the next round starts from the old folder again
 
     def test_move_home_another_error_is_told_at_once(self):
         self.fill(self.old)

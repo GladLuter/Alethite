@@ -659,11 +659,14 @@ class CgTest(unittest.TestCase):
     def test_main_reports_home_notes(self):
         old, new = self.old_home()
         busy = PermissionError(13, 'in use', None, 32)
-        for cmd in (('status',), ('last-turn', '--session', 'S1'), ('last-turn', '--session', '..\\x')):  # an index answer, a short one, an error
-            with mock.patch.object(crypto, 'HOME_DIR', new), mock.patch('os.rename', side_effect=busy), mock.patch('time.sleep'):  # one process per run, as in life
+        # an index answer, the short ones (the mod kills them after 8 s: one try, no wait) and an error answer
+        for cmd, tries in ((('status',), 100), (('last-turn', '--session', 'S1'), 1), (('lessons-match', '--text', '429', '--model', 'nosuch'), 1),
+                           (('last-turn', '--session', '..\\x'), 1)):
+            with mock.patch.object(crypto, 'HOME_DIR', new), mock.patch('os.rename', side_effect=busy) as rename, mock.patch('time.sleep') as sleep:  # one process per run, as in life
                 code, out, _ = self.main_home(*cmd)
             self.assertEqual(out['home_notes'], [t('home_move_failed', old=old, new=new, e=busy)], cmd)
             self.assertEqual(code, int('error' in out), cmd)
+            self.assertEqual((rename.call_count, sleep.call_count), (tries, tries - 1), cmd)
         self.assertEqual(out['error'], 'ValueError: ' + t('bad_session', id='..\\x'))
 
     def test_with_db_the_home_settings_are_not_read_at_all(self):

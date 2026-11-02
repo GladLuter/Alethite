@@ -40,17 +40,20 @@ def norm(path):
     return os.path.normcase(os.path.abspath(path))
 
 
-def move_home(old=None, new=None):
+def move_home(old=None, new=None, wait=True):
     """The old mod folder becomes the new one, once (a rename: the settings, the index and the handoffs go with it). The notes for `home_notes`, in
-    the owner's language: none when there is nothing to move or it went through. A folder in use (5, 32) is waited for up to 10 s, then this
-    process goes on in the old one; another refusal is told at once, as is a new folder next to the old one (nothing is moved or merged then)."""
+    the owner's language: none when there is nothing to move or it went through. A folder in use (5, 32) is waited for up to 10 s (`wait`; without
+    it one try, for a command the mod kills after 8 s), then this process goes on in the old one; another refusal is told at once, as is a new
+    folder next to the old one (nothing is moved or merged then)."""
     global HOME_DIR
     old, new = old or OLD_HOME_DIR, new or HOME_DIR
     if not os.path.isdir(old):
         return []
     if os.path.exists(new):
         return [t('home_move_both', old=old, new=new)]
-    for _ in range(100):
+    for i in range(100 if wait else 1):
+        if i:
+            time.sleep(0.1)
         try:
             os.rename(old, new)
             return []
@@ -58,7 +61,8 @@ def move_home(old=None, new=None):
             err = e
             if e.winerror not in (5, 32):
                 break
-            time.sleep(0.1)
+    if not os.path.exists(old) and os.path.isdir(new):  # another first run moved it between our checks and our rename: nothing failed
+        return []
     HOME_DIR = old
     return [t('home_move_failed', old=old, new=new, e=err)]
 

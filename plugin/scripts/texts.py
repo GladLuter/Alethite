@@ -159,7 +159,7 @@ EN = {
     'index_dir_merge_pending': 'the records saved in {home} while the index folder {dir} was away are not merged into the index there yet. The next run of the mod merges them. Then repeat the command. Nothing was changed',
     'encrypt_index_away': 'the index folder {dir} is away, or what was saved in {home} meanwhile is not merged into it yet. Turning encryption on or off now would change only one of the two indexes, and they would no longer match. Nothing was changed. Repeat the command when the folder is back and the merge is done',
     'home_move_failed': 'the mod folder {old} could not be moved to {new}: {e}. The mod works in {old} for now and tries again on the next run',
-    'home_move_both': 'the old mod folder {old} and the new one {new} both exist, so nothing was moved. The mod works in {new}. Copy what you need from the old one (settings.json, index.db, handoffs) by hand, then delete {old}',
+    'home_move_both': 'the old mod folder {old} is still there next to {new}. A chat with the old mod, one that was not reloaded, made it again. Nothing was moved and the mod works in {new}. Check {old} and delete it',
 }
 
 RU = {
@@ -311,7 +311,7 @@ RU = {
     'index_dir_merge_pending': 'записи, сохранённые в {home}, пока папки индекса {dir} не было, ещё не влиты в индекс там. Следующий запуск мода их вольёт. Потом повторите команду. Ничего не изменено',
     'encrypt_index_away': 'папки индекса {dir} сейчас нет, либо то, что сохранилось за это время в {home}, ещё не влито в неё. Включение или выключение шифрования сейчас изменило бы только один из двух индексов, и они перестали бы совпадать. Ничего не изменено. Повторите команду, когда папка вернётся и слияние пройдёт',
     'home_move_failed': 'папку мода {old} не удалось перенести в {new}: {e}. Пока мод работает в {old}, перенос повторится при следующем запуске',
-    'home_move_both': 'есть и старая папка мода {old}, и новая {new}, поэтому ничего не перенесено. Мод работает в {new}. Нужное из старой (settings.json, index.db, handoffs) перенесите вручную, потом удалите {old}',
+    'home_move_both': 'старая папка мода {old} осталась рядом с {new}. Её снова создал чат со старым модом, который не перезагружали. Ничего не перенесено, мод работает в {new}. Проверьте {old} и удалите её',
 }
 
 UK = {
@@ -463,7 +463,7 @@ UK = {
     'index_dir_merge_pending': 'записи, збережені в {home}, поки теки індексу {dir} не було, ще не влиті в індекс там. Наступний запуск мода їх влиє. Потім повторіть команду. Нічого не змінено',
     'encrypt_index_away': 'теки індексу {dir} зараз немає, або те, що збереглося за цей час у {home}, ще не влито в неї. Вмикання чи вимикання шифрування зараз змінило б лише один із двох індексів, і вони перестали б збігатися. Нічого не змінено. Повторіть команду, коли тека повернеться і злиття пройде',
     'home_move_failed': 'теку мода {old} не вдалося перенести в {new}: {e}. Поки що мод працює в {old}, перенесення повториться під час наступного запуску',
-    'home_move_both': 'є і стара тека мода {old}, і нова {new}, тому нічого не перенесено. Мод працює в {new}. Потрібне зі старої (settings.json, index.db, handoffs) перенесіть вручну, потім видаліть {old}',
+    'home_move_both': 'стара тека мода {old} лишилась поруч із {new}. Її знову створив чат зі старим модом, який не перезавантажували. Нічого не перенесено, мод працює в {new}. Перевірте {old} і видаліть її',
 }
 
 TABLES = {'en': EN, 'ru': RU, 'uk': UK}

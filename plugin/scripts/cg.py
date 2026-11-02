@@ -499,7 +499,7 @@ def main(argv):
         a = _parser().parse_args(argv)
         texts.lang = a.lang
         if a.db is None:
-            home_notes = crypto.move_home()  # first: the settings and the index are read from the new folder, a run with --db leaves the old one alone
+            home_notes = crypto.move_home(wait=a.cmd not in SHORT)  # first: the settings and the index are read from the new folder, a run with --db leaves the old one alone
             try:
                 a.where = indexdir.resolve()
             except (ValueError, OSError) as e:
