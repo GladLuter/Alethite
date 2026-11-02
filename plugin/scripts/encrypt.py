@@ -31,11 +31,12 @@ def _size(path):
         return 0
 
 
-def _can(cipher):
-    """Before anything is touched: the system, and the packages this needs."""
+def _can(db, index_cipher, cipher):
+    """Before anything is touched: the system, and the packages this needs. SQLCipher is loaded for a cipher that is one, or an index that is."""
     if not SUPPORTED:
         raise ValueError(t('encrypt_unsupported'))
-    crypto.need('sqlcipher')
+    if index_cipher == 'sqlcipher' or any(crypto.is_encrypted(p) for p in _files(db)):
+        crypto.need('sqlcipher')
     crypto.need(cipher)
 
 
@@ -68,6 +69,7 @@ def _open(path, key):
     import sqlcipher3
     conn = sqlcipher3.connect(path, isolation_level=None, timeout=30)
     conn.execute('PRAGMA cipher_log_level = NONE')
+    conn.execute('PRAGMA temp_store = MEMORY')  # as in crypto.plain_db
     return conn
 
 
@@ -104,10 +106,11 @@ def _replace(new, path, stamp):
     raise ValueError(t('encrypt_busy'))
 
 
-def _convert(path, was, now, keep=None):
+def _convert(path, was, now, keep=None, page=None):
     """The database at `path` under another key (`was` to `now`, None is open): a copy is made beside it under the write lock of the
     original, counted against it from a fresh open, and only then put in its place. `keep` is a hard link to the original made just
-    before, so the old file outlives the replacing. A `.cg-new` of a run that died is cleared by the caller."""
+    before, so the old file outlives the replacing. `page`: the page size of an open copy (an encrypted one always has the index's).
+    A `.cg-new` of a run that died is cleared by the caller."""
     new = path + '.cg-new'
     try:
         src = _open(path, was)
@@ -115,6 +118,8 @@ def _convert(path, was, now, keep=None):
             src.execute('ATTACH DATABASE ? AS target KEY ?', (new, "x'%s'" % now.hex() if now else ''))
             if now:
                 src.execute('PRAGMA target.cipher_page_size = %d' % crypto.INDEX_PAGE)
+            elif page:
+                src.execute('PRAGMA target.page_size = %d' % page)
             src.execute('BEGIN IMMEDIATE')
             src.execute("SELECT sqlcipher_export('target')")
             want = _counts(src)
@@ -163,6 +168,67 @@ def _encrypt_file(path, key, ui, notes):
         _convert(path, None, key, keep=plain)
     if os.path.exists(plain):
         _drop_plain(plain, ui, notes)
+
+
+# ---- the index under EFS: the files stay plain SQLite, the folders they lie in are encrypted by Windows
+
+def _efs_dirs(db):
+    """The mod's folder (the settings file lies there) and the index's, once each."""
+    return list(dict.fromkeys((os.path.dirname(crypto.settings_path(db)), os.path.dirname(db))))
+
+
+def _efs_do(fn, path):
+    """`fn` (efs_encrypt or efs_decrypt) on `path`. A file in use is waited for up to 10 s, like _replace; any other refusal is told with the path."""
+    for _ in range(100):
+        try:
+            return fn(path)
+        except OSError as e:
+            if e.winerror != 32:
+                raise ValueError(t('efs_failed', dir=path, e=e)) from None
+            time.sleep(0.1)
+    raise ValueError(t('encrypt_busy'))
+
+
+def _efs_probe(db):
+    """Before the key, the code or any file: the volumes of both folders have EFS, and the first EncryptFileW (on the mod's folder) goes through.
+    A Windows Home refuses it here."""
+    dirs = _efs_dirs(db)
+    for d in dirs:
+        try:
+            supported = crypto.efs_supported(d)
+        except OSError as e:  # a drive that is not there or not ready
+            raise ValueError(t('efs_failed', dir=d, e=e)) from None
+        if not supported:
+            raise ValueError(t('efs_unsupported', dir=d))
+    _efs_do(crypto.efs_encrypt, dirs[0])
+
+
+def _efs_all(db, fn, want):
+    """`fn` on every folder and file of both folders whose EFS bit is not `want` yet, a folder before what lies in it (from then on a file made
+    there is born encrypted). Not the lock files: they are empty, and the caller holds them open."""
+    for top in _efs_dirs(db):
+        for d, _, names in os.walk(top):
+            for p in [d] + [os.path.join(d, n) for n in names if not n.endswith('.lock')]:
+                if crypto.efs_on(p) != want:
+                    _efs_do(fn, p)
+
+
+def _to_efs(path, key):
+    """One index file, in a folder under EFS already, as a plain database with 16 KB pages: SQLCipher is converted (the copy is born
+    encrypted in the same folder, so nothing plain lies outside EFS), a plain one with smaller pages is vacuumed into them."""
+    _remove(path + '.cg-new')  # a whole copy of a run that died, in whichever form
+    if not _size(path):
+        return
+    if crypto.is_encrypted(path):
+        _convert(path, key, None, page=crypto.INDEX_PAGE)
+        return
+    conn = crypto.plain_db(path)
+    try:
+        if conn.execute('PRAGMA page_size').fetchone()[0] < crypto.INDEX_PAGE:
+            conn.execute('PRAGMA page_size = %d' % crypto.INDEX_PAGE)
+            conn.execute('VACUUM')
+    finally:
+        conn.close()
 
 
 # ---- the sync folder
@@ -216,10 +282,15 @@ def _share(conn, sync_dir, machine, key, cipher, ui, notes, **kw):
     _flag(conn, None)
 
 
-def _encrypt(db, sync_dir, cipher, machine, ui, key, notes, **kw):
+def _encrypt(db, sync_dir, cipher, machine, ui, key, notes, index_cipher, **kw):
     """What `on` and `join` do once the key is in the settings: the index files, then the sync folder."""
-    for path in _files(db):
-        _encrypt_file(path, key, ui, notes)
+    if index_cipher == 'efs':
+        _efs_all(db, crypto.efs_encrypt, True)  # all of it first: what _to_efs writes beside a file is born encrypted
+        for path in _files(db):
+            _to_efs(path, key)
+    else:
+        for path in _files(db):
+            _encrypt_file(path, key, ui, notes)
     if sync_dir:
         with contextlib.closing(memdb.connect(db)) as conn:
             _share(conn, sync_dir, machine, key, cipher, ui, notes, **kw)
@@ -227,11 +298,14 @@ def _encrypt(db, sync_dir, cipher, machine, ui, key, notes, **kw):
 
 # ---- the commands
 
-def on(db, sync_dir, cipher, machine, ui, model=MODEL, memory_dir=None, project_cwd=None, seconds=600):
-    """Encryption on: a key (shown once as a recovery code), the index files encrypted, the sync folder switched to `cipher`, which goes into
-    the settings file beside the key (the background job reads it there) on every run. With the key in the settings already the code is not
-    shown again. `seconds`: how long to push to the sync folder."""
-    _can(cipher)
+def on(db, sync_dir, cipher, machine, ui, index_cipher='sqlcipher', model=MODEL, memory_dir=None, project_cwd=None, seconds=600):
+    """Encryption on: a key (shown once as a recovery code), the index files encrypted by `index_cipher` ('efs': their folders are, and the
+    files become plain SQLite with 16 KB pages), the sync folder switched to `cipher`; both go into the settings file beside the key (the
+    background job reads them there) on every run. With the key in the settings already the code is not shown again. `seconds`: how long to
+    push to the sync folder."""
+    _can(db, index_cipher, cipher)
+    if index_cipher == 'efs':
+        _efs_probe(db)
     settings, key = _key(db)
     machine = machine or sync.machine_name()
     for peer, gen in _shared(sync_dir).items():  # a computer is encrypted already, this one too after a reinstall: its key is ours to join, not a second one to make
@@ -244,16 +318,19 @@ def on(db, sync_dir, cipher, machine, ui, model=MODEL, memory_dir=None, project_
         ui.show_code(crypto.make_code(key))
         if not ui.confirm(t('dlg_code_saved')):
             return _result('on', [t('code_not_saved')])
-    crypto.save_key(settings, key, cipher)  # a new key and the cipher in one write; a key that is there is written again (same key, new blob)
+    crypto.save_key(settings, key, cipher, index_cipher)  # a new key and the ciphers in one write; a key that is there is written again (same key, new blob)
     notes = []
-    _encrypt(db, sync_dir, cipher, machine, ui, key, notes, model=model, memory_dir=memory_dir, project_cwd=project_cwd, max_seconds=seconds)
+    _encrypt(db, sync_dir, cipher, machine, ui, key, notes, index_cipher, model=model, memory_dir=memory_dir, project_cwd=project_cwd,
+             max_seconds=seconds)
     return _result('on', notes)
 
 
-def join(db, sync_dir, cipher, machine, ui, model=MODEL, memory_dir=None, project_cwd=None, seconds=600):
+def join(db, sync_dir, cipher, machine, ui, index_cipher='sqlcipher', model=MODEL, memory_dir=None, project_cwd=None, seconds=600):
     """The key of another computer entered from its recovery code, after it was checked against what it must open (the encrypted data in the
     sync folder, the encrypted index here), then the same as `on`. Also the way back when the key here was lost."""
-    _can(cipher)
+    _can(db, index_cipher, cipher)
+    if index_cipher == 'efs':
+        _efs_probe(db)
     code = ui.ask_code()
     if code is None:
         return {'action': 'join', 'done': False, 'notes': []}
@@ -274,21 +351,24 @@ def join(db, sync_dir, cipher, machine, ui, model=MODEL, memory_dir=None, projec
         crypto.open_db(db, key, page=crypto.INDEX_PAGE).close()
     elif not fingerprints:
         raise ValueError(t('code_unverifiable'))
-    crypto.save_key(settings, key, cipher)
+    crypto.save_key(settings, key, cipher, index_cipher)
     notes = []
-    _encrypt(db, sync_dir, cipher, machine or sync.machine_name(), ui, key, notes, model=model, memory_dir=memory_dir,
+    _encrypt(db, sync_dir, cipher, machine or sync.machine_name(), ui, key, notes, index_cipher, model=model, memory_dir=memory_dir,
              project_cwd=project_cwd, max_seconds=seconds)
     return _result('join', notes)
 
 
 def off(db, sync_dir, machine, ui, model=MODEL, memory_dir=None, project_cwd=None, seconds=600):
-    """Encryption off: the index files open again (the encrypted ones are replaced, no copy is kept), the key gone from the settings, our
-    folder in the sync folder open again. The flag in the index that lets the sync leave an encrypted folder is set before the key goes."""
+    """Encryption off: the index files open again (the encrypted ones are replaced, no copy is kept), EFS taken off the folders that hold it
+    and what lies in them, the key gone from the settings, our folder in the sync folder open again. The flag in the index that lets the sync
+    leave an encrypted folder is set before the key goes."""
     settings, key = _key(db)
     for path in _files(db):
         _remove(path + '.cg-new')  # of a run that died: a plain copy of the encrypted index
         if crypto.is_encrypted(path):
             _convert(path, key, None)
+    if any(map(crypto.efs_on, _efs_dirs(db))):  # no walk through a folder that EFS does not hold
+        _efs_all(db, crypto.efs_decrypt, False)
     machine = machine or sync.machine_name()
     notes = []
     with contextlib.closing(memdb.connect(db)) as conn:
@@ -301,17 +381,18 @@ def off(db, sync_dir, machine, ui, model=MODEL, memory_dir=None, project_cwd=Non
 
 
 def status(db):
-    """Where encryption stands, from the files alone (the index is not opened): on or off, the index, the key, and what is left to finish."""
+    """Where encryption stands, from the files alone (the index is not opened): on or off, the index ('none', 'sqlcipher', 'efs' or 'plain'),
+    the key, and what is left to finish."""
     notes = []
     try:
         key = 'ok' if crypto.load_key(crypto.settings_path(db)) else 'missing'
     except (ValueError, OSError) as e:  # a key that cannot be opened, a settings file that is broken or cannot be opened; the text says which
         key = 'unreadable'
         notes.append(str(e))
-    state = 'none' if not _size(db) else 'encrypted' if crypto.is_encrypted(db) else 'plain'
-    if state == 'encrypted' and key == 'missing':
+    state = 'none' if not _size(db) else 'sqlcipher' if crypto.is_encrypted(db) else 'efs' if crypto.efs_on(db) else 'plain'
+    if state == 'sqlcipher' and key == 'missing':
         notes.append(t('key_missing'))
     if state == 'plain' and key == 'ok':
         notes.append(t('note_index_plain'))
     notes += [t('note_plain_kept', path=p + '.plain') for p in _files(db) if os.path.exists(p + '.plain')]
-    return {'on': key != 'missing' or state == 'encrypted', 'db': state, 'key': key, 'notes': notes}
+    return {'on': key != 'missing' or state in ('sqlcipher', 'efs'), 'db': state, 'key': key, 'notes': notes}

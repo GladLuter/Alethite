@@ -8,6 +8,7 @@ import secrets
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -634,7 +635,220 @@ class EncryptTest(unittest.TestCase):
         self.assertTrue(self.cmd(encrypt.join, b, FakeUI(code=crypto.make_code(key)), 'cryptography')['done'])
         self.assertEqual(fields(b)['shareCipher'], 'cryptography')
         self.assertTrue(self.cmd(encrypt.off, a, FakeUI())['done'])
-        self.assertEqual((fields(), self.key(a)), ({'language': 'ru', 'shareCipher': 'sqlcipher'}, None))  # off takes the key out and nothing else
+        self.assertEqual((fields(), self.key(a)), ({'language': 'ru', 'shareCipher': 'sqlcipher', 'indexCipher': 'sqlcipher'}, None))  # off takes the key out and nothing else
+
+    # the index under EFS
+    def efs(self, c, ui=None, cipher='cryptography', **kw):
+        return self.cmd(encrypt.on, c, ui or FakeUI(), cipher, index_cipher='efs', **kw)
+
+    def alone(self, c):
+        """A sync folder for `c` alone: two computers that each start with a key of their own would refuse each other's."""
+        path = os.path.join(self.root, 'share-' + c.name)
+        os.makedirs(path)
+        return path
+
+    def efs_files(self, c):
+        """What EFS is to hold beside the index of `c`: the backup of before stage 2, a handoff, and an empty lock file, which it leaves out."""
+        folder = os.path.dirname(c.db)
+        backup = self.old_backup(c)
+        handoff = os.path.join(folder, 'handoffs', 'S1.md')
+        os.makedirs(os.path.dirname(handoff))
+        with open(handoff, 'w', encoding='utf-8') as f:
+            f.write('передача дел')
+        lock = c.db + '.sync.lock'
+        open(lock, 'wb').close()
+        return folder, backup, handoff, lock
+
+    def assert_plain_16k(self, path, counts=None):
+        """An open SQLite file with 16 KB pages that the standard sqlite3 opens, holding `counts` of the index tables when given."""
+        self.assertFalse(crypto.is_encrypted(path))
+        conn = crypto.plain_db(path)
+        try:
+            self.assertEqual(conn.execute('PRAGMA page_size').fetchone(), (crypto.INDEX_PAGE,))
+            if counts:
+                self.assertEqual(self.counts(conn), counts)
+        finally:
+            conn.close()
+
+    def test_efs_on_from_plain(self):
+        a = self.a
+        folder, backup, handoff, lock = self.efs_files(a)
+        before = self.counts(a.conn)
+        self.assertEqual(a.conn.execute('PRAGMA page_size').fetchone(), (4096,))
+        ui = FakeUI()
+        res = self.efs(a, ui)
+        self.assertEqual((res['action'], res['done'], res['notes']), ('on', True, []))
+        settings = crypto.settings_path(a.db)
+        for p in (folder, a.db, backup, os.path.dirname(handoff), handoff, settings):
+            self.assertTrue(crypto.efs_on(p), p)
+        self.assertFalse(crypto.efs_on(lock))
+        self.assertEqual(ui.asked, [t('dlg_code_saved')])  # no open copy to delete: outside EFS there is none
+        self.assertEqual(len(ui.shown), 1)
+        self.assert_plain_16k(a.db, before)
+        self.assert_plain_16k(backup)
+        self.assertEqual([h['conv'] for h in search(a.conn, 'ёжик')], ['conv-a'])
+        with open(settings, encoding='utf-8') as f:
+            fields = json.load(f)
+        self.assertEqual((fields['indexCipher'], fields['shareCipher']), ('efs', 'cryptography'))
+        self.assertEqual([os.path.exists(a.db + s) for s in ('.plain', '.cg-new')], [False, False])
+        self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'efs', 'key': 'ok', 'notes': []})
+        self.assertEqual(cgsync.generation(self.own(a)).cipher, 'cryptography')
+
+    def test_efs_on_from_sqlcipher(self):
+        a = self.a
+        self.assertTrue(self.on(a)['done'])
+        before = self.counts(a.conn)
+        self.assertTrue(all(before.values()))
+        ui = FakeUI()
+        self.assertTrue(self.efs(a, ui, 'sqlcipher')['done'])
+        self.assertEqual((ui.shown, ui.asked), ([], []))  # the key is there; no open copy to ask about
+        self.assertTrue(crypto.efs_on(a.db) and crypto.efs_on(os.path.dirname(a.db)))
+        self.assert_plain_16k(a.db, before)
+        self.assertEqual([os.path.exists(a.db + s) for s in ('.plain', '.cg-new')], [False, False])
+        self.assertEqual(encrypt.status(a.db)['db'], 'efs')
+
+    def test_efs_on_unsupported_changes_nothing(self):
+        a = self.a
+        folder = os.path.dirname(a.db)
+        err = OSError(0, 'The request is not supported', None, 50)  # what a Windows without EFS answers
+        refusals = [(mock.patch.object(crypto, 'efs_supported', return_value=False), t('efs_unsupported', dir=folder)),
+                    (mock.patch.object(crypto, 'efs_encrypt', side_effect=err), t('efs_failed', dir=folder, e=err))]
+        for patch, text in refusals:
+            for fn in (encrypt.on, encrypt.join):
+                ui = FakeUI(code=crypto.make_code(secrets.token_bytes(32)))
+                with patch, self.assertRaises(ValueError) as cm:
+                    self.cmd(fn, a, ui, 'cryptography', index_cipher='efs')
+                self.assertEqual(str(cm.exception), text)
+                self.assertEqual((ui.shown, ui.asked, ui.entries), ([], [], 0))
+                self.assertEqual((os.path.exists(crypto.settings_path(a.db)), os.listdir(self.share)), (False, []))
+                self.assertEqual([crypto.efs_on(p) for p in (folder, a.db)], [False, False])
+
+    def busy(self, times):
+        """An efs_encrypt that finds the index in use `times` times (a sharing violation, 32); `.calls` counts them."""
+        real = crypto.efs_encrypt
+
+        def fn(path):
+            if os.path.basename(path) == 'index.db' and len(fn.calls) < times:
+                fn.calls.append(path)
+                raise OSError(0, 'in use', None, 32)
+            return real(path)
+
+        fn.calls = []
+        return fn
+
+    def test_efs_on_file_busy(self):
+        a = self.a
+        before, ui = self.counts(a.conn), FakeUI()
+        forever = self.busy(10 ** 6)
+        with mock.patch.object(crypto, 'efs_encrypt', forever), mock.patch('time.sleep'), self.assertRaises(ValueError) as cm:
+            self.efs(a, ui)
+        self.assertEqual(str(cm.exception), t('encrypt_busy'))
+        self.assertEqual(len(forever.calls), 100)  # 10 s of waiting at 0.1 s
+        self.assertEqual((crypto.is_encrypted(a.db), crypto.efs_on(a.db), self.counts(a.conn), len(ui.shown)), (False, False, before, 1))
+        self.assertIsNotNone(self.key(a))  # the key is kept: the repeat goes on from here, with no second code
+        waits, again = self.busy(3), FakeUI()
+        with mock.patch.object(crypto, 'efs_encrypt', waits), mock.patch('time.sleep'):
+            self.assertTrue(self.efs(a, again)['done'])  # and a file that is let go of in time is no failure
+        self.assertEqual((len(waits.calls), again.shown, crypto.efs_on(a.db)), (3, [], True))
+        self.assert_plain_16k(a.db, before)
+
+    def test_efs_on_repeat_after_cut(self):  # the folder is under EFS, the index is still SQLCipher, a half-made copy lies beside it
+        a = self.a
+        self.assertTrue(self.on(a)['done'])
+        before = self.counts(a.conn)
+        a.close()
+        crypto.efs_encrypt(os.path.dirname(a.db))
+        left = [a.db + '.cg-new', a.db + '.cg-new-journal']
+        for p in left:
+            with open(p, 'wb') as f:
+                f.write(b'plain text of the index')
+        self.assertTrue(self.efs(a, cipher='sqlcipher')['done'])
+        self.assertEqual([os.path.exists(p) for p in left], [False, False])
+        self.assert_plain_16k(a.db, before)
+        self.assertTrue(crypto.efs_on(a.db))
+
+    def test_efs_join_never_imports_sqlcipher3(self):  # Smart App Control: the package is there and cannot be loaded
+        a, b = self.a, self.b
+        with mock.patch.dict(sys.modules, {'sqlcipher3': None}):  # an import of it is an ImportError
+            ui = FakeUI()
+            self.assertTrue(self.efs(a, ui)['done'])
+            key = self.key(a)
+            self.assertTrue(self.cmd(encrypt.join, b, FakeUI(code=ui.shown[0]), 'cryptography', index_cipher='efs')['done'])
+            self.assertEqual((self.key(b), crypto.efs_on(b.db)), (key, True))
+            self.assert_plain_16k(b.db)
+            self.assertEqual(b.rows(), 4)  # B took A's records in
+            self.assertEqual(b.sync(key=key, cipher='cryptography')['errors'], [])
+            memdb.connect(b.db).close()
+        self.assertEqual(cgsync.generation(self.own(b)).cipher, 'cryptography')
+
+    def test_efs_off(self):
+        a = self.a
+        folder, backup, handoff, lock = self.efs_files(a)
+        self.assertTrue(self.efs(a)['done'])
+        before = self.counts(a.conn)
+        res = self.cmd(encrypt.off, a, FakeUI())
+        self.assertEqual((res['action'], res['done'], res['notes']), ('off', True, []))
+        for p in (folder, a.db, backup, os.path.dirname(handoff), handoff, crypto.settings_path(a.db)):
+            self.assertFalse(crypto.efs_on(p), p)
+        self.assertIsNone(self.key(a))
+        conn = sqlite3.connect(a.db)
+        self.assertEqual(self.counts(conn), before)
+        conn.close()
+        self.assertEqual(self.counts(a.conn), before)
+        self.assertEqual(encrypt.status(a.db), {'on': False, 'db': 'plain', 'key': 'missing', 'notes': []})
+
+    def test_off_without_efs_leaves_the_folders_alone(self):
+        a = self.a
+        self.assertTrue(self.on(a)['done'])
+        with mock.patch.object(encrypt, '_efs_all', side_effect=AssertionError):
+            self.assertTrue(self.cmd(encrypt.off, a, FakeUI())['done'])
+
+    def test_efs_to_sqlcipher(self):
+        a = self.a
+        self.assertTrue(self.efs(a, cipher='sqlcipher')['done'])
+        before, key = self.counts(a.conn), self.key(a)
+        ui = FakeUI()
+        self.assertTrue(self.on(a, ui)['done'])  # sqlcipher for the index too
+        self.assertTrue(crypto.is_encrypted(a.db))
+        self.assert_index_pages(a.db, key)
+        self.assertEqual(self.counts(a.conn), before)
+        self.assertTrue(crypto.efs_on(os.path.dirname(a.db)))  # the folder stays under EFS: it does no harm
+        self.assertEqual(ui.asked, [t('dlg_delete_plain', path=a.db + '.plain')])
+        with open(crypto.settings_path(a.db), encoding='utf-8') as f:
+            self.assertEqual(json.load(f)['indexCipher'], 'sqlcipher')
+        self.assertEqual(encrypt.status(a.db)['db'], 'sqlcipher')
+
+    def test_a_plain_file_opened_through_sqlcipher_keeps_temp_in_memory(self):
+        conn = encrypt._open(self.a.db, None)
+        try:
+            self.assertEqual(conn.execute('PRAGMA temp_store').fetchone()[0], 2)
+        finally:
+            conn.close()
+
+    def test_only_sqlcipher_asks_for_its_package(self):
+        a, b = self.a, self.b
+        alone = self.alone(b)
+        self.assertTrue(self.on(b, share=alone)['done'])
+        for c, share, want in ((a, None, False), (b, alone, True)):  # the index of b is SQLCipher: it is read to be converted
+            needed = []
+            with mock.patch.object(crypto, 'need', side_effect=needed.append):
+                self.assertTrue(self.efs(c, share=share)['done'])
+            self.assertEqual('sqlcipher' in needed, want, c.name)
+
+    def test_status_methods(self):
+        a, b = self.a, self.b
+        settings = crypto.settings_path(a.db)
+        self.assertEqual(encrypt.status(os.path.join(self.root, 'none', 'index.db'))['db'], 'none')
+        self.assertEqual(encrypt.status(a.db), {'on': False, 'db': 'plain', 'key': 'missing', 'notes': []})
+        crypto.save_key(settings, secrets.token_bytes(32))  # a key and an index that EFS does not hold
+        self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'plain', 'key': 'ok', 'notes': [t('note_index_plain')]})
+        crypto.save_key(settings, None)
+        self.assertTrue(self.efs(a)['done'])
+        self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'efs', 'key': 'ok', 'notes': []})
+        crypto.save_key(settings, None)
+        self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'efs', 'key': 'missing', 'notes': []})
+        self.assertTrue(self.on(b, share=self.alone(b))['done'])
+        self.assertEqual(encrypt.status(b.db), {'on': True, 'db': 'sqlcipher', 'key': 'ok', 'notes': []})
 
     # status and refusals
     def test_status(self):
@@ -651,9 +865,9 @@ class EncryptTest(unittest.TestCase):
             self.assertEqual(encrypt.status(a.db)['notes'], [t('settings_broken', path=settings)])
         self.write_settings(settings, {})
         self.assertTrue(self.on(a)['done'])
-        self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'encrypted', 'key': 'ok', 'notes': []})
+        self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'sqlcipher', 'key': 'ok', 'notes': []})
         crypto.save_key(settings, None)
-        self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'encrypted', 'key': 'missing', 'notes': [t('key_missing')]})
+        self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'sqlcipher', 'key': 'missing', 'notes': [t('key_missing')]})
 
     def test_unsupported_and_missing_package(self):
         a = self.a

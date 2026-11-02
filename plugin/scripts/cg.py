@@ -145,6 +145,17 @@ def _cipher(s, flag=None):
     return c
 
 
+def _index_cipher(s, flag=None):
+    """How the index is encrypted: --index-cipher, else indexCipher of the settings file, else sqlcipher; a name no cipher has is an error that
+    names the setting."""
+    c = flag or s.get('indexCipher')
+    if c is None:
+        return 'sqlcipher'
+    if c not in crypto.INDEX_CIPHERS:
+        raise ValueError(texts.t('index_cipher_bad', value=c))
+    return c
+
+
 def _key(a):
     """The key in the settings file of the index (the home one for an index in its folder), None when there is none. A settings file that cannot be read shows none, as it does to memdb.connect: the
     index it opened is plain then, and a sync refuses an encrypted share (share_needs_join) rather than write open data into it. The same
@@ -316,7 +327,7 @@ def _encrypt(a):
         ui = dialogs.WindowsUI()
         if a.action == 'off':
             return encrypt.off(a.db, sync_dir, a.machine, ui, **kw)
-        return getattr(encrypt, a.action)(a.db, sync_dir, _cipher(s, a.share_cipher), a.machine, ui, **kw)
+        return getattr(encrypt, a.action)(a.db, sync_dir, _cipher(s, a.share_cipher), a.machine, ui, index_cipher=_index_cipher(s, a.index_cipher), **kw)
 
 
 def _index_dir(a):
@@ -426,6 +437,7 @@ def _parser():
     s.add_argument('action', choices=('on', 'join', 'off', 'status'))
     s.add_argument('--sync-dir')  # the settings file's by default; '' leaves the sync folder alone
     s.add_argument('--share-cipher', choices=crypto.CIPHERS)
+    s.add_argument('--index-cipher', choices=crypto.INDEX_CIPHERS)  # of the index files; the settings file's by default
     s.add_argument('--machine')
     s.add_argument('--model', default=vectors.MODEL)
     s.add_argument('--memory-dir')

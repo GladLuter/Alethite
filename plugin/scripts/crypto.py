@@ -21,8 +21,9 @@ KEY_FIELD = 'encryptionKey'
 ENTROPY = b'Claude-CacheGuard'  # another program of the same user does not open the blob by accident
 PREFIX = 'dpapi:'
 CIPHERS = ('sqlcipher', 'cryptography')
+INDEX_CIPHERS = ('sqlcipher', 'efs')
 EXT = {None: '.jsonl.gz', 'sqlcipher': '.sqlcipher', 'cryptography': '.aesgcm'}
-INDEX_PAGE = 16384  # the encrypted index only: the vector read of recall is 0.2 s slower with the default 4096; containers keep 4096 (their format)
+INDEX_PAGE = 16384  # the SQLCipher index and the one under EFS: the vector read of recall is 0.2 s slower with the default 4096; containers keep 4096 (their format)
 # the package a cipher imports, lazily: without it the mod works as before with the encryption off. 'cryptography' is AES-GCM of Windows' own
 # bcrypt.dll and needs none (a package's unsigned .pyd may be blocked by Smart App Control)
 _MODULE = {'sqlcipher': 'sqlcipher3'}
@@ -157,13 +158,15 @@ def set_fields(settings, updates):
     atomic_write(settings, json.dumps(s, ensure_ascii=False, indent=2).encode('utf-8'))
 
 
-def save_key(settings, key, cipher=None):
-    """Puts the key into the settings file (None takes it out) and, if given, shareCipher beside it, in one write; the other fields as they were.
-    The background job reads the cipher from this file only, so it must hold the one the sync folder was switched to."""
+def save_key(settings, key, cipher=None, index_cipher=None):
+    """Puts the key into the settings file (None takes it out) and, if given, shareCipher and indexCipher beside it, in one write; the other
+    fields as they were. The background job reads the cipher from this file only, so it must hold the one the sync folder was switched to."""
     _read(settings)  # a settings file that cannot be read is told first: a DPAPI error must not hide it
     up = {KEY_FIELD: None if key is None else PREFIX + base64.b64encode(protect(key)).decode()}
     if cipher is not None:  # none given, none taken: set_fields would read None as "remove"
         up['shareCipher'] = cipher
+    if index_cipher is not None:
+        up['indexCipher'] = index_cipher
     set_fields(settings, up)
 
 
