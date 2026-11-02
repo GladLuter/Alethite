@@ -173,10 +173,9 @@ What else to know:
 - **The ciphers** are the keys `indexCipher` (`sqlcipher`, the default, or `efs`) and `shareCipher` (`sqlcipher`, the default, or `cryptography`, which is AES-GCM) in `settings.json`. `/cg-encrypt on` and `join` write them into the file themselves, and the file wins over `/config`, so change them later in the file, then `/reload-plugins` and `/cg-encrypt on`. A computer reads the others' data in any cipher it can open itself: SQLCipher only when `sqlcipher3` is installed.
 - **Speed.** On the encrypted index `recall` is about 0.08 s slower (measured 2026-10-27 on 24.7 thousand vectors). The gap grows with the number of vectors. A measurement of 2026-11-02 on a copy of the real index (25.3 thousand vectors, median of 20 runs): one search takes 290 ms with SQLCipher and 170 ms with EFS, 16 KB pages in both.
 - **What you accept with EFS:**
-  - A copy of the index on a FAT or exFAT stick or over the network comes out unencrypted, and so does one made by a program that reads the file and writes it again. The mod itself never copies the index out.
+  - A copy of the index on a FAT or exFAT stick or over the network comes out unencrypted, and so does one made by a program that reads the file and writes it again into a folder outside EFS. The mod itself never copies the index out.
   - The files open only under the same Windows account. If an index under EFS does not open (another user, a lost certificate), the mod says so and does not make a new empty index over it.
   - If you reinstall Windows without a backup of the certificate, the old index cannot be opened. Delete it, and the mod builds a new one from the conversations on disk. A copy of the certificate is optional, and the mod does not make one. To make it, run `cipher /x <file>`: Windows asks for a password and saves the EFS certificate and key to a `.pfx` file protected by it.
-  - A file that a chat or the background job holds open is not encrypted by EFS: the command says the files are busy. Repeat it in a minute.
 - **What stays plain:**
   - Claude Code's conversations, `%USERPROFILE%\.claude\projects\*.jsonl`;
   - the auto-memory files of each project on the local disk (`.md`): Claude Code reads them;
