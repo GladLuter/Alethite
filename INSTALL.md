@@ -136,8 +136,8 @@ Optional, and Windows only. The index (with its backup `index.before-stage2.db`)
   - `efs`: the file encryption of Windows itself. It needs Windows Pro (or Enterprise, Education) and an NTFS drive. There is no package to install. The whole mod folder `%USERPROFILE%\.claude\cacheguard` goes under EFS, and the index folder too if it is another one: the index, its journal, the backups, the handoffs, `settings.json`, `forgotten.json`.
 - The sync folder, key `shareCipher`:
   - `sqlcipher` (the default): SQLCipher, needs the `sqlcipher3` package;
-  - `cryptography`: AES-GCM, built into Windows (`bcrypt.dll`), no packages. The `cryptography` package is no longer needed.
-- **Smart App Control** may refuse to load `sqlcipher3`, because its module is not signed. Under it only `efs` and `cryptography` work, and a computer with that pair never loads `sqlcipher3`.
+  - `cryptography`: AES-GCM, built into Windows (`bcrypt.dll`). The `cryptography` package is no longer needed.
+- **Smart App Control** may refuse to load `sqlcipher3`, because its module is not signed. Under it only `efs` and `cryptography` work, and a computer with that pair does not need `sqlcipher3`. The exceptions are converting an existing SQLCipher index and reading the folder of a computer that writes with SQLCipher.
 - Each computer writes its own subfolder in the sync folder in its own cipher and reads the others' by the label of the generation. If another computer's subfolder is written with SQLCipher and `sqlcipher3` does not load here, `/cg-health` names that computer and advises moving it to AES-GCM.
 
 1. **Choose the ciphers** on each computer in `%USERPROFILE%\.claude\cacheguard\settings.json`. For example, EFS and AES-GCM:
@@ -147,12 +147,11 @@ Optional, and Windows only. The index (with its backup `index.before-stage2.db`)
      "shareCipher": "cryptography"
    }
    ```
-   If you choose nothing, both stay `sqlcipher`. `/cg-encrypt on` and `join` take the ciphers from this file and write them back beside the key.
+   If you choose nothing, both stay `sqlcipher`. `/cg-encrypt on` and `join` take the ciphers from this file and write them back beside the key. The mod reads the file when it loads, so make this edit before the `/reload-plugins` below.
 2. **Install the `sqlcipher3` package**, only if you need it: for the `sqlcipher` cipher (of the index or of the folder), and once, to move an index that is already encrypted with SQLCipher over to EFS. Install it on each computer from an ordinary PowerShell window, not from inside Claude: the `pip` of Claude puts packages into its own sandbox, and the background job will not see them.
    ```powershell
    python -m pip install sqlcipher3
    ```
-   For `efs` and `cryptography` this step is not needed.
 3. **The first computer:** `/reload-plugins`, then `/cg-encrypt on`. The "Claude-CacheGuard" windows may appear behind other windows.
    - With `efs` the command first checks that the drive can do EFS. If it cannot (Windows Home, or a drive that is not NTFS), it refuses before any key is made and changes nothing.
    - The first window shows the **recovery code**, once. Ctrl+C copies the text of the window: paste the code into a password manager. Without it the encrypted history cannot be read if the computers or their Windows accounts are lost.
@@ -160,9 +159,9 @@ Optional, and Windows only. The index (with its backup `index.before-stage2.db`)
    - The index and its backup are encrypted. With `sqlcipher` the unencrypted copies (`index.db.plain`) are deleted only after Yes. After No they stay, and `/cg-encrypt on` asks again.
    - With `efs` the mod folder and the index folder go under the encryption of Windows, and a SQLCipher index becomes an ordinary database under EFS with 16 KB pages. There is never an unencrypted copy outside EFS, so there is no question about `index.db.plain`.
    - The sync folder: the computer puts its own subfolder out again, in the cipher you chose. The older data there (unencrypted or in another cipher) is deleted only after Yes, and only once the new data is fully out.
-4. **The second computer:** `git pull`, `/reload-plugins`, its own ciphers in `settings.json` (step 1), `/cg-encrypt join`. The recovery code is entered in a window with hidden input. One key serves all computers, so `on` on the second one refuses and points to `join`.
+4. **The second computer:** `git pull`, its own ciphers in `settings.json` (step 1), `/reload-plugins`, `/cg-encrypt join`. The recovery code is entered in a window with hidden input. One key serves all computers, so `on` on the second one refuses and points to `join`.
    - If you change the cipher of the folder on the first computer (for example, SQLCipher to AES-GCM), join the second one only after that. Otherwise it will see a SQLCipher generation, which it cannot open under Smart App Control.
-5. **Check:** `/cg-health` on both computers says, for example, "Encryption: on (index: EFS, sync folder: AES-GCM)". The brackets name the cipher of the index and of the folder: SQLCipher, EFS or AES-GCM. If something is unfinished, the lines under it say what to repeat. `/cg-encrypt status` shows the state alone.
+5. **Check:** `/cg-health` on both computers says, for example, "Encryption: on (index: EFS, sync folder: AES-GCM)". If something is unfinished, the lines under it say what to repeat. `/cg-encrypt status` shows the state alone.
 
 What else to know:
 - **Commands:** `/cg-encrypt on | join | off | status`. With no argument it runs `status`.
@@ -174,7 +173,7 @@ What else to know:
 - **The ciphers** are the keys `indexCipher` (`sqlcipher`, the default, or `efs`) and `shareCipher` (`sqlcipher`, the default, or `cryptography`, which is AES-GCM) in `settings.json`. `/cg-encrypt on` and `join` write them into the file themselves, and the file wins over `/config`, so change them later in the file, then `/reload-plugins` and `/cg-encrypt on`. A computer reads the others' data in any cipher it can open itself: SQLCipher only when `sqlcipher3` is installed.
 - **Speed.** On the encrypted index `recall` is about 0.08 s slower (measured 2026-10-27 on 24.7 thousand vectors). The gap grows with the number of vectors. A measurement of 2026-11-02 on a copy of the real index (25.3 thousand vectors, median of 20 runs): one search takes 290 ms with SQLCipher and 170 ms with EFS, 16 KB pages in both.
 - **What you accept with EFS:**
-  - A copy of the index on a FAT or exFAT stick, over the network or through `copyfile` comes out unencrypted. The mod itself never copies the index out.
+  - A copy of the index on a FAT or exFAT stick or over the network comes out unencrypted, and so does one made by a program that reads the file and writes it again. The mod itself never copies the index out.
   - The files open only under the same Windows account. If an index under EFS does not open (another user, a lost certificate), the mod says so and does not make a new empty index over it.
   - If you reinstall Windows without a backup of the certificate, the old index cannot be opened. Delete it, and the mod builds a new one from the conversations on disk. A copy of the certificate is optional, and the mod does not make one. To make it, run `cipher /x <file>`: Windows asks for a password and saves the EFS certificate and key to a `.pfx` file protected by it.
   - A file that a chat or the background job holds open is not encrypted by EFS: the command says the files are busy. Repeat it in a minute.

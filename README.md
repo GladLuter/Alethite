@@ -49,8 +49,8 @@ So the expensive part is not what is typed, but coming back to a big, idle chat.
   - Index: SQLCipher (needs the `sqlcipher3` package) or EFS, the file encryption of Windows itself (needs Windows Pro and an NTFS drive, no packages).
   - Sync folder: SQLCipher or AES-GCM, which is built into Windows, no packages.
 - Smart App Control may refuse to load `sqlcipher3`, so under it only EFS and AES-GCM work. The `cryptography` package is no longer needed.
-- With EFS, a copy of the index on a USB stick or over the network comes out unencrypted, and the files open only under the same Windows account.
-- Claude Code's own transcripts, each project's auto-memory files and the handoffs stay plain.
+- With EFS, a copy of the index on a FAT or exFAT stick or over the network comes out unencrypted, and the files open only under the same Windows account.
+- Claude Code's own transcripts, each project's auto-memory files and the text of a handoff that goes into the chat stay plain (with EFS the handoff files on disk are encrypted).
 - Until you run `/cg-encrypt on`, nothing changes for you.
 
 **Languages.** English (default), Russian, Ukrainian: the interface, the texts for the model and the handoff.
