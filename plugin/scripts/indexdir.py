@@ -344,16 +344,32 @@ def _handoffs_in(folder):
     return [p for p in glob.glob(os.path.join(glob.escape(folder), 'handoffs', '*.md')) if os.path.isfile(p)]
 
 
-def _copy_extras(cur, folder):
-    """The handoff files and job.xml beside the index go over as they are."""
+def _efs_first(path):
+    """A path of the target that is there already and plain goes under EFS before anything is written into it: a file would take the new
+    bytes in clear, a folder would hold its new files so. What is made in an encrypted folder is born encrypted and needs this no more."""
+    import encrypt
+    if os.path.exists(path) and not crypto.efs_on(path):
+        encrypt._efs_do(crypto.efs_encrypt, path)
+
+
+def _copy_extras(cur, folder, efs=False):
+    """The handoff files and job.xml beside the index go over as they are; with `efs` each folder and file they are written to is under EFS first."""
+    def put(path, dest):
+        if efs:
+            _efs_first(dest)
+        shutil.copyfile(path, dest)
+
     mine = _handoffs_in(cur)
     if mine:
-        os.makedirs(os.path.join(folder, 'handoffs'), exist_ok=True)
+        to = os.path.join(folder, 'handoffs')
+        os.makedirs(to, exist_ok=True)
+        if efs:
+            _efs_first(to)
         for path in mine:
-            shutil.copyfile(path, os.path.join(folder, 'handoffs', os.path.basename(path)))
+            put(path, os.path.join(to, os.path.basename(path)))
     job = os.path.join(cur, 'job.xml')
     if os.path.isfile(job):
-        shutil.copyfile(job, os.path.join(folder, 'job.xml'))
+        put(job, os.path.join(folder, 'job.xml'))
 
 
 def _unmark():
@@ -481,9 +497,19 @@ def _switch(out, where, target, key, ui, drive_type, free):
         if room < need:
             raise ValueError(t('index_dir_no_space', dir=folder, need=-(-need // MB), free=room // MB))
     field = None if n == home else folder  # the home folder is "no indexDir"
+    made, d = [], folder  # the folders this move makes, the deepest first
+    while not os.path.exists(d) and os.path.dirname(d) != d:
+        made.append(d)
+        d = os.path.dirname(d)
     os.makedirs(folder, exist_ok=True)
     if efs:  # before any file is made in it: what is born in an encrypted folder is encrypted, a file renamed in from outside stays plain
-        encrypt._efs_do(crypto.efs_encrypt, folder)
+        try:
+            _efs_first(folder)
+        except ValueError:  # a refused move leaves nothing behind
+            for d in made:
+                with contextlib.suppress(OSError):
+                    os.rmdir(d)
+            raise
     if not pairs:  # an index nowhere: the first one is made in the target
         crypto.INDEX_DIRS.add(n)
         memdb.connect(new_db).close()
@@ -492,10 +518,13 @@ def _switch(out, where, target, key, ui, drive_type, free):
         return None
     copies = [b + '.cg-move' for _, b in pairs]
     try:
+        if efs:  # a copy of an earlier try, plain, is written over
+            for c in copies:
+                _efs_first(c)
         stamps = [_copy(a, c, key) for (a, _), c in zip(pairs, copies)]
         if [encrypt._stamp(a) for a, _ in pairs] != stamps:  # a chat wrote to an index meanwhile, and the copy lacks it
             raise ValueError(t('index_dir_busy'))  # before the handoffs and job.xml go over: "nothing was changed" stays true
-        _copy_extras(cur, folder)
+        _copy_extras(cur, folder, efs)
         for c, (_, b) in zip(copies, pairs):
             os.replace(c, b)
     finally:

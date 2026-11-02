@@ -1123,14 +1123,35 @@ class MoveTest(unittest.TestCase):
         supported.assert_not_called()
         self.assertFalse(crypto.efs_on(self.target))
 
-    def test_a_refusal_of_efs_on_the_target_is_told_and_nothing_is_copied(self):
+    def test_a_refusal_of_efs_on_the_target_is_told_and_leaves_nothing_behind(self):
         self.efs_home()
+        before, was = self.tree(self.home), self.fields()
         err = OSError(0, 'The request is not supported', None, 50)
+        nested = os.path.join(self.root, 'a', 'b', 'new')
         with mock.patch.object(crypto, 'efs_encrypt', side_effect=err), self.assertRaises(ValueError) as e:
+            self.move(nested)
+        self.assertEqual(str(e.exception), t('efs_failed', dir=nested, e=err))
+        self.assertFalse(os.path.exists(os.path.join(self.root, 'a')))  # the folders this move made go again, up to the first that was there
+        os.makedirs(self.target)
+        with mock.patch.object(crypto, 'efs_encrypt', side_effect=err), self.assertRaises(ValueError):
             self.move()
-        self.assertEqual(str(e.exception), t('efs_failed', dir=self.target, e=err))
-        self.assertEqual(os.listdir(self.target), [])  # the folder alone: no index in it, plain or not
-        self.assertNotIn('indexDir', self.fields())
+        self.assertEqual(os.listdir(self.target), [])  # a folder that was there is not ours to remove, and no index is in it
+        self.assertEqual((self.tree(self.home), self.fields()), (before, was))  # indexDir is not there
+
+    def test_move_efs_into_a_target_with_plain_paths_encrypts_them_before_they_are_written(self):  # an old try, or the owner's own folder
+        key = self.efs_home()
+        old = [('handoffs', 'S1.md'), ('job.xml',), ('index.db.cg-move',)]  # what the move writes to, plain and there already
+        for p in old:
+            self.write(os.path.join(self.target, *p), 'plain')
+        self.write(os.path.join(self.target, 'handoffs', 'other.md'), 'not ours')
+        self.assertFalse(any(crypto.efs_on(os.path.join(self.target, *p)) for p in [(), ('handoffs',), *old]))
+        self.assertTrue(self.move(key=key, ui=FakeUI([False]))['done'])
+        for p in [(), ('handoffs',), ('handoffs', 'S1.md'), ('job.xml',), ('index.db',), ('index.before-stage2.db',)]:
+            self.assertTrue(crypto.efs_on(os.path.join(self.target, *p)), p)  # a file that is replaced or written over is not plain any more
+        for name, text in (('handoffs\\S1.md', 'handoff'), ('job.xml', '<Task/>'), ('handoffs\\other.md', 'not ours')):
+            with open(os.path.join(self.target, name), encoding='utf-8') as f:
+                self.assertEqual(f.read(), text)
+        self.assertFalse(crypto.efs_on(os.path.join(self.target, 'handoffs', 'other.md')))  # a file the move never writes is left as it is
 
     def test_a_target_inside_the_old_folder_is_not_hit_by_the_deletion(self):
         self.full_home()
