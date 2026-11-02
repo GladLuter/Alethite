@@ -119,7 +119,7 @@ def _embed(a):
 # ---- the background job (stage 4): what the scheduled task runs, and the task itself
 
 def _settings(path):
-    """The mod's own settings file (%USERPROFILE%\\.claude\\cacheguard\\settings.json): the job runs with what the mod runs with.
+    """The mod's own settings file (%USERPROFILE%\\.claude\\alethite\\settings.json): the job runs with what the mod runs with.
     (settings, None), or ({}, why) when the file is broken: the job goes on with the defaults and says so."""
     try:
         return crypto._read(path), None
@@ -270,7 +270,7 @@ def _last_turn(a):
 def _handoff(a):
     from handoff import build_handoff
     text = build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress)
-    folder = os.path.join(os.path.dirname(a.db), 'handoffs')  # next to the index: ~/.claude/cacheguard/handoffs by default
+    folder = os.path.join(os.path.dirname(a.db), 'handoffs')  # next to the index: ~/.claude/alethite/handoffs by default
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, a.session + '.md')
     with open(path, 'w', encoding='utf-8', newline='\n') as f:  # written before the answer: the owner's insurance if clear/submit fails
@@ -494,10 +494,12 @@ def main(argv):
         if stream is not None:  # pythonw, the background job's, has none of them
             stream.reconfigure(encoding='utf-8')
     problem = merged = a = None  # problem: why the index cannot be used, every answer says so, an error answer too
+    home_notes = []  # of the one-time move of the mod folder (crypto.move_home), told in every answer as well
     try:
         a = _parser().parse_args(argv)
         texts.lang = a.lang
         if a.db is None:
+            home_notes = crypto.move_home()  # first: the settings and the index are read from the new folder, a run with --db leaves the old one alone
             try:
                 a.where = indexdir.resolve()
             except (ValueError, OSError) as e:
@@ -539,6 +541,8 @@ def main(argv):
             out['index_notice'] = note
     if problem:
         out['index_problem'] = problem
+    if home_notes:
+        out['home_notes'] = home_notes
     print(json.dumps(out, ensure_ascii=False))
     return code
 

@@ -174,6 +174,26 @@ class ResolveTest(unittest.TestCase):
             self.assertEqual(resolve(), Where(self.db, self.far, True, None))
         usage.assert_called_with(self.home)
 
+    def test_index_dir_setting_inside_old_folder_resolves_to_new(self):  # indexDir was written under the old name, the folder moved with the file
+        old = os.path.join(os.path.dirname(self.home), 'old')  # gone, as after crypto.move_home
+        inside = os.path.join(self.home, 'idx')
+        self.touch(os.path.join(inside, 'index.db'))
+        with mock.patch.object(crypto, 'OLD_HOME_DIR', old), mock.patch.object(crypto, 'HOME_DIR', self.home):
+            self.settings(indexDir=os.path.join(old, 'idx'))
+            self.assertEqual(self.where(), Where(os.path.join(inside, 'index.db'), inside, False, None))
+            self.settings(indexDir=old)  # the old home itself is "no indexDir", like the new one
+            self.assertEqual(self.where(), Where(self.db, None, False, None))
+
+    def test_index_elsewhere_stays_and_settings_move(self):
+        root = os.path.dirname(self.home)
+        old, new = os.path.join(root, 'old'), os.path.join(root, 'new')
+        self.touch(os.path.join(old, 'settings.json'), json.dumps({'indexDir': self.far}))
+        self.touch(self.far_db)
+        with mock.patch.object(crypto, 'OLD_HOME_DIR', old), mock.patch.object(crypto, 'HOME_DIR', new):
+            self.assertEqual(crypto.move_home(), [])
+            self.assertEqual(resolve(), Where(self.far_db, self.far, False, None))  # the same index, its settings now from the new home
+        self.assertEqual((os.path.isfile(os.path.join(new, 'settings.json')), os.path.exists(old)), (True, False))
+
 
 class StatusTest(unittest.TestCase):
     def setUp(self):
@@ -211,6 +231,15 @@ class StatusTest(unittest.TestCase):
         use_lang(self, 'en')
         self.assertEqual(indexdir.status(self.conn, None)['notes'], [t('index_merged', dir='D:\\x', home='H', n=3)])
         self.assertIn('(records: 3)', indexdir.status(self.conn, None)['notes'][0])
+
+    def test_old_copy_inside_old_folder_is_found_after_move(self):  # meta.old_copy and merge_done were written under the old name
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        old, new = (os.path.join(d.name, n) for n in ('old', 'new'))
+        self.meta(old_copy=os.path.join(old, 'idx') + '\nC:\\other', merge_done=json.dumps({'dir': 'D:\\x', 'home': old, 'n': 3}))
+        with mock.patch.object(crypto, 'OLD_HOME_DIR', old), mock.patch.object(crypto, 'HOME_DIR', new):
+            notes = indexdir.status(self.conn, None)['notes']
+        self.assertEqual(notes, [t('index_old_copy', dir=os.path.join(new, 'idx')), t('index_old_copy', dir='C:\\other'), t('index_merged', dir='D:\\x', home=new, n=3)])
 
     def test_the_notes_of_the_index_itself_show_without_a_where(self):  # a run with --db has none
         self.meta(old_copy='C:\\old', merge_error='диск занят')  # a failed merge needs both folders to be told, and a run with --db knows neither

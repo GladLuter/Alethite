@@ -42,6 +42,16 @@ def claude_line(text, cwd='C:\\a'):
     return dict(type='assistant', timestamp=TS, cwd=cwd, message=m)
 
 
+def setUpModule():
+    # cg.main without --db moves the old mod folder: no test of this module may reach the real ~/.claude/cacheguard or ~/.claude/alethite
+    d = tempfile.TemporaryDirectory()
+    unittest.addModuleCleanup(d.cleanup)
+    for name in ('HOME_DIR', 'OLD_HOME_DIR'):
+        patch = mock.patch.object(crypto, name, os.path.join(d.name, name))
+        patch.start()
+        unittest.addModuleCleanup(patch.stop)
+
+
 class CgTest(unittest.TestCase):
     def setUp(self):
         use_lang(self, 'ru')
@@ -606,19 +616,55 @@ class CgTest(unittest.TestCase):
     # the index folder: where cg.py finds the index when no --db is given
 
     def home_dir(self, **settings):
-        """A stand-in for ~/.claude/cacheguard with these settings; the real one is never read."""
+        """A stand-in for ~/.claude/alethite with these settings; the real one is never read."""
         home = os.path.join(self.tmp, 'home')
         os.makedirs(home, exist_ok=True)
         with open(os.path.join(home, 'settings.json'), 'w', encoding='utf-8') as f:
             json.dump(settings, f)
-        for patch in (mock.patch.object(crypto, 'HOME_DIR', home), mock.patch.object(crypto, 'INDEX_DIRS', set())):  # main registers the folder in it
+        self.patch_home(home, os.path.join(self.tmp, 'old-home'))
+        return home
+
+    def patch_home(self, home, old):
+        for patch in (mock.patch.object(crypto, 'HOME_DIR', home), mock.patch.object(crypto, 'OLD_HOME_DIR', old), mock.patch.object(crypto, 'INDEX_DIRS', set())):  # main registers the folder in it
             patch.start()
             self.addCleanup(patch.stop)
         self.addCleanup(gc.collect)  # cg never closes its connection; the temp folder cleanup needs the file released
-        return home
 
     def main_home(self, *args):
         return self.capture(['--lang', 'ru', '--projects', self.projects, *args])
+
+    def old_home(self):
+        """A stand-in for ~/.claude/cacheguard with a settings file, and for ~/.claude/alethite that is not there yet: (old, new)."""
+        old, new = (os.path.join(self.tmp, n) for n in ('old', 'new'))
+        os.makedirs(old)
+        with open(os.path.join(old, 'settings.json'), 'w', encoding='utf-8') as f:
+            f.write('{}')
+        self.patch_home(new, old)
+        return old, new
+
+    def test_main_with_db_never_moves(self):
+        old, new = self.old_home()
+        for cmd in (('status',), ('last-turn', '--session', 'S1'), ('lessons', '--all')):
+            code, out, _ = self.main_json(*cmd)
+            self.assertEqual(code, 0, out)
+            self.assertNotIn('home_notes', out)
+        self.assertEqual((os.path.isfile(os.path.join(old, 'settings.json')), os.path.exists(new)), (True, False))
+
+    def test_main_without_db_moves_the_old_folder_first(self):
+        old, new = self.old_home()
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, out['db'], os.path.exists(old), os.path.isfile(os.path.join(new, 'settings.json'))), (0, os.path.join(new, 'index.db'), False, True))
+        self.assertNotIn('home_notes', out)
+
+    def test_main_reports_home_notes(self):
+        old, new = self.old_home()
+        busy = PermissionError(13, 'in use', None, 32)
+        for cmd in (('status',), ('last-turn', '--session', 'S1'), ('last-turn', '--session', '..\\x')):  # an index answer, a short one, an error
+            with mock.patch.object(crypto, 'HOME_DIR', new), mock.patch('os.rename', side_effect=busy), mock.patch('time.sleep'):  # one process per run, as in life
+                code, out, _ = self.main_home(*cmd)
+            self.assertEqual(out['home_notes'], [t('home_move_failed', old=old, new=new, e=busy)], cmd)
+            self.assertEqual(code, int('error' in out), cmd)
+        self.assertEqual(out['error'], 'ValueError: ' + t('bad_session', id='..\\x'))
 
     def test_with_db_the_home_settings_are_not_read_at_all(self):
         home = self.home_dir()

@@ -62,6 +62,83 @@ class CodeTest(unittest.TestCase):
         self.assertNotEqual(crypto.opaque(KEY, 'a'), crypto.opaque(KEY, 'b'))
         self.assertNotEqual(crypto.opaque(KEY, 'a'), crypto.opaque(other, 'a'))
 
+    def test_code_and_fingerprint_of_fixed_key_unchanged(self):  # the old names stay in the bytes: a key made before the rename must keep opening
+        self.assertEqual(crypto._check(KEY), b'a\xe3\xd1')
+        self.assertEqual(crypto.fingerprint(KEY), 'b0cc3cc46f470e38')
+        self.assertEqual(crypto.ENTROPY, b'Claude-CacheGuard')
+
+
+class HomeTest(unittest.TestCase):
+    def setUp(self):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.old, self.new = (os.path.join(d.name, n) for n in ('old', 'new'))
+        for patch in (mock.patch.object(crypto, 'OLD_HOME_DIR', self.old), mock.patch.object(crypto, 'HOME_DIR', self.new)):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def fill(self, folder, text='x'):
+        for name in ('settings.json', 'handoffs/x.md', 'index.db'):
+            path = os.path.join(folder, *name.split('/'))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(text)
+
+    def files(self, folder):
+        return sorted(os.path.relpath(os.path.join(r, f), folder) for r, _, fs in os.walk(folder) for f in fs)
+
+    def test_move_home_moves_old_folder(self):
+        self.fill(self.old)
+        self.assertEqual(crypto.move_home(self.old, self.new), [])
+        self.assertEqual(self.files(self.new), [os.path.join('handoffs', 'x.md'), 'index.db', 'settings.json'])
+        self.assertFalse(os.path.exists(self.old))
+        self.assertEqual(crypto.HOME_DIR, self.new)
+
+    def test_move_home_both_exist_moves_nothing(self):
+        self.fill(self.old, 'old')
+        self.fill(self.new, 'new')
+        self.assertEqual(crypto.move_home(), [t('home_move_both', old=self.old, new=self.new)])
+        for folder, text in ((self.old, 'old'), (self.new, 'new')):
+            self.assertEqual(len(self.files(folder)), 3)
+            with open(os.path.join(folder, 'index.db'), encoding='utf-8') as f:
+                self.assertEqual(f.read(), text)
+        self.assertEqual(crypto.HOME_DIR, self.new)
+
+    def test_move_home_busy_retries_then_uses_old(self):
+        self.fill(self.old)
+        busy = PermissionError(13, 'in use', None, 32)
+        with mock.patch('os.rename', side_effect=busy) as rename, mock.patch('time.sleep') as sleep:
+            self.assertEqual(crypto.move_home(), [t('home_move_failed', old=self.old, new=self.new, e=busy)])
+        self.assertEqual(rename.call_count, 100)
+        sleep.assert_called_with(0.1)
+        self.assertEqual(crypto.HOME_DIR, self.old)  # this process goes on in the folder that is still there
+        self.assertFalse(os.path.exists(self.new))
+        self.assertEqual(len(self.files(self.old)), 3)
+
+    def test_move_home_another_error_is_told_at_once(self):
+        self.fill(self.old)
+        gone = FileNotFoundError(2, 'no path', None, 3)
+        with mock.patch('os.rename', side_effect=gone) as rename, mock.patch('time.sleep') as sleep:
+            self.assertEqual(crypto.move_home(), [t('home_move_failed', old=self.old, new=self.new, e=gone)])
+        self.assertEqual((rename.call_count, sleep.call_count, crypto.HOME_DIR), (1, 0, self.old))
+
+    def test_move_home_neither_does_nothing(self):
+        self.assertEqual(crypto.move_home(), [])
+        self.assertEqual((os.path.exists(self.old), os.path.exists(self.new), crypto.HOME_DIR), (False, False, self.new))
+
+    def test_moved_maps_old_path_when_old_gone(self):
+        join = os.path.join
+        self.assertEqual(crypto.moved(join(self.old, 'far', 'index.db')), join(self.new, 'far', 'index.db'))
+        self.assertEqual(crypto.moved(self.old), self.new)
+        self.assertEqual(crypto.moved(self.old.upper()), self.new)  # Windows paths do not care for case
+        for same in (self.old + 'x', join(self.old + 'x', 'a'), self.new, 'D:\\elsewhere', 'relative\\x'):  # a sibling that only begins alike is no inside
+            self.assertEqual(crypto.moved(same), same)
+
+    def test_moved_keeps_path_when_old_exists(self):
+        os.makedirs(self.old)
+        path = os.path.join(self.old, 'far')
+        self.assertEqual(crypto.moved(path), path)
+
 
 class SettingsTest(unittest.TestCase):
     def setUp(self):

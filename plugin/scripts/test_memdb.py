@@ -44,6 +44,11 @@ class LockTest(unittest.TestCase):
             self.assertEqual(conn.execute('PRAGMA busy_timeout').fetchone()[0], 30000)
             conn.close()
 
+    def test_connect_without_a_path_follows_the_home_folder_at_the_call(self):  # move_home may change HOME_DIR after memdb is imported
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(crypto, 'HOME_DIR', d):
+            connect().close()
+            self.assertTrue(os.path.isfile(os.path.join(d, 'index.db')))
+
     def test_lock_is_one_per_name_and_index_and_ends_with_its_connection(self):
         with tempfile.TemporaryDirectory() as d:
             db = os.path.join(d, 'index.db')

@@ -364,7 +364,7 @@ class SyncTest(unittest.TestCase):
         os.remove(os.path.join(self.share, 'MTLAPTOP', 'batch-00000001.jsonl.gz'))
         r = self.a.sync()
         self.assertEqual((r['errors'][0]['batch'], r['pulled']), (1, 0))
-        self.assertIn('/cg-sync skip MTLAPTOP 1', r['errors'][0]['error'])
+        self.assertIn('/al-sync skip MTLAPTOP 1', r['errors'][0]['error'])
 
     def test_a_hiccup_of_the_share_or_a_locked_index_is_no_broken_batch_and_offers_no_skip(self):  # the next sync simply tries again
         import sqlcipher3  # an encrypted index raises its own class, once it is loaded
@@ -386,7 +386,7 @@ class SyncTest(unittest.TestCase):
             with self.subTest(name):
                 with open(os.path.join(self.share, 'MTLAPTOP', 'batch-00000001.jsonl.gz'), 'wb') as f:
                     f.write(data)
-                self.assertIn('/cg-sync skip MTLAPTOP 1', self.a.sync()['errors'][0]['error'])
+                self.assertIn('/al-sync skip MTLAPTOP 1', self.a.sync()['errors'][0]['error'])
 
     # 4. an unavailable folder
     def test_an_unavailable_folder_is_an_error_and_the_local_memory_works(self):

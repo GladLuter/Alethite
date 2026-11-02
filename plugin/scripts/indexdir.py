@@ -56,6 +56,7 @@ def resolve(home=None, free=None):
     if isinstance(d, str) and not d.strip():  # a value emptied by hand means no folder, as none does
         d = None
     usable = isinstance(d, str) and os.path.isabs(d)
+    d = crypto.moved(d) if usable else d  # written under the old name of the mod folder
     if d is None or (usable and crypto.norm(d) == crypto.norm(home)):
         return Where(db, None, False, None)
     if usable and os.path.isfile(os.path.join(d, 'index.db')):
@@ -95,7 +96,8 @@ def status(conn, where):
     # the failed merge names both folders: the one the index is in and the one of the temporary index, which a run with --db does not know.
     # It is told while that index is there to merge: a note that nothing would take away is none
     merge = failed and where and where.merge_from and t('index_merge_failed', dir=where.configured, home=os.path.dirname(where.merge_from), e=failed)
-    merged = done and t('index_merged', **json.loads(done))  # the last merge, in the language of this run: merge_back stored its figures
+    done = done and json.loads(done)
+    merged = done and t('index_merged', **dict(done, home=crypto.moved(done['home'])))  # the last merge, in the language of this run: merge_back stored its figures
     notes = [n for n in (notice(where), *(t('index_old_copy', dir=d) for d in _old_copies(old)), merge, merged) if n]
     return {'configured': where and where.configured, 'fallback': bool(where and where.fallback), 'notes': notes}
 
@@ -396,7 +398,7 @@ def _delete_old(old):
 
 def _old_copies(value):
     """The folders meta.old_copy holds, one per line (a single folder is a value of one line, as it always was)."""
-    return [d for d in (value or '').split('\n') if d]
+    return [crypto.moved(d) for d in (value or '').split('\n') if d]
 
 
 def _set_old(conn, folders):

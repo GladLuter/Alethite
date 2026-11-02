@@ -11,7 +11,6 @@ from redact import redact
 from texts import t
 from transcripts import MOD_TOOL_PREFIXES, lp, project_key, read_records
 
-DB_PATH = os.path.join(crypto.HOME_DIR, 'index.db')
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, size INTEGER, offset INTEGER);
 CREATE TABLE IF NOT EXISTS convs(conv TEXT PRIMARY KEY, parent TEXT, first_ts TEXT, last_ts TEXT);
@@ -144,7 +143,8 @@ def lock(db, name, wait):
     return conn
 
 
-def connect(path=DB_PATH, home=None):
+def connect(path=None, home=None):
+    path = path or os.path.join(crypto.HOME_DIR, 'index.db')  # at the call: crypto.move_home may have changed HOME_DIR since the import
     os.makedirs(os.path.dirname(path), exist_ok=True)
     conn = _open(path)
     conn.executescript(_SCHEMA)
