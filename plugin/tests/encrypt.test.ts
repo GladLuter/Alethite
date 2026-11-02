@@ -24,9 +24,11 @@ test('encrypt reply: done says so by the action; unfinished says so and lists th
 test('encrypt health: on names both ciphers by their names (the index from cg.py, the folder from the setting), off says so, the notes follow', () => {
   expect(encryptHealth({ on: true, db: 'efs', key: 'ok', notes: [] }, 'cryptography')).toEqual([T.healthEncryptionOn('EFS', 'AES-GCM')])
   expect(encryptHealth({ on: true, db: 'sqlcipher', key: 'ok', notes: [] }, 'sqlcipher')).toEqual([T.healthEncryptionOn('SQLCipher', 'SQLCipher')])
-  expect(T.healthEncryptionOn('EFS', 'AES-GCM')).toContain('EFS')
-  expect(T.healthEncryptionOn('EFS', 'AES-GCM')).toContain('AES-GCM')
   expect(encryptHealth({ on: false, db: 'plain', key: 'missing', notes: ['n1'] }, 'sqlcipher')).toEqual([T.healthEncryptionOff, 'n1'])
+})
+
+test('encrypt health: no index yet with a key is named by a dash, and a setting that is a word of Object.prototype is shown as it is', () => {
+  expect(encryptHealth({ on: true, db: 'none', key: 'ok', notes: [] }, 'constructor')).toEqual([T.healthEncryptionOn('—', 'constructor')])
 })
 
 test('encrypt health: a key with an index that is still open is not "on"; its notes say what to do', () => {

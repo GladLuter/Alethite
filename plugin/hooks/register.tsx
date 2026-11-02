@@ -532,6 +532,12 @@ export const register: Register = (on, options) => {
   // cuts a process.run at 10 minutes (1_800_000 is refused outright), so cg.py keeps its own waits near 190 s of locks and 120 s of push
   // (ENCRYPT_WAITS, ENCRYPT_PUSH_SECONDS); a run cut all the same is safe to repeat. The state asks nothing.
   on('command.run', { command: 'cg-encrypt' }, async ($, e) => {
+    try {
+      // a chat that was not reloaded after the settings were edited holds the old ciphers, and the flags below would turn the index back: the file as it is now decides
+      if (settingsFile && (await $.fs.exists(settingsFile))) apply(withFile(options, await $.fs.read(settingsFile)).options)
+    } catch (err) {
+      await fail($, 'settings', `${settingsFile}: ${message(err)}`)
+    }
     const args = encryptArgs(e.args, syncDir, shareCipher, indexCipher, embedModel)
     if (args === null) return { text: T.cgEncryptUsage }
     const isState = args[1] === 'status'

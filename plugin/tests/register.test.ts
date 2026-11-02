@@ -802,11 +802,25 @@ test('settings file: cg.py writes indexCipher there on "encrypt on": it is a set
   expect(ofCg(m, 'encrypt')[0]!.argv).toContain('--index-cipher=efs')
 })
 
+test('settings file: /cg-encrypt reads it again: a chat not reloaded after the edit must not turn the index back with its old ciphers', async ($, on) => {
+  let file = '{ "shareCipher": "sqlcipher", "indexCipher": "sqlcipher" }'
+  on('fs.exists', (_: unknown, e: { path: string }) => ({ value: isSettings(e.path) }))
+  on('fs.read', (_: unknown, e: { path: string }) => (isSettings(e.path) ? { value: file } : { deny: 'ENOENT' }))
+  const m = await started($, on, a => (a[0] === 'encrypt' ? ran('{"action":"on","done":true,"notes":[]}') : ran('{}')), [], undefined, home)
+  file = '{ "shareCipher": "cryptography", "indexCipher": "efs" }' // edited, the chat not reloaded
+  await ($ as any).command.run({ command: 'cg-encrypt', args: 'on' })
+  expect(ofCg(m, 'encrypt')[0]!.argv).toEqual(['encrypt', 'on', '--sync-dir=', '--share-cipher=cryptography', '--index-cipher=efs', '--model', 'embeddinggemma'])
+  file = '{ "indexCipher": "sqlcipher", }' // broken now: the values it had hold, and the owner is told
+  await ($ as any).command.run({ command: 'cg-encrypt', args: 'on' })
+  expect(ofCg(m, 'encrypt')[1]!.argv).toContain('--index-cipher=efs')
+  expect(m.toasts.filter(x => x.includes(SETTINGS))).toHaveLength(1)
+})
+
 test('settings file: missing, it is written with the values of /config and nothing is said', { options: { language: 'uk' } }, async ($, on) => {
   const written = settingsRig(on, undefined)
   const m = await started($, on, () => ran('{}'), [], undefined, home)
   expect(written.map(([path]) => isSettings(path))).toEqual([true])
-  expect(JSON.parse(written[0]![1])).toMatchObject({ language: 'uk', syncDir: '', compression: 'ultra', python: 'python' })
+  expect(JSON.parse(written[0]![1])).toMatchObject({ language: 'uk', syncDir: '', compression: 'ultra', python: 'python', indexCipher: 'sqlcipher', shareCipher: 'sqlcipher' })
   expect(m.toasts).toEqual([])
 })
 

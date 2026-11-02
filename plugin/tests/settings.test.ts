@@ -21,12 +21,6 @@ test('settings file: the keys cg.py keeps there are no options and are not repor
   expect(r.bad).toEqual([])
 })
 
-test('settings file: indexCipher is a field like shareCipher: its value wins and it is not reported', () => {
-  const r = withFile({ ...options, indexCipher: 'sqlcipher' }, '{"indexCipher": "efs"}')
-  expect(r.options).toEqual({ ...options, indexCipher: 'efs' })
-  expect(r.bad).toEqual([])
-})
-
 test('settings file: broken JSON or not one object is an error', () => {
   expect(() => withFile(options, '{ "language": "ru", }')).toThrow()
   expect(() => withFile(options, '["ru"]')).toThrow(T.settingsNotObject)

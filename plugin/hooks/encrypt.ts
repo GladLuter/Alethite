@@ -19,11 +19,11 @@ export const encryptArgs = (args: string, syncDir: string, shareCipher: string, 
 // The end of a run: done, or not finished (a window answered No or was closed, a step waits) with the notes cg.py gives.
 export const encryptReply = (r: EncryptResult) => [r.done ? T.encryptDone(r.action) : T.encryptUnfinished, ...r.notes].join('\n')
 
+const NAMES = new Map([['sqlcipher', 'SQLCipher'], ['efs', 'EFS'], ['cryptography', 'AES-GCM'], ['none', '—']]) // a Map: a setting of `constructor` is no key
+const named = (cipher: string) => NAMES.get(cipher) ?? cipher
 // The /cg-health lines: on or off, and the notes of cg.py as they are (a key that cannot be read, a plain copy left, what to repeat).
 // A key beside an index that is still open is not "on": the index is not protected yet, and its note says what to run.
 // The index is named by what cg.py found on disk (e.db), the sync folder by the setting; the owner reads the cipher's name, not the setting's word.
-const NAMES: Record<string, string> = { sqlcipher: 'SQLCipher', efs: 'EFS', cryptography: 'AES-GCM' }
-const named = (cipher: string) => NAMES[cipher] ?? cipher
 export const encryptHealth = (e: EncryptStatus, shareCipher: string) => [
   e.on && e.db !== 'plain' ? T.healthEncryptionOn(named(e.db), named(shareCipher)) : T.healthEncryptionOff,
   ...e.notes,
