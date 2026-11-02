@@ -794,6 +794,14 @@ test('settings file: its values win over /config, a key that is no setting is na
   expect((await ($ as any).command.run({ command: 'cg-health', args: '' })).text).toContain(ru.healthSettings!(SETTINGS))
 })
 
+test('settings file: cg.py writes indexCipher there on "encrypt on": it is a setting of the mod, no bad key', async ($, on) => {
+  settingsRig(on, '{ "shareCipher": "cryptography", "indexCipher": "efs" }')
+  const m = await started($, on, a => (a[0] === 'encrypt' ? ran('{"action":"on","done":true,"notes":[]}') : ran('{}')), [], undefined, home)
+  await ($ as any).command.run({ command: 'cg-encrypt', args: 'on' })
+  expect(m.toasts).toEqual([T.toast(T.encryptWindow)]) // no settingsBad toast
+  expect(ofCg(m, 'encrypt')[0]!.argv).toContain('--index-cipher=efs')
+})
+
 test('settings file: missing, it is written with the values of /config and nothing is said', { options: { language: 'uk' } }, async ($, on) => {
   const written = settingsRig(on, undefined)
   const m = await started($, on, () => ran('{}'), [], undefined, home)
@@ -1204,16 +1212,16 @@ test('lesson_save: a refusal is told as a refused save, not as a failed search',
 })
 
 // ---- encryption (stage 5) ----
-const encrypted = { on: true, db: 'encrypted', key: 'ok', notes: [] }
+const encrypted = { on: true, db: 'sqlcipher', key: 'ok', notes: [] }
 
-test('/cg-encrypt: on, join and off point to the window first, wait as long as the host allows and tell how it ended; the folder and the cipher are the settings', { options: { syncDir: SHARE, shareCipher: 'cryptography' } }, async ($, on) => {
+test('/cg-encrypt: on, join and off point to the window first, wait as long as the host allows and tell how it ended; the folder and both ciphers are the settings', { options: { syncDir: SHARE, shareCipher: 'cryptography', indexCipher: 'efs' } }, async ($, on) => {
   const seen: number[] = [] // the toasts there were when cg.py was started
   const m = await started($, on, a => (a[0] === 'encrypt' ? (seen.push(m.toasts.length), ran(JSON.stringify({ action: a[1], done: a[1] !== 'join', notes: a[1] === 'join' ? ['n1'] : [] }))) : ran('{}')))
   const run = async (args: string) => (await ($ as any).command.run({ command: 'cg-encrypt', args })).text
   expect(await run('on')).toBe(T.encryptDone('on'))
   expect(await run('join')).toBe([T.encryptUnfinished, 'n1'].join('\n'))
   expect(await run('off')).toBe(T.encryptDone('off'))
-  expect(ofCg(m, 'encrypt')[0]).toEqual({ argv: ['encrypt', 'on', `--sync-dir=${SHARE}`, '--share-cipher=cryptography', '--model', 'embeddinggemma'], timeoutMs: 600_000 })
+  expect(ofCg(m, 'encrypt')[0]).toEqual({ argv: ['encrypt', 'on', `--sync-dir=${SHARE}`, '--share-cipher=cryptography', '--index-cipher=efs', '--model', 'embeddinggemma'], timeoutMs: 600_000 })
   expect(ofCg(m, 'encrypt').map(r => [r.argv[1], r.timeoutMs])).toEqual([['on', 600_000], ['join', 600_000], ['off', 600_000]])
   expect(seen).toEqual([1, 2, 3])
   expect(m.toasts).toEqual(Array(3).fill(T.toast(T.encryptWindow)))
@@ -1255,7 +1263,7 @@ test('/cg-health: the encryption line, from what cg.py status reports', async ($
   )
   on('session.root', () => ({ value: 'C:/w' }))
   const lines = (await ($ as any).command.run({ command: 'cg-health', args: '' })).text.split('\n')
-  expect(lines[lines.indexOf(T.healthEncryptionOn('sqlcipher')) + 1]).toBe('n1')
+  expect(lines[lines.indexOf(T.healthEncryptionOn('SQLCipher', 'SQLCipher')) + 1]).toBe('n1')
 })
 
 // ---- the index folder (/cg-index-dir) ----

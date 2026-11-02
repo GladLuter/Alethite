@@ -37,7 +37,7 @@ type Project = { key: string; convs: number }
 
 // embedCmd: the terminal command that finishes the vectors, shown while some records have none.
 // syncDir: the setting ('' is off); left out, nothing is said about the sync. settingsFile: the mod's own, once session.start has found it.
-// shareCipher: the setting of the same name, named beside "on" when cg.py reports the encryption (the manifest's default when left out).
+// shareCipher: the setting of the same name, named beside "on" (and the index's cipher, from cg.py) when cg.py reports the encryption (the manifest's default when left out).
 export const healthLines = (h: {
   version: string
   index: Record<string, unknown> | string

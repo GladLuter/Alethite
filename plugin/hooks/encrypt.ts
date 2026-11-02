@@ -3,15 +3,17 @@
 // Everything that touches `$` (runCg, the toasts) lives in register.tsx: the loader follows `$` only inside its own file.
 import { T } from './text'
 
-export type EncryptStatus = { on: boolean; db: 'encrypted' | 'plain' | 'none'; key: 'ok' | 'missing' | 'unreadable'; notes: string[] }
+export type EncryptStatus = { on: boolean; db: 'sqlcipher' | 'efs' | 'plain' | 'none'; key: 'ok' | 'missing' | 'unreadable'; notes: string[] }
 export type EncryptResult = { action: string; done: boolean; notes: string[] }
 
-// `/cg-encrypt` or `status` → the state; `on | join | off` → the run, which opens windows and takes the sync folder and the cipher of the
+// `/cg-encrypt` or `status` → the state; `on | join | off` → the run, which opens windows and takes the sync folder and the ciphers of the
 // settings (values as `--flag=value`: a folder that starts with `-` must not be read as a flag); null for anything else.
-export const encryptArgs = (args: string, syncDir: string, shareCipher: string, model: string): string[] | null => {
+export const encryptArgs = (args: string, syncDir: string, shareCipher: string, indexCipher: string, model: string): string[] | null => {
   const what = args.trim()
   if (what === '' || what === 'status') return ['encrypt', 'status']
-  return ['on', 'join', 'off'].includes(what) ? ['encrypt', what, `--sync-dir=${syncDir}`, `--share-cipher=${shareCipher}`, '--model', model] : null
+  return ['on', 'join', 'off'].includes(what)
+    ? ['encrypt', what, `--sync-dir=${syncDir}`, `--share-cipher=${shareCipher}`, `--index-cipher=${indexCipher}`, '--model', model]
+    : null
 }
 
 // The end of a run: done, or not finished (a window answered No or was closed, a step waits) with the notes cg.py gives.
@@ -19,7 +21,13 @@ export const encryptReply = (r: EncryptResult) => [r.done ? T.encryptDone(r.acti
 
 // The /cg-health lines: on or off, and the notes of cg.py as they are (a key that cannot be read, a plain copy left, what to repeat).
 // A key beside an index that is still open is not "on": the index is not protected yet, and its note says what to run.
-export const encryptHealth = (e: EncryptStatus, shareCipher: string) => [e.on && e.db !== 'plain' ? T.healthEncryptionOn(shareCipher) : T.healthEncryptionOff, ...e.notes]
+// The index is named by what cg.py found on disk (e.db), the sync folder by the setting; the owner reads the cipher's name, not the setting's word.
+const NAMES: Record<string, string> = { sqlcipher: 'SQLCipher', efs: 'EFS', cryptography: 'AES-GCM' }
+const named = (cipher: string) => NAMES[cipher] ?? cipher
+export const encryptHealth = (e: EncryptStatus, shareCipher: string) => [
+  e.on && e.db !== 'plain' ? T.healthEncryptionOn(named(e.db), named(shareCipher)) : T.healthEncryptionOff,
+  ...e.notes,
+]
 
 // A run the host stopped at its time limit. The engine words that as `<plugin>: $.process.run(<command>) aborted: still running after <N>ms`
 // and gives the error no code or class a mod can read, so these words are the only mark of it. runCg puts them in brackets at the end of its

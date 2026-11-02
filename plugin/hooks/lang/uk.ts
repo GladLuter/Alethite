@@ -214,7 +214,7 @@ export const uk: Partial<Texts> = {
   encryptUnfinished: 'cg-encrypt: не завершено. Команду можна безпечно повторити: вона продовжить з того місця, де зупинилась.',
   encryptTimeout: (action: string) => `не завершилося за 10 хвилин і було зупинено. Кожен крок можна безпечно повторити: запустіть /cg-encrypt ${action} ще раз або подивіться /cg-encrypt status.`,
   cgEncryptFailed: 'cg-encrypt: не вийшло, причина — у сповіщенні.',
-  healthEncryptionOn: (cipher: string) => `Шифрування: ввімкнено (${cipher})`,
+  healthEncryptionOn: (index: string, share: string) => `Шифрування: ввімкнено (індекс: ${index}, папка синхронізації: ${share})`,
   healthEncryptionOff: 'Шифрування: вимкнено',
 
   // the folder of the index (/cg-index-dir)

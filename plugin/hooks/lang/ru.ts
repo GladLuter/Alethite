@@ -211,7 +211,7 @@ export const ru: Partial<Texts> = {
   encryptUnfinished: 'cg-encrypt: не закончено. Команду можно безопасно повторить: она продолжит с того места, где остановилась.',
   encryptTimeout: (action: string) => `не закончилось за 10 минут и было остановлено. Каждый шаг можно безопасно повторить: запустите /cg-encrypt ${action} ещё раз или посмотрите /cg-encrypt status.`,
   cgEncryptFailed: 'cg-encrypt: не получилось, причина — в уведомлении.',
-  healthEncryptionOn: (cipher: string) => `Шифрование: включено (${cipher})`,
+  healthEncryptionOn: (index: string, share: string) => `Шифрование: включено (индекс: ${index}, папка синхронизации: ${share})`,
   healthEncryptionOff: 'Шифрование: выключено',
 
   // the folder of the index (/cg-index-dir)
