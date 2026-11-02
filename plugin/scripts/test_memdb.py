@@ -240,6 +240,26 @@ class EncryptedIndexTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.db))
 
     @dpapi
+    def test_a_folder_of_a_new_index_that_is_in_use_is_waited_for_like_in_encrypt(self):  # Windows error 32, not a failure
+        crypto.save_key(self.settings, KEY, 'cryptography', 'efs')
+        real, calls = crypto.efs_encrypt, []
+
+        def busy(path, times=2):
+            calls.append(path)
+            if len(calls) <= times:
+                raise OSError(0, 'in use', None, 32)
+            return real(path)
+
+        with mock.patch.object(crypto, 'efs_encrypt', busy), mock.patch('time.sleep'):
+            connect(self.db).close()
+        self.assertEqual((len(calls), crypto.efs_on(self.db)), (3, True))
+        os.remove(self.db)
+        crypto.efs_decrypt(os.path.dirname(self.db))
+        with mock.patch.object(crypto, 'efs_encrypt', lambda path: busy(path, 10 ** 6)), mock.patch('time.sleep'), self.assertRaises(ValueError) as cm:
+            connect(self.db)
+        self.assertEqual(str(cm.exception), t('encrypt_busy'))
+
+    @dpapi
     def test_a_new_index_with_a_key_is_sqlcipher_unless_indexcipher_is_efs(self):
         for index_cipher in (None, 'sqlcipher'):
             crypto.save_key(self.settings, KEY, 'cryptography', index_cipher)

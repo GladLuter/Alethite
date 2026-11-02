@@ -190,18 +190,6 @@ def _efs_dirs(db):
     return list(dict.fromkeys((os.path.dirname(crypto.settings_path(db)), os.path.dirname(db))))
 
 
-def _efs_do(fn, path):
-    """`fn` (efs_encrypt or efs_decrypt) on `path`. A file in use is waited for up to 10 s, like _replace; any other refusal is told with the path."""
-    for _ in range(100):
-        try:
-            return fn(path)
-        except OSError as e:
-            if e.winerror != 32:
-                raise ValueError(t('efs_failed', dir=path, e=e)) from None
-            time.sleep(0.1)
-    raise ValueError(t('encrypt_busy'))
-
-
 def _own_only(folder):
     """EFS takes everything that lies in a folder, so an index folder that is not the mod's own one may hold only what the mod makes in it: the
     index files and their copies, journals and locks (index.*), `handoffs` and job.xml. Else it is told, and nothing is changed."""
@@ -227,7 +215,7 @@ def _efs_probe(db):
             raise ValueError(t('efs_unsupported', dir=d))
     if len(dirs) > 1 and crypto.norm(dirs[1]) != crypto.norm(dirs[0]):
         _own_only(dirs[1])
-    _efs_do(crypto.efs_encrypt, dirs[0])
+    crypto.efs_do(crypto.efs_encrypt, dirs[0])
 
 
 def _unlistable(e):
@@ -252,7 +240,7 @@ def _efs_all(db, fn, want):
             items = [d] + [os.path.join(d, n) for n in names if not n.endswith('.lock')]
             for p in items if want else reversed(items):
                 if crypto.efs_on(p) != want:
-                    _efs_do(one, p)
+                    crypto.efs_do(one, p)
 
 
 @_busy()
@@ -409,7 +397,7 @@ def join(db, sync_dir, cipher, machine, ui, index_cipher='sqlcipher', model=MODE
 def off(db, sync_dir, machine, ui, model=MODEL, memory_dir=None, project_cwd=None, seconds=600):
     """Encryption off: the index files open again (the encrypted ones are replaced, no copy is kept), EFS taken off the folders that hold it
     and what lies in them, the key gone from the settings, our folder in the sync folder open again. The flag in the index that lets the sync
-    leave an encrypted folder is set before the key goes."""
+    leave an encrypted folder is set before the key goes (with no index, an open one is made to hold it)."""
     settings, key = _key(db)
     for path in _files(db):
         _remove(path + '.cg-new')  # of a run that died: a plain copy of the encrypted index
@@ -417,9 +405,10 @@ def off(db, sync_dir, machine, ui, model=MODEL, memory_dir=None, project_cwd=Non
             _convert(path, key, None)
     if any(map(crypto.efs_on, _efs_dirs(db) + _files(db))):  # no walk through folders and files that EFS does not hold
         _efs_all(db, crypto.efs_decrypt, False)
-    if key and not _size(db):  # no index to flag: the connect below would make one under the key, and under EFS again
-        crypto.save_key(settings, None)
-        key = None
+    if key and not _size(db):  # no index to flag: an open one is made, else the connect below would make one under the key, and under EFS again
+        os.makedirs(os.path.dirname(db), exist_ok=True)
+        with contextlib.closing(crypto.plain_db(db)) as conn:
+            conn.execute('CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)')
     machine = machine or sync.machine_name()
     notes = []
     with contextlib.closing(memdb.connect(db)) as conn:
@@ -446,4 +435,4 @@ def status(db):
     if state == 'plain' and key == 'ok':
         notes.append(t('note_index_plain'))
     notes += [t('note_plain_kept', path=p + '.plain') for p in _files(db) if os.path.exists(p + '.plain')]
-    return {'on': key != 'missing' or state in ('sqlcipher', 'efs'), 'db': state, 'key': key, 'notes': notes}
+    return {'on': key != 'missing' or state == 'sqlcipher', 'db': state, 'key': key, 'notes': notes}

@@ -14,6 +14,7 @@ import re
 import sqlite3
 import stat
 import tempfile
+import time
 
 from texts import t
 
@@ -201,7 +202,8 @@ def efs_on(path):
 
 def _efs_denied(path):
     """EFS holds `path` and Windows answers "access denied" (5) to a read of it. open() and SQLite tell no Windows code, so the file is tried
-    once more with the plain API: a file in use (32), any other code, or no failure at all is no refusal and the caller's error stands."""
+    once more with the plain API: a file in use (32), any other code, or no failure at all is no refusal and the caller's error stands.
+    Files only: a folder opened without FILE_FLAG_BACKUP_SEMANTICS always answers 5."""
     if not efs_on(path):
         return False
     import _winapi
@@ -223,6 +225,18 @@ def efs_encrypt(path):
 
 def efs_decrypt(path):
     _efs('DecryptFileW', path, 0)
+
+
+def efs_do(fn, path):
+    """`fn` (efs_encrypt or efs_decrypt) on `path`. A file in use (32) is waited for up to 10 s; any other refusal is told with the path."""
+    for _ in range(100):
+        try:
+            return fn(path)
+        except OSError as e:
+            if e.winerror != 32:
+                raise ValueError(t('efs_failed', dir=path, e=e)) from None
+            time.sleep(0.1)
+    raise ValueError(t('encrypt_busy'))
 
 
 def is_encrypted(path):
@@ -308,7 +322,7 @@ _CNG = {  # the arguments of the calls _gcm makes; a handle is 64-bit, so a void
 
 
 def _chk(status):
-    if status < 0:  # an NTSTATUS: warnings and information (>= 0) are no failure
+    if status < 0:  # an NTSTATUS: only success and information (>= 0, as NT_SUCCESS) is no failure; a warning (0x8...) is negative here
         raise OSError('CNG failed, NTSTATUS 0x%08X' % (status & 0xFFFFFFFF))
 
 

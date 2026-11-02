@@ -903,6 +903,33 @@ class EncryptTest(unittest.TestCase):
             self.assertFalse(crypto.efs_on(p), p)
         self.assertEqual(encrypt.status(a.db), {'on': False, 'db': 'plain', 'key': 'missing', 'notes': []})
 
+    def flagged(self, db):
+        """meta.share_plain of the index file at `db` as it is on the disk now; None when there is no such file, table or flag."""
+        if not os.path.exists(db):
+            return None
+        with contextlib.closing(sqlite3.connect(db)) as conn:
+            try:
+                return (conn.execute("SELECT value FROM meta WHERE key = 'share_plain'").fetchone() or (None,))[0]
+            except sqlite3.OperationalError:
+                return None
+
+    def test_off_with_no_index_sets_the_flag_before_the_key_goes(self):  # with no key and no flag a sync refuses to leave the encrypted folder
+        for c, share, how in ((self.a, self.alone(self.a), self.efs), (self.b, self.alone(self.b), self.on)):
+            self.assertTrue(how(c, share=share)['done'])
+            c.close()
+            os.remove(c.db)
+            seen, real = [], crypto.save_key
+
+            def save(settings, key, *args, real=real, seen=seen, db=c.db):
+                if key is None:
+                    seen.append(self.flagged(db))
+                return real(settings, key, *args)
+
+            with mock.patch.object(crypto, 'save_key', save):
+                res = encrypt.off(c.db, None, c.name, FakeUI(), memory_dir=c.memory, project_cwd=c.cwd)
+            self.assertEqual((res['done'], self.key(c), seen, self.flagged(c.db)), (True, None, ['1'], '1'), c.name)
+            self.assertEqual([crypto.efs_on(p) for p in (os.path.dirname(c.db), c.db)], [False, False], c.name)
+
     def test_efs_a_folder_that_cannot_be_listed_is_told_and_nothing_is_converted(self):
         a = self.a
         folder, backup, handoff, lock = self.efs_files(a)
@@ -1029,7 +1056,7 @@ class EncryptTest(unittest.TestCase):
         self.assertTrue(self.efs(a)['done'])
         self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'efs', 'key': 'ok', 'notes': []})
         crypto.save_key(settings, None)
-        self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'efs', 'key': 'missing', 'notes': []})
+        self.assertEqual(encrypt.status(a.db), {'on': False, 'db': 'efs', 'key': 'missing', 'notes': []})  # EFS alone, with no key: the batches go out open
         self.assertTrue(self.on(b, share=self.alone(b))['done'])
         self.assertEqual(encrypt.status(b.db), {'on': True, 'db': 'sqlcipher', 'key': 'ok', 'notes': []})
 

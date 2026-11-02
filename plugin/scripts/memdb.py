@@ -124,10 +124,7 @@ def _open(path):
         raise ValueError(t('key_missing'))
     folder = os.path.dirname(path)
     if key and not crypto.efs_on(folder):  # a new index of indexCipher efs: its folder is encrypted before the file is made
-        try:
-            crypto.efs_encrypt(folder)
-        except OSError as e:
-            raise ValueError(t('efs_failed', dir=folder, e=e)) from None
+        crypto.efs_do(crypto.efs_encrypt, folder)
     conn = crypto.plain_db(path)
     if crypto.efs_on(folder):  # a new index under EFS: the 16 KB pages of the encrypted one, as the vector read is faster with them
         conn.execute('PRAGMA page_size = %d' % crypto.INDEX_PAGE)

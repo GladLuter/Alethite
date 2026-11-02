@@ -232,7 +232,7 @@ class SealTest(unittest.TestCase):
         self.assertIn('python -m pip install sqlcipher3', t('cipher_missing', pkg='sqlcipher3'))
 
     def test_cryptography_cipher_needs_no_package(self):  # its AES-GCM is Windows' own bcrypt.dll
-        with mock.patch.dict(sys.modules, {'cryptography': None, 'cryptography.hazmat.primitives.ciphers.aead': None}):
+        with mock.patch.dict(sys.modules, {'cryptography': None, 'cryptography.hazmat.primitives.ciphers.aead': None, 'sqlcipher3': None}):
             crypto.need('cryptography')
             data = crypto.seal(LINES, 'cryptography', KEY, AAD)
             self.assertEqual(crypto.unseal(data, 'cryptography', KEY, AAD), LINES)
@@ -264,6 +264,18 @@ class SealTest(unittest.TestCase):
         for args in [(b'k' * 16, bytes(12), b'', b'', bytes(16)), (KEY, bytes(8), b'', b'', bytes(16)), (KEY, bytes(12), b'', b'', bytes(8))]:
             with self.assertRaises(ValueError):
                 crypto._gcm(False, *args)
+
+    def test_gcm_failure_that_is_no_tag_mismatch_is_an_oserror_and_frees_what_it_took(self):  # not None: a batch would be called broken and offered for a skip
+        bc = mock.MagicMock()
+        for name in crypto._CNG:
+            getattr(bc, name).return_value = 0
+        bc.BCryptDecrypt.return_value = -1073741811  # STATUS_INVALID_PARAMETER
+        with mock.patch.object(crypto.ctypes, 'WinDLL', return_value=bc):
+            with self.assertRaises(OSError):
+                crypto._gcm(True, KEY, bytes(12), b'x', b'', bytes(16))
+            with self.assertRaises(OSError):  # unseal lets it through: it is no verdict on the batch
+                crypto.unseal(bytes(29), 'cryptography', KEY, AAD)
+        self.assertEqual((bc.BCryptDestroyKey.call_count, bc.BCryptCloseAlgorithmProvider.call_count), (2, 2))
 
     def test_gcm_tamper(self):
         data = crypto.seal(LINES, 'cryptography', KEY, AAD)

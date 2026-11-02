@@ -347,12 +347,11 @@ def _handoffs_in(folder):
 def _efs_first(path):
     """A path of the target that is there already and plain goes under EFS before anything is written into it: a file would take the new
     bytes in clear, a folder would hold its new files so. What is made in an encrypted folder is born encrypted and needs this no more."""
-    import encrypt
     if os.path.exists(path) and not crypto.efs_on(path):
-        encrypt._efs_do(crypto.efs_encrypt, path)
+        crypto.efs_do(crypto.efs_encrypt, path)
 
 
-def _copy_extras(cur, folder, efs=False):
+def _copy_extras(cur, folder, efs):
     """The handoff files and job.xml beside the index go over as they are; with `efs` each folder and file they are written to is under EFS first."""
     def put(path, dest):
         if efs:
@@ -499,8 +498,8 @@ def _switch(out, where, target, key, ui, drive_type, free):
         if room < need:
             raise ValueError(t('index_dir_no_space', dir=folder, need=-(-need // MB), free=room // MB))
     field = None if n == home else folder  # the home folder is "no indexDir"
-    made, d = [], folder  # the folders this move makes, the deepest first
-    while not os.path.exists(d) and os.path.dirname(d) != d:
+    made, d = [], folder  # the folders this move makes, the deepest first; only under EFS, where a refused move removes them again
+    while efs and not os.path.exists(d) and os.path.dirname(d) != d:
         made.append(d)
         d = os.path.dirname(d)
     os.makedirs(folder, exist_ok=True)

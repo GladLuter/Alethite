@@ -1160,7 +1160,17 @@ class MoveTest(unittest.TestCase):
             self.write(os.path.join(self.target, *p), 'plain')
         self.write(os.path.join(self.target, 'handoffs', 'other.md'), 'not ours')
         self.assertFalse(any(crypto.efs_on(os.path.join(self.target, *p)) for p in [(), ('handoffs',), *old]))
-        self.assertTrue(self.move(key=key, ui=FakeUI([False]))['done'])
+        writes = []  # (file, whether it was there, whether EFS held it) at the moment the write begins
+
+        def spy(real):
+            def write(src, dest, *args, **kw):
+                writes.append((os.path.relpath(dest, self.target), os.path.exists(dest), crypto.efs_on(dest)))
+                return real(src, dest, *args, **kw)
+            return write
+
+        with mock.patch('shutil.copyfile', spy(shutil.copyfile)), mock.patch.object(indexdir, '_copyfile', spy(indexdir._copyfile)):
+            self.assertTrue(self.move(key=key, ui=FakeUI([False]))['done'])
+        self.assertEqual(sorted(writes), [('handoffs\\S1.md', True, True),('index.before-stage2.db.cg-move', False, False), ('index.db.cg-move', True, True), ('job.xml', True, True)])
         for p in [(), ('handoffs',), ('handoffs', 'S1.md'), ('job.xml',), ('index.db',), ('index.before-stage2.db',)]:
             self.assertTrue(crypto.efs_on(os.path.join(self.target, *p)), p)  # a file that is replaced or written over is not plain any more
         for name, text in (('handoffs\\S1.md', 'handoff'), ('job.xml', '<Task/>'), ('handoffs\\other.md', 'not ours')):
