@@ -6,7 +6,6 @@ import contextlib
 import os
 import secrets
 import shutil
-import sqlite3
 import stat
 import time
 
@@ -107,6 +106,19 @@ def _replace(new, path, stamp):
     raise ValueError(t('encrypt_busy'))
 
 
+@contextlib.contextmanager
+def _busy():
+    """A database that another connection holds locked (a chat takes none of our locks) is no failure of ours: nothing was changed, try again.
+    Used as a decorator."""
+    try:
+        yield
+    except memdb.db_errors() as e:
+        if 'locked' in str(e):
+            raise ValueError(t('encrypt_busy')) from None
+        raise
+
+
+@_busy()
 def _convert(path, was, now, keep=None, page=None):
     """The database at `path` under another key (`was` to `now`, None is open): a copy is made beside it under the write lock of the
     original, counted against it from a fresh open, and only then put in its place. `keep` is a hard link to the original made just
@@ -229,6 +241,7 @@ def _efs_all(db, fn, want):
                     _efs_do(one, p)
 
 
+@_busy()
 def _to_efs(path, key):
     """One index file, in a folder under EFS already, as a plain database with 16 KB pages: SQLCipher is converted (the copy is born
     encrypted in the same folder, so nothing plain lies outside EFS), a plain one with smaller pages is vacuumed into them."""
@@ -246,10 +259,6 @@ def _to_efs(path, key):
         if conn.execute('PRAGMA page_size').fetchone()[0] < crypto.INDEX_PAGE:
             conn.execute('PRAGMA page_size = %d' % crypto.INDEX_PAGE)
             conn.execute('VACUUM')
-    except sqlite3.OperationalError as e:
-        if 'locked' in str(e):  # a chat holds the write lock; nothing was changed
-            raise ValueError(t('encrypt_busy')) from None
-        raise
     finally:
         conn.close()
 

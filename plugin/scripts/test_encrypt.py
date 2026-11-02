@@ -908,6 +908,25 @@ class EncryptTest(unittest.TestCase):
         self.assertEqual(str(cm.exception), t('encrypt_busy'))
         self.assertEqual(self.page_size(a.db), 4096)
 
+    def test_a_sqlcipher_index_held_by_a_writer_is_told_as_busy_when_it_goes_to_efs(self):
+        a = self.a
+        self.assertTrue(self.on(a)['done'])
+        before, key = self.counts(a.conn), self.key(a)
+        a.close()
+        encrypt._efs_all(a.db, crypto.efs_encrypt, True)  # the cut of an earlier run: all of it under EFS, the index still SQLCipher
+        real = crypto.open_db
+        holder = crypto.open_db(a.db, key, page=crypto.INDEX_PAGE)
+        holder.execute('BEGIN IMMEDIATE')  # a chat takes none of our locks: it can hold the write lock
+        try:
+            with mock.patch.object(crypto, 'open_db', lambda p, k, **kw: real(p, k, **dict(kw, timeout=0.05))), self.assertRaises(ValueError) as cm:
+                self.efs(a, cipher='sqlcipher')
+        finally:
+            holder.close()
+        self.assertEqual(str(cm.exception), t('encrypt_busy'))
+        self.assertEqual((crypto.is_encrypted(a.db), os.path.exists(a.db + '.cg-new'), self.counts(a.conn)), (True, False, before))
+        self.assertTrue(self.efs(a, cipher='sqlcipher')['done'])  # the repeat goes on from here
+        self.assert_plain_16k(a.db, before)
+
     def test_off_without_efs_leaves_the_folders_alone(self):
         a = self.a
         self.assertTrue(self.on(a)['done'])
