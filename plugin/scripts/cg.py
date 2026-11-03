@@ -395,6 +395,7 @@ def _parser():
     p.set_defaults(where=None)  # the answer of resolve, once `main` has one
     p.add_argument('--projects', default=os.path.join(os.path.expanduser('~'), '.claude', 'projects'))
     p.add_argument('--lang', default='en')  # of the texts the owner and the model read: errors, the handoff, the note
+    p.add_argument('--follow-job', action='store_true')  # the mod's calls only: the background job is made again to run this cg.py (job.follow)
     sub = p.add_subparsers(dest='cmd', required=True)
 
     def add(name, fn):
@@ -489,6 +490,29 @@ def _parser():
     return p
 
 
+def _job_step(notes, fn, *args):
+    """A step of the background job's move to the new name: an error is a note in the answer, it never stops the command."""
+    try:
+        return fn(*args)
+    except Exception as e:
+        notes.append(texts.t('home_job_failed', e=e))
+
+
+def _old_task_off():
+    """The background job of the old name is taken off before its folder moves (its code would make the old folder again). Its interval, 0 if none."""
+    import job
+    minutes = job.installed(task=job.OLD_TASK)
+    if minutes:
+        job.remove(task=job.OLD_TASK)
+    return minutes or 0
+
+
+def _new_task_on(folder, minutes):
+    import job
+    if not job.installed():
+        job.install(folder, minutes)
+
+
 def main(argv):
     for stream in (sys.stdout, sys.stderr, sys.stdin):  # stderr: the progress line of embed; stdin: the text cg.py compress reads
         if stream is not None:  # pythonw, the background job's, has none of them
@@ -499,18 +523,26 @@ def main(argv):
         a = _parser().parse_args(argv)
         texts.lang = a.lang
         if a.db is None:
-            home_notes = crypto.move_home(wait=a.cmd not in SHORT)  # first: the settings and the index are read from the new folder, a run with --db leaves the old one alone
+            # job is not imported (it costs time) unless the old folder is there: the old task lives and dies with it
+            minutes = os.path.isdir(crypto.OLD_HOME_DIR) and _job_step(home_notes, _old_task_off)
+            home_notes += crypto.move_home(wait=a.cmd not in SHORT)  # the settings and the index are read from the new folder, a run with --db leaves the old one alone
+            a.db = os.path.join(crypto.HOME_DIR, 'index.db')  # a place for files beside it (the handoff, the job's task file) when no index can be used: it is never opened then
             try:
                 a.where = indexdir.resolve()
             except (ValueError, OSError) as e:
                 problem = str(e)
                 if a.cmd not in INDEX_FREE:
                     raise
-                a.db = os.path.join(crypto.HOME_DIR, 'index.db')  # a place for files beside it (the handoff), the index itself is never opened
             else:
                 a.db = a.where.db
                 if a.where.configured:  # the settings of an index in that folder are still the home ones
                     crypto.INDEX_DIRS.add(crypto.norm(a.where.configured))
+            finally:
+                if minutes:  # the job of the old name comes back under the new one, whatever resolve said
+                    _job_step(home_notes, _new_task_on, os.path.dirname(a.db), minutes)
+        if a.follow_job:
+            import job
+            home_notes += job.follow(os.path.dirname(a.db))
         # the folder is back and the home folder has a temporary index: it is merged first, and its locks are given back before the command
         # a plain pair never reads the key (memdb._open): a key that cannot be read must not stop it
         # a merge of a big index takes seconds: not in a run that needs no index, nor in the prompt hook's lessons-match, which has eight

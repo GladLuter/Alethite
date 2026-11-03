@@ -1,3 +1,4 @@
+import datetime
 import gc
 import json
 import os
@@ -8,6 +9,7 @@ import unittest
 import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 from unittest import mock
+from xml.sax.saxutils import escape
 
 import cg
 import job
@@ -15,12 +17,48 @@ import memdb
 from test_memdb import claude_line, owner_line
 from test_texts import use_lang
 from test_vectors import fake
+from texts import t
 
+SCHTASKS = job._schtasks  # before any test patches it
 NS = {'t': 'http://schemas.microsoft.com/windows/2004/02/mit/task'}
 
 
 def ran(code=0, out=b'', err=b''):
     return lambda args, **kw: SimpleNamespace(returncode=code, stdout=out, stderr=err, args=args)
+
+
+class Scheduler:
+    """The Task Scheduler as the `run` of job.py: its tasks ({name: minutes, or (minutes, the cg.py it runs)}) kept as the XML they were made from, and
+    every call it got ([verb, ...] without 'schtasks') in order. `deny` are the verbs it refuses with 'Access is denied'."""
+
+    def __init__(self, tasks=None, deny=()):
+        self.tasks = {name: self.xml(*(spec if isinstance(spec, tuple) else (spec,))) for name, spec in (tasks or {}).items()}
+        self.calls, self.deny = [], deny
+
+    @staticmethod
+    def xml(minutes, script=job.CG):
+        return job.task_xml('pythonw.exe', '"%s" maintain' % script, minutes, datetime.datetime(2026, 11, 3, 9, 0))
+
+    def __call__(self, args, **kw):
+        verb, name = args[1], args[3]
+        self.calls.append(args[1:])
+        answer = lambda code=0, out=b'', err=b'': SimpleNamespace(returncode=code, stdout=out, stderr=err)
+        if verb in self.deny:
+            return answer(1, err=b'ERROR: Access is denied.\r\n')
+        if verb == '/Create':
+            with open(args[5], encoding='utf-16') as f:
+                self.tasks[name] = f.read()
+        elif name not in self.tasks:
+            return answer(1, err=b'ERROR: The system cannot find the file specified.\r\n')
+        elif verb == '/Delete':
+            del self.tasks[name]
+        else:  # /Query /XML
+            return answer(out=self.tasks[name].encode('utf-8'))
+        return answer()
+
+    def patched(self):
+        """job._schtasks as it is, but asking this stub where it would have run schtasks: for a test of cg.main, which has no `run` to give."""
+        return mock.patch.object(job, '_schtasks', lambda args, run: SCHTASKS(args, self))
 
 
 class TaskTest(unittest.TestCase):
@@ -31,7 +69,6 @@ class TaskTest(unittest.TestCase):
         self.dir = d.name
 
     def test_the_task_runs_cg_py_hidden_every_n_minutes_one_at_a_time(self):
-        import datetime
         root = ET.fromstring(job.task_xml('C:\\Py\\pythonw.exe', '"C:\\cg\\cg.py" maintain', 30, datetime.datetime(2026, 10, 20, 9, 0), 'PC\\AIJ'))
         find = lambda path: root.find(path, NS).text
         self.assertEqual(find('t:Triggers/t:TimeTrigger/t:Repetition/t:Interval'), 'PT30M')
@@ -42,6 +79,7 @@ class TaskTest(unittest.TestCase):
         self.assertEqual((settings['MultipleInstancesPolicy'], settings['Hidden'], settings['DisallowStartIfOnBatteries'], settings['StartWhenAvailable']),
                          ('IgnoreNew', 'true', 'false', 'true'))
         self.assertIsNone(ET.fromstring(job.task_xml('p', 'a', 5, datetime.datetime(2026, 1, 1))).find('t:Principals/t:Principal/t:UserId', NS))
+        self.assertTrue(find('t:RegistrationInfo/t:Description').startswith('Alethite: '))
 
     def test_pythonw_beside_python_or_python_itself(self):
         for name in ('python.exe', 'pythonw.exe'):
@@ -59,7 +97,7 @@ class TaskTest(unittest.TestCase):
             return SimpleNamespace(returncode=0, stdout=b'', stderr=b'')
 
         out = job.install(self.dir, 20, python='C:\\Py\\python.exe', run=run, supported=lambda: True)
-        self.assertEqual(calls, [['schtasks', '/Create', '/TN', 'CacheGuard', '/XML', os.path.join(self.dir, 'job.xml'), '/F']])
+        self.assertEqual(calls, [['schtasks', '/Create', '/TN', 'Alethite', '/XML', os.path.join(self.dir, 'job.xml'), '/F']])
         with open(out['file'], encoding='utf-16') as f:
             self.assertIn('<Interval>PT20M</Interval>', f.read())
         self.assertEqual((out['installed'], out['minutes']), (True, 20))
@@ -88,6 +126,51 @@ class TaskTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, 'Access is denied'):
             job.remove(run=run, supported=lambda: True)
+
+    def test_installed_and_remove_take_task_name(self):
+        self.assertEqual((job.TASK, job.OLD_TASK), ('Alethite', 'CacheGuard'))
+        s = Scheduler({'CacheGuard': 45, 'Alethite': 20})
+        self.assertEqual((job.installed(s, lambda: True, task='CacheGuard'), job.installed(s, lambda: True)), (45, 20))
+        job.remove(s, lambda: True, task='CacheGuard')
+        self.assertEqual((s.calls[-1], list(s.tasks)), (['/Delete', '/TN', 'CacheGuard', '/F'], ['Alethite']))
+        job.remove(s, lambda: True)
+        self.assertEqual((s.calls[-1], list(s.tasks)), (['/Delete', '/TN', 'Alethite', '/F'], []))
+
+    def test_target_reads_script_path_from_task_xml(self):
+        script = 'C:\\Users\\A&B\\plugin\\scripts\\cg.py'  # the XML says &amp;
+        s = Scheduler({'Alethite': (30, script), 'CacheGuard': (30, 'C:\\old\\cg.py')})
+        self.assertEqual(job.target(s, lambda: True), script)
+        self.assertEqual(job.target(s, lambda: True, task='CacheGuard'), 'C:\\old\\cg.py')
+        self.assertIsNone(job.target(Scheduler(), lambda: True))  # no such task
+        self.assertIsNone(job.target(s, lambda: False))  # no scheduler
+
+    def follow(self, s):
+        return job.follow(self.dir, python='C:\\Py\\python.exe', run=s, supported=lambda: True)
+
+    def test_follow_reinstalls_when_target_differs(self):
+        s = Scheduler({'Alethite': (45, 'C:\\clone\\plugin\\scripts\\cg.py')})
+        self.assertEqual(self.follow(s), [])
+        self.assertEqual([c[:3] for c in s.calls if c[0] != '/Query'], [['/Create', '/TN', 'Alethite']])
+        self.assertIn('<Interval>PT45M</Interval>', s.tasks['Alethite'])  # the interval it had
+        self.assertIn('"%s" maintain' % escape(job.CG), s.tasks['Alethite'])
+
+    def test_follow_leaves_task_with_same_target(self):
+        for script in (job.CG, job.CG.upper()):  # Windows paths differ in case only
+            s = Scheduler({'Alethite': (45, script)})
+            before = dict(s.tasks)
+            self.assertEqual(self.follow(s), [])
+            self.assertEqual(([c[0] for c in s.calls], s.tasks), (['/Query'], before))
+
+    def test_follow_without_task_does_nothing(self):
+        s = Scheduler({'CacheGuard': 45})  # the old name is not followed
+        self.assertEqual(self.follow(s), [])
+        self.assertEqual(([c[:3] for c in s.calls], list(s.tasks)), ([['/Query', '/TN', 'Alethite']], ['CacheGuard']))
+
+    def test_follow_error_is_a_note_and_the_task_stays(self):
+        s = Scheduler({'Alethite': (45, 'C:\\clone\\cg.py')}, deny=('/Create',))
+        before = dict(s.tasks)
+        self.assertEqual(self.follow(s), [t('home_job_failed', e=t('job_schtasks', e='ERROR: Access is denied.'))])
+        self.assertEqual(s.tasks, before)
 
 
 class MaintainTest(unittest.TestCase):
@@ -203,7 +286,7 @@ class MaintainTest(unittest.TestCase):
         self.assertEqual(st['job']['sync']['pushed'], 2)
 
     def test_main_runs_without_streams_as_pythonw_starts_it(self):
-        with mock.patch.object(sys, 'stdout', None), mock.patch.object(sys, 'stderr', None), mock.patch.object(sys, 'stdin', None):
+        with mock.patch.object(sys, 'stdout', None), mock.patch.object(sys, 'stderr', None), mock.patch.object(sys, 'stdin', None), Scheduler().patched():
             self.assertEqual(cg.main(['--db', self.db, 'job', 'status']), 0)
 
 

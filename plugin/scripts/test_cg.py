@@ -19,11 +19,13 @@ import crypto
 import dialogs
 import encrypt
 import indexdir
+import job
 import lessons
 import memdb
 import texts
 import vectors
 from test_encrypt import FakeUI
+from test_job import Scheduler
 from test_texts import use_lang
 from texts import t
 from transcripts import project_key
@@ -50,6 +52,9 @@ def setUpModule():
         patch = mock.patch.object(crypto, name, os.path.join(d.name, name))
         patch.start()
         unittest.addModuleCleanup(patch.stop)
+    patch = Scheduler().patched()  # and the real Task Scheduler is not asked: this one has no tasks
+    patch.start()
+    unittest.addModuleCleanup(patch.stop)
 
 
 class CgTest(unittest.TestCase):
@@ -668,6 +673,90 @@ class CgTest(unittest.TestCase):
             self.assertEqual(code, int('error' in out), cmd)
             self.assertEqual((rename.call_count, sleep.call_count), (tries, tries - 1), cmd)
         self.assertEqual(out['error'], 'ValueError: ' + t('bad_session', id='..\\x'))
+
+    # the background job follows the rename: the old task goes with the old folder, the new one comes back with its interval
+
+    def scheduler(self, tasks=None, deny=()):
+        """The Task Scheduler of this test, with these tasks: cg.main asks it about the old task and about the new one."""
+        s = Scheduler(tasks, deny)
+        patch = s.patched()
+        patch.start()
+        self.addCleanup(patch.stop)
+        return s
+
+    def test_move_removes_old_task_and_installs_new_with_its_interval(self):
+        old, new = self.old_home()
+        s = self.scheduler({'CacheGuard': 45})
+        code, out, _ = self.main_home('status')
+        self.assertEqual(code, 0, out)
+        self.assertEqual([(c[0], c[2]) for c in s.calls], [('/Query', 'CacheGuard'), ('/Delete', 'CacheGuard'), ('/Query', 'Alethite'), ('/Create', 'Alethite')])
+        self.assertEqual(list(s.tasks), ['Alethite'])
+        self.assertIn('<Interval>PT45M</Interval>', s.tasks['Alethite'])
+        self.assertTrue(os.path.isfile(os.path.join(new, 'job.xml')))  # beside the index
+        self.assertNotIn('home_notes', out)
+
+    def test_old_task_removed_when_both_folders_exist(self):  # the old code would make the old folder again
+        old, new = self.old_home()
+        os.makedirs(new)
+        s = self.scheduler({'CacheGuard': 30})
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, list(s.tasks), os.path.isdir(old)), (0, ['Alethite'], True))
+        self.assertEqual(out['home_notes'], [t('home_move_both', old=old, new=new)])
+
+    def test_no_old_folder_no_schtasks_call(self):
+        self.home_dir()  # no old folder
+        s = self.scheduler({'CacheGuard': 30})
+        for cmd in (('status',), ('last-turn', '--session', 'S1')):
+            self.assertEqual(self.main_home(*cmd)[0], 0, cmd)
+        self.assertEqual((s.calls, list(s.tasks)), ([], ['CacheGuard']))
+
+    def test_follow_job_flag_only(self):
+        home = self.home_dir()
+        s = self.scheduler({'Alethite': (45, 'C:\\clone\\plugin\\scripts\\cg.py')})
+        self.assertEqual(self.main_home('status')[0], 0)
+        self.assertEqual(s.calls, [])  # a run without the flag leaves the task alone
+        code, out, _ = self.main_home('--follow-job', 'status')  # before the command, like --lang
+        self.assertEqual((code, 'home_notes' in out), (0, False), out)
+        self.assertEqual([c[0] for c in s.calls], ['/Query', '/Query', '/Create'])  # where it points, its interval, the new task
+        self.assertEqual(job.target(s, lambda: True), job.CG)
+        self.assertIn('<Interval>PT45M</Interval>', s.tasks['Alethite'])
+        self.assertTrue(os.path.isfile(os.path.join(home, 'job.xml')))
+
+    def job_error(self, deny):
+        old, new = self.old_home()
+        s = self.scheduler({'CacheGuard': 45}, deny)
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, 'error' in out, os.path.exists(old), os.path.isdir(new)), (0, False, False, True), out)  # the folder moved, the index answered
+        self.assertEqual(out['home_notes'], [t('home_job_failed', e=t('job_schtasks', e='ERROR: Access is denied.'))])
+        return s
+
+    def test_job_error_during_move_does_not_stop_command(self):
+        self.assertEqual(list(self.job_error('/Delete').tasks), ['CacheGuard'])  # the old task could not be removed: it is still there, and said
+
+    def test_new_task_error_during_move_is_said_too(self):
+        self.assertEqual(list(self.job_error('/Create').tasks), [])
+
+    def test_the_job_comes_back_even_when_the_index_cannot_be_found(self):  # the old task is gone and the old folder is not there to bring it up next time
+        old, new = self.old_home()
+        with open(os.path.join(old, 'settings.json'), 'w', encoding='utf-8') as f:
+            f.write('{ "indexDir": ')
+        s = self.scheduler({'CacheGuard': 45})
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, 'error' in out, list(s.tasks)), (1, True, ['Alethite']))
+        self.assertTrue(os.path.isfile(os.path.join(new, 'job.xml')))
+
+    def test_short_command_moves_before_opening_index(self):
+        old, new = self.old_home()
+        conn = memdb.connect(os.path.join(old, 'index.db'))
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('marker', 'old')")
+        conn.commit()
+        conn.close()
+        self.scheduler()
+        code, out, _ = self.main_home('lessons-match', '--text', '429', '--model', 'nosuch')
+        self.assertEqual((code, 'error' in out, 'home_notes' in out, os.path.exists(old)), (0, False, False, False), out)
+        conn = memdb.connect(os.path.join(new, 'index.db'))
+        self.addCleanup(conn.close)
+        self.assertEqual(memdb.meta(conn, 'marker'), 'old')  # the index that moved, not a second one made in the new folder
 
     def test_with_db_the_home_settings_are_not_read_at_all(self):
         home = self.home_dir()

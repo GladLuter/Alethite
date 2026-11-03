@@ -9,7 +9,8 @@ import sys
 
 from texts import t
 
-TASK = 'CacheGuard'
+TASK = 'Alethite'
+OLD_TASK = 'CacheGuard'  # the task of the name before the rename: cg.py takes it off once, when it finds the old mod folder
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
 MINUTES = 30
 
@@ -37,7 +38,7 @@ def task_xml(command, arguments, minutes, start, user=None):
     return '''<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Claude-CacheGuard: the index, the vectors and the sync of the long memory, with no chat open</Description>
+    <Description>Alethite: the index, the vectors and the sync of the long memory, with no chat open</Description>
   </RegistrationInfo>
   <Triggers>
     <TimeTrigger>
@@ -99,22 +100,45 @@ def install(folder, minutes=MINUTES, python=sys.executable, run=subprocess.run, 
     return {'installed': True, 'minutes': minutes, 'command': command, 'file': path}
 
 
-def remove(run=subprocess.run, supported=is_supported):
+def remove(run=subprocess.run, supported=is_supported, task=TASK):
     if not supported():
         raise ValueError(t('job_windows_only'))
-    code, out = _schtasks(['/Delete', '/TN', TASK, '/F'], run)
-    if code and installed(run, supported):  # no such task is what was asked for, a refusal (Access is denied) is not
+    code, out = _schtasks(['/Delete', '/TN', task, '/F'], run)
+    if code and installed(run, supported, task):  # no such task is what was asked for, a refusal (Access is denied) is not
         raise RuntimeError(t('job_schtasks', e=' '.join(out.split())))
     return {'installed': False}
 
 
-def installed(run=subprocess.run, supported=is_supported):
+def installed(run=subprocess.run, supported=is_supported, task=TASK):
     """None where there is no scheduler yet, else the interval of the task in minutes, or 0 when there is no task."""
     if not supported():
         return None
-    code, out = _schtasks(['/Query', '/TN', TASK, '/XML'], run)  # the XML, not the list: that one speaks the language of Windows
+    code, out = _schtasks(['/Query', '/TN', task, '/XML'], run)  # the XML, not the list: that one speaks the language of Windows
     m = re.search(r'<Interval>P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?</Interval>', out) if code == 0 else None  # Windows may write PT1H or P1D
     return sum(int(n or 0) * k for n, k in zip(m.groups(), (1440, 60, 1))) if m else 0
+
+
+def target(run=subprocess.run, supported=is_supported, task=TASK):
+    """The cg.py the task runs (the path in its Arguments); None where there is no scheduler or no such task."""
+    if not supported():
+        return None
+    from xml.sax.saxutils import unescape  # here, not on top: see task_xml
+    code, out = _schtasks(['/Query', '/TN', task, '/XML'], run)
+    m = re.search(r'<Arguments>"([^"]+)"', out) if code == 0 else None
+    return unescape(m.group(1)) if m else None
+
+
+def follow(folder, python=sys.executable, run=subprocess.run, supported=is_supported):
+    """Make the task run the cg.py of the mod that calls, with the interval it had: a task made from a plugin cache keeps running that version after
+    an update. The notes for `home_notes` (none when all went well): a step that fails never stops the command."""
+    try:
+        there = target(run, supported)
+        # shortcut: a non-ASCII path (schtasks prints the OEM code page) never matches and the task is made again at every call, decode it right if that bites
+        if there and os.path.normcase(there) != os.path.normcase(CG):
+            install(folder, installed(run, supported) or MINUTES, python, run, supported=supported)
+    except Exception as e:
+        return [t('home_job_failed', e=e)]
+    return []
 
 
 def on_battery():
