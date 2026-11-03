@@ -135,7 +135,7 @@ class CgTest(unittest.TestCase):
         code, out = self.run_cg('expand', '--conv', hit['conv'], '--pos', str(hit['pos']))
         self.assertEqual((code, [r['kind'] for r in out['rows']]), (0, ['owner', 'claude']))
 
-    def test_status_project(self):  # /cg-health shows which project «в этом проекте» means and how many conversations it finds
+    def test_status_project(self):  # /al-health shows which project «в этом проекте» means and how many conversations it finds
         self.write('A/S1.jsonl', [owner_line('здесь', cwd='C:\a')])
         self.write('A/S1/subagents/agent-a1.jsonl', [owner_line('суб', cwd='')])  # no cwd of its own: the parent's project
         self.write('B/S2.jsonl', [owner_line('там', cwd='C:\b')])
@@ -537,7 +537,7 @@ class CgTest(unittest.TestCase):
         self.encrypted_index(syncDir=self.share_dir())
         crypto.save_key(crypto.settings_path(self.db), None)
         out = self.maintain()
-        self.assertEqual(list(out), ['errors'])  # the index cannot be opened to keep the run in: /cg-health shows the same words from `status`
+        self.assertEqual(list(out), ['errors'])  # the index cannot be opened to keep the run in: /al-health shows the same words from `status`
         self.assertIn(t('key_missing'), out['errors'][0]['error'])
         code, status = self.run_cg('--lang', 'ru', 'status')
         self.assertEqual(code, 1)

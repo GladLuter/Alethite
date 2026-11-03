@@ -462,7 +462,7 @@ def _pull(conn, machine_dir, peer, own, key, model, digest, deadline, now, repor
 
 
 def skip_batch(conn, machine, n):
-    """Go on past batch `n` of `machine` without it: the owner's way out of a broken batch. Kept, and shown in /cg-health. Only a computer
+    """Go on past batch `n` of `machine` without it: the owner's way out of a broken batch. Kept, and shown in /al-health. Only a computer
     known here (its name in any case) and only the batch it is stuck at: a typo must not skip a sound batch or invent a computer."""
     if not isinstance(n, int) or n < 1:
         raise ValueError(t('skip_batch_bad'))
@@ -697,7 +697,7 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
     report['peers'] = {m: last for m, last in conn.execute('SELECT machine, last_batch FROM peers WHERE machine != ? ORDER BY machine', (machine,))}
     report['own_batch'] = (conn.execute('SELECT last_batch FROM peers WHERE machine = ?', (machine,)).fetchone() or (None,))[0]
     report['seconds'] = round(now() - start, 2)
-    # stopped: the run failed as a whole (an unavailable folder) and never reached the memory step; /cg-health tells only its error then
+    # stopped: the run failed as a whole (an unavailable folder) and never reached the memory step; /al-health tells only its error then
     last = {'at': _now(), 'dir': sync_dir, 'pushed': report['pushed'], 'pulled': report['pulled'], 'memory': report['memory'],
             'errors': len(report['errors']), 'error': report['errors'][0]['error'] if report['errors'] else None,
             'stopped': any(e['where'] == 'sync' for e in report['errors'])}
@@ -706,7 +706,7 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
 
 
 def status(conn, machine=None):
-    """What /cg-health shows of the sync: the last run, every computer read and how far, the records by the computer they came from."""
+    """What /al-health shows of the sync: the last run, every computer read and how far, the records by the computer they came from."""
     machine = machine or machine_name()
     last = memdb.meta(conn, 'sync_last')
     peers = [{'machine': m, 'last_batch': b, 'skipped': json.loads(s), 'model': mo, 'error': e}

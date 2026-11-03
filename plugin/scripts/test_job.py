@@ -224,7 +224,7 @@ class MaintainTest(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(self.share, 'AIJ-HP', 'batch-00000001.jsonl.gz')))  # the quotes of "Copy as path" went
         conn = memdb.connect(self.db)
         self.addCleanup(conn.close)
-        self.assertEqual(json.loads(memdb.meta(conn, 'job_last'))['sync']['pushed'], 2)  # kept for /cg-health
+        self.assertEqual(json.loads(memdb.meta(conn, 'job_last'))['sync']['pushed'], 2)  # kept for /al-health
 
     def test_on_battery_the_vectors_wait_the_rest_runs(self):
         out = self.run_job(battery=True)

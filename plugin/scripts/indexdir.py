@@ -233,7 +233,7 @@ def merge_back(where, key):
         with contextlib.closing(_connect(db, key)) as conn:  # a move may have left src as the old copy of db: its note goes with it
             old = _old_copies(memdb.meta(conn, 'old_copy'))
             _set_old(conn, [d for d in old if crypto.norm(d) != crypto.norm(fields['home'])])
-            # for /cg-health: a merge done by the background job is told nowhere else
+            # for /al-health: a merge done by the background job is told nowhere else
             conn.execute("INSERT OR REPLACE INTO meta VALUES('merge_done', ?)", (json.dumps(dict(fields, n=done['records'])),))
         encrypt._remove(src)
         for lock in held:  # Windows will not delete a lock file that is open
@@ -293,7 +293,7 @@ def apply_forgets(db):
                         memdb.forget_key(conn, *k, push=False)
 
 
-# ---- the move (/cg-index-dir)
+# ---- the move (/al-index-dir)
 
 def _same(a, b):
     """The file `b` is a whole copy of `a`: the same size and the same first page (every commit rewrites it)."""
@@ -410,7 +410,7 @@ def _set_old(conn, folders):
 
 def _drop_old(olds, db, ui, notes):
     """The question about each old copy in the folders `olds`, the index in use being `db`: Yes deletes it, No leaves a note (and its line in
-    meta.old_copy of `db`, which /cg-health shows). That line goes when the last file does. A name that is no full path, or is the folder of
+    meta.old_copy of `db`, which /al-health shows). That line goes when the last file does. A name that is no full path, or is the folder of
     `db` itself, is no old copy to delete: only its line goes."""
     done = set()
     for old in olds:
@@ -556,7 +556,7 @@ def _late(out):
 
 
 def move(where, target, key, ui, drive_type=None, free=None, locks=()):
-    """/cg-index-dir: the index in use (`where.db`) moves to the folder `target` (a full path). The checks come first and change nothing. Then
+    """/al-index-dir: the index in use (`where.db`) moves to the folder `target` (a full path). The checks come first and change nothing. Then
     the index files are copied under their write lock, counted and put in place, the settings point to the target (`indexDir`, the other
     fields as they were), and only then the owner is asked about the old copy (`ui.confirm`, default No). Result: {'action': 'index-dir',
     'done': True, 'dir': the target, 'notes': what the owner is told besides, and 'here': True when the index was there already}. A refusal or a failure is a ValueError. `key` opens an encrypted

@@ -707,7 +707,7 @@ class EncryptTest(unittest.TestCase):
         self.assertEqual([os.path.exists(a.db + s) for s in ('.plain', '.cg-new')], [False, False])
         self.assertEqual(encrypt.status(a.db)['db'], 'efs')
 
-    def test_efs_on_asks_about_the_open_copy_an_earlier_on_left(self):  # "No" to the question, then EFS: /cg-health says to repeat on, so on must be able to delete it
+    def test_efs_on_asks_about_the_open_copy_an_earlier_on_left(self):  # "No" to the question, then EFS: /al-health says to repeat on, so on must be able to delete it
         a = self.a
         plain = a.db + '.plain'
         self.assertEqual(self.on(a, FakeUI([True, False]))['notes'], [t('note_plain_kept', path=plain)])
@@ -739,7 +739,7 @@ class EncryptTest(unittest.TestCase):
                 self.assertEqual([crypto.efs_on(p) for p in (folder, a.db)], [False, False])
 
     def apart(self, c):
-        """The mod's home folder is one of its own and the index of `c` lies in another folder, as after /cg-index-dir: (home, that folder)."""
+        """The mod's home folder is one of its own and the index of `c` lies in another folder, as after /al-index-dir: (home, that folder)."""
         home, folder = os.path.join(self.root, 'home-' + c.name), os.path.dirname(c.db)
         os.makedirs(home)
         for p in (mock.patch.object(crypto, 'HOME_DIR', home), mock.patch.object(crypto, 'INDEX_DIRS', {crypto.norm(folder)})):

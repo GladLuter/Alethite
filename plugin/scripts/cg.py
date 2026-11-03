@@ -1,4 +1,4 @@
-"""Command line of Claude-CacheGuard: every command prints one JSON object in UTF-8; an error is {"error": "<Type>: <text>"} with exit code 1."""
+"""Command line of Alethite: every command prints one JSON object in UTF-8; an error is {"error": "<Type>: <text>"} with exit code 1."""
 import argparse
 import contextlib
 import datetime
@@ -56,7 +56,7 @@ def _status(a):
     note = {'pending': 'note_share_pending', 'old': 'note_old_share_kept'}.get(memdb.meta(conn, 'share_unfinished'))  # set by `encrypt`, in the index
     if note:
         out['encryption']['notes'].append(texts.t(note))
-    out['job'] = json.loads(memdb.meta(conn, 'job_last') or 'null')  # the background job's last run (stage 4), for /cg-health
+    out['job'] = json.loads(memdb.meta(conn, 'job_last') or 'null')  # the background job's last run (stage 4), for /al-health
     out['index_dir'] = indexdir.status(conn, a.where)
     if a.cwd:  # the scope of «в этом проекте»: a key that matches no conversation makes the project search find nothing
         keys = project_keys(a.cwd, _aliases(a))
@@ -184,13 +184,13 @@ def _memory_dir(path):
 def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
     """One run of the background job: the index, then the vectors (on mains power, while no chat embeds), then the sync (when a folder
     is set). Each step under the lock a chat takes for it, so a chat and the job never do one thing twice at a time; a step that fails
-    does not stop the next. The result is kept in meta.job_last for /cg-health. The short memory waits for a chat: only a chat knows its
+    does not stop the next. The result is kept in meta.job_last for /al-health. The short memory waits for a chat: only a chat knows its
     project's auto-memory folder."""
     import job, sync
     battery, digest = battery or job.on_battery, digest or sync.ollama_digest
     try:
         conn = memdb.connect(a.db)  # first: it also makes the folder the lock files lie in
-    except ValueError as e:  # an encrypted index and no key that opens it: nowhere to keep the run, /cg-health tells the same from `status`
+    except ValueError as e:  # an encrypted index and no key that opens it: nowhere to keep the run, /al-health tells the same from `status`
         return {'errors': [{'where': 'index', 'error': '%s: %s' % (type(e).__name__, e)}]}
     try:
         lock = memdb.lock(a.db, 'maintain', 0)  # noqa: F841 (held until the return)
@@ -206,7 +206,7 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     out = {'at': stamp, 'index': None, 'embed': None, 'sync': None, 'errors': []}
     fault = lambda where, e: out['errors'].append({'where': where, 'error': '%s: %s' % (type(e).__name__, e)})
-    # a run cut off (the task's 30-minute limit) never gets to the end: /cg-health must not show the run before it as all well
+    # a run cut off (the task's 30-minute limit) never gets to the end: /al-health must not show the run before it as all well
     conn.execute("INSERT OR REPLACE INTO meta VALUES('job_last', ?)", (json.dumps(dict(out, errors=[{'where': 'job', 'error': texts.t('job_unfinished')}]), ensure_ascii=False),))
     if broken:
         out['errors'].append({'where': 'settings', 'error': broken})
@@ -320,7 +320,7 @@ def _all_locks(a, busy):
 
 
 def _encrypt(a):
-    """/cg-encrypt: on, join, off (windows ask the owner; the code is shown there and nowhere else) and status. No connection to the index
+    """/al-encrypt: on, join, off (windows ask the owner; the code is shown there and nowhere else) and status. No connection to the index
     is held meanwhile: Windows cannot replace a file that is open. The sync folder and the cipher come from the settings file unless given."""
     import dialogs, encrypt
     if a.action == 'status':
@@ -338,7 +338,7 @@ def _encrypt(a):
 
 
 def _index_dir(a):
-    """/cg-index-dir: the index moves to the folder of --path, or of the window that asks when there is none. Alone like encrypt: the locks of
+    """/al-index-dir: the index moves to the folder of --path, or of the window that asks when there is none. Alone like encrypt: the locks of
     the background job are held until `move` has switched over, and given back there (the old copy could not be deleted with them open)."""
     import dialogs
     ui = dialogs.WindowsUI()

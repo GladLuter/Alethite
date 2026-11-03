@@ -148,7 +148,7 @@ class SyncTest(unittest.TestCase):
         self.assertFalse(any('ёжик' in t for t in self.b.embedded))
         self.assertFalse(any('ноутбук' in t for t in self.a.embedded))
         self.assertEqual((self.a.embed()['done'], self.b.embed()['done']), (0, 0))
-        # each record is ours or theirs: /cg-health tells them apart
+        # each record is ours or theirs: /al-health tells them apart
         self.assertEqual(cgsync.status(self.a.conn, 'AIJ-HP')['origins'], {'AIJ-HP': 2, 'MTLAPTOP': 2})
 
     # 2. repeat
@@ -399,7 +399,7 @@ class SyncTest(unittest.TestCase):
             self.assertIn(gone, r['errors'][0]['error'])
         self.assertEqual(search(self.a.conn, 'ёжик')[0]['conv'], 'SA')
         self.assertEqual(hybrid_search(self.a.conn, 'ёжик', embed_fn=fake)[1], 'ok')
-        last = json.loads(memdb.meta(self.a.conn, 'sync_last'))  # kept for /cg-health
+        last = json.loads(memdb.meta(self.a.conn, 'sync_last'))  # kept for /al-health
         self.assertEqual((last['errors'], last['stopped']), (1, True))
         self.assertFalse(os.path.exists(os.path.join(self.root, 'nas-off')))  # an absent share is not made on the local disk
 

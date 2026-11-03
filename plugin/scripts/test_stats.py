@@ -58,7 +58,7 @@ class StatsTest(unittest.TestCase):
         self.assertAlmostEqual(m['rewrite_share'], 2.5 / 6.5)  # of all cost, the subagent's $2.00 included
         self.assertAlmostEqual(m['idle60_share'], 2.5 / 6.5)
 
-    def test_audit_selftest(self):  # the cost and cache-rewrite checks of the measure /cg-stats stands on
+    def test_audit_selftest(self):  # the cost and cache-rewrite checks of the measure /al-stats stands on
         with contextlib.redirect_stderr(io.StringIO()):  # its "selftest OK" is not for the output of the suite
             cc_token_audit.selftest()
 

@@ -838,7 +838,7 @@ class MoveTest(unittest.TestCase):
         self.assertEqual(crypto.INDEX_DIRS, {crypto.norm(self.target)})
         self.assertTrue(os.path.exists(self.src))  # No: nothing of the old copy is touched
         self.assertEqual(self.old_copy(self.new_db()), self.home)
-        with contextlib.closing(memdb.connect(self.new_db())) as conn:  # and /cg-health says where it lies
+        with contextlib.closing(memdb.connect(self.new_db())) as conn:  # and /al-health says where it lies
             self.assertEqual(indexdir.status(conn, Where(self.new_db(), self.target, False, None))['notes'], [t('index_old_copy', dir=self.home)])
 
     def test_yes_deletes_the_listed_files_of_the_old_copy_and_its_note_and_nothing_else(self):
@@ -1105,7 +1105,7 @@ class MoveTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.target))
 
     def efs_home(self):
-        """full_home in a home folder that EFS holds from the start (the files are born encrypted, as `/cg-encrypt on` leaves them), with a key."""
+        """full_home in a home folder that EFS holds from the start (the files are born encrypted, as `/al-encrypt on` leaves them), with a key."""
         crypto.efs_encrypt(self.home)
         self.full_home()
         key = secrets.token_bytes(32)
