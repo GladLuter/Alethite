@@ -38,9 +38,9 @@ const isBusy = atom({ plugin: 'alethite', key: 'isBusy' } as const, false)
 // after an answer with none, /al-health keeps saying it.
 let lastNotice = ''
 
-// The notes of cg.py about the one-time move of the mod folder (home_notes): each one toasted once per load of the mod, and /al-health tells them all
-// (a failed step is told by one answer only, so they stay until the next /reload-plugins).
-const homeNotes: string[] = []
+// The notes of cg.py about the one-time move of the mod folder (home_notes) that were toasted: each one once per load of the mod.
+// /al-health tells the notes of its own fresh status answer instead, so a note that is no longer true does not stay on the report.
+const toastedNotes: string[] = []
 
 // Why cg.py cannot use the index, kept until an answer comes without it, and what the status line shows besides the warning about it.
 let indexProblem = ''
@@ -66,8 +66,8 @@ const runCg = async ($: EngineInterface, python: string, args: string[], timeout
   const problem = indexProblemOf(r.stdout) // before parseCg throws: an error answer carries it too
   if (problem !== undefined) setProblem($, problem)
   for (const note of homeNotesOf(r.stdout)) {
-    if (homeNotes.includes(note)) continue
-    homeNotes.push(note) // before the await: two answers at once must not both toast it
+    if (toastedNotes.includes(note)) continue
+    toastedNotes.push(note) // before the await: two answers at once must not both toast it
     try {
       await toast($, note)
     } catch {}
@@ -513,7 +513,7 @@ export const register: Register = (on, options) => {
       const lessons = { count: lessonList.length, shown: counts.shown ?? 0, chars: counts.chars ?? 0, stopped: counts.stopped ?? 0, on: isLessonsOn }
       if (homeDir !== undefined) settingsFile = await settingsFileOf($, homeDir) // after the status run, which may have moved the folder
       return {
-        text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile, shareCipher, lessons, homeNotes }).join('\n'),
+        text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile, shareCipher, lessons, homeNotes: typeof index === 'string' ? [] : (index.home_notes as string[] | undefined) }).join('\n'),
       }
     } catch (err) {
       await fail($, 'al-health', err)

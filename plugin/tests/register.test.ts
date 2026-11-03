@@ -1470,6 +1470,16 @@ test('home_notes: each new note of cg.py gives one toast, and /al-health tells a
   expect(m.toasts).toHaveLength(2)
 })
 
+test('home_notes: /al-health tells the notes of its own status answer, a note that is gone is not told again', async ($, on) => {
+  let notes: string[] = ['the folder of the test could not be moved: busy']
+  const m = await started($, on, a => (a[0] === 'status' ? ran(JSON.stringify({ db: 'd', convs: 0, rows: 0, size_mb: 0, home_notes: notes })) : ran('{}')))
+  const health = async () => (await ($ as any).command.run({ command: 'al-health', args: '' })).text.split('\n')
+  expect(await health()).toContain(notes[0])
+  notes = []
+  expect(await health()).not.toContain('the folder of the test could not be moved: busy')
+  expect(m.toasts).toEqual([T.toast('the folder of the test could not be moved: busy')]) // told once, not again
+})
+
 test('home_notes: a note beside an error answer is told as well', async ($, on) => {
   const refused = { value: { exitCode: 1, stdout: JSON.stringify({ error: 'boom', home_notes: ['a note beside an error'] }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   const m = await started($, on, a => (a[0] === 'index' ? refused : ran('{}')))

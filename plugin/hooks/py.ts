@@ -60,7 +60,7 @@ export const healthLines = (h: {
   settingsFile?: string
   shareCipher?: string
   lessons?: { count: number; shown: number; chars: number; stopped: number; on: boolean }
-  homeNotes?: string[] // the notes of the move of the mod folder that cg.py gave since this load
+  homeNotes?: string[] // the notes of the move of the mod folder in the status answer shown
 }) => {
   const job = typeof h.index === 'string' ? undefined : (h.index.job as JobRun | null | undefined)
   const v = typeof h.index === 'string' ? undefined : (h.index.vectors as Vectors | undefined)
