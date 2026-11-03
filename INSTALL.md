@@ -66,12 +66,13 @@ All commands are for PowerShell.
 The mod used to be called Claude-CacheGuard, and so was its repository. A computer that has the old one moves with the steps below. Keep the order.
 
 0. **Send the waiting measurements.** In a chat, type `/cg-stats` once. Measurement notes that Obsidian has not taken yet wait in the old plugin's store, and they are lost with it.
-1. **Remove the old mod.** `$CC` holds the path to the desktop's `claude.exe` ("Installing", step 2):
+1. **Remove the old mod.** In a new PowerShell window `$CC` is empty. Set it as in "Installing", step 2 (if no path is found, the wider search is there too), and remove the old mod:
    ```powershell
+   $CC = (Get-ChildItem "$env:APPDATA\Claude\claude-code\*\*\claude.exe", "$env:LOCALAPPDATA\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code\*\*\claude.exe" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1).FullName; $CC
    & $CC plugin uninstall cacheguard@cacheguard-local
    & $CC plugin marketplace remove cacheguard-local
    ```
-2. **Install the new one** from the clone in `C:\_git\Alethite` ("Installing", step 1):
+2. **Install the new one.** If there is no clone in `C:\_git\Alethite` yet, clone it first ("Installing", step 1). Then:
    ```powershell
    & $CC plugin marketplace add C:\_git\Alethite
    & $CC plugin install alethite@alethite-local
@@ -81,17 +82,21 @@ The mod used to be called Claude-CacheGuard, and so was its repository. A comput
    - If the folder could not be moved, the answer says why. The mod works in the old folder for now, and the next run tries again.
    - If the old folder is still there beside the new one, a chat with the old mod made it again. Nothing is moved. Check the old folder and delete it.
    - An index that you moved with `/al-index-dir` stays where it is. Only the mod folder moves.
-5. **Keep the memory of the old project folder.** The clone now lies in another folder, and a search from it would not find the old conversations of the project. Add this key to `%USERPROFILE%\.claude\alethite\settings.json`:
+   - The sync folder keeps working under its old name. You set the path in `syncDir` yourself, the rename does not touch it, and the folder on the disk need not be renamed.
+5. **Keep the memory of the old project folder.** The clone now lies in another folder, and a search from it would not find the old conversations of the project. Add this line to `%USERPROFILE%\.claude\alethite\settings.json`:
    ```json
-   {
-     "projectAliases": { "C:\\_git\\Alethite": ["C:\\_git\\Claude-CacheGuard"] }
-   }
+   "projectAliases": { "C:\\_git\\Alethite": ["C:\\_git\\Claude-CacheGuard"] }
    ```
-   The mod reads the file at every call. Then check that `recall` in a chat opened in `C:\_git\Alethite` finds the old conversations of the project.
+   Put it inside the outer braces of the file, and add a comma after the line before it. Do not replace the whole file: it holds your other settings and, if encryption is on, the encryption key. The mod reads the file at every call. Then check that `recall` in a chat opened in `C:\_git\Alethite` finds the old conversations of the project.
 
 Values that you set through `/config` under the old plugin are not carried over. Check them in the new plugin and set again what you still need. What lies in `settings.json` moves with the folder.
 
-**The second computer and the laptop.** The history of the old repository was rewritten, so an old clone cannot pull any more. Delete it, clone `GladLuter/Alethite` into `C:\_git\Alethite` ("Installing", step 1) and do steps 0 to 5 above.
+**The second computer and the laptop.** The history of the old repository was rewritten, so an old clone cannot pull any more. But it is still needed for now: the old mod points at it, and the old Task Scheduler task may run `cg.py` from there until step 4. The order is:
+- On the laptop only: first accept the invitation to the private repository `GladLuter/Alethite`.
+- Clone `GladLuter/Alethite` into `C:\_git\Alethite`, next to the old clone ("Installing", step 1).
+- Do steps 0 to 5 above. In step 5 the old path is the folder of the old clone on this computer.
+- Delete the old clone after `/al-health` checks out, and only if nothing in it is unpushed.
+- Encryption on the second computer is set up afterwards, as a separate step: "Encryption (stage 5)", step 4 (`/al-encrypt join`).
 
 ## Shared memory of two computers (stage 2)
 

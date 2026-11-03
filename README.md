@@ -4,6 +4,8 @@
 
 A mod for Claude Code that makes long-lived "worker" chats cheaper without taking their memory away.
 
+If you have the old mod, it used to be called CacheGuard. How to move is in the section [Moving from CacheGuard](INSTALL.md#moving-from-cacheguard).
+
 ## Why
 
 An audit of the owner's transcripts (May–October 2026, at API prices) showed where the money goes:
