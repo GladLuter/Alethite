@@ -889,6 +889,17 @@ test('settings file: /al-encrypt finds it where it is now, after cg.py moved the
   expect(written).toEqual([])
 })
 
+test('settings file: /al-health names it where it is now, after cg.py moved the folder under a chat that read the old one', async ($, on) => {
+  const at: Record<string, string> = { [OLD_SETTINGS]: '{ }' }
+  settingsRig(on, undefined, at)
+  await started($, on, () => ran('{}'), [], undefined, home)
+  const health = async () => (await ($ as any).command.run({ command: 'al-health', args: '' })).text
+  expect(await health()).toContain(T.healthSettings(OLD_SETTINGS))
+  at[SETTINGS] = '{ }' // the move: the old file is gone, the settings are in the new folder
+  delete at[OLD_SETTINGS]
+  expect(await health()).toContain(T.healthSettings(SETTINGS))
+})
+
 test('settings file: broken JSON: a toast with the file, and the values of /config hold', { options: { language: 'uk' } }, async ($, on) => {
   const written = settingsRig(on, '{ "language": "ru", }')
   const m = await started($, on, () => indexed(), [], undefined, home)

@@ -144,6 +144,18 @@ class HomeTest(unittest.TestCase):
             self.assertEqual(crypto.move_home(), [t('home_move_failed', old=self.old, new=self.new, e=gone)])
         self.assertEqual((rename.call_count, sleep.call_count, crypto.HOME_DIR), (1, 0, self.old))
 
+    def test_move_home_an_error_without_winerror_is_told_at_once(self):  # the OSError of another system has no such field
+        class Plain(OSError):
+            @property
+            def winerror(self):
+                raise AttributeError('winerror')
+
+        self.fill(self.old)
+        err = Plain(13, 'denied')
+        with mock.patch('os.rename', side_effect=err) as rename, mock.patch('time.sleep') as sleep:
+            self.assertEqual(crypto.move_home(), [t('home_move_failed', old=self.old, new=self.new, e=err)])
+        self.assertEqual((rename.call_count, sleep.call_count, crypto.HOME_DIR), (1, 0, self.old))
+
     def test_move_home_neither_does_nothing(self):
         self.assertEqual(crypto.move_home(), [])
         self.assertEqual((os.path.exists(self.old), os.path.exists(self.new), crypto.HOME_DIR), (False, False, self.new))

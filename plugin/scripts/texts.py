@@ -159,8 +159,9 @@ EN = {
     'index_dir_merge_pending': 'the records saved in {home} while the index folder {dir} was away are not merged into the index there yet. The next run of the mod merges them. Then repeat the command. Nothing was changed',
     'encrypt_index_away': 'the index folder {dir} is away, or what was saved in {home} meanwhile is not merged into it yet. Turning encryption on or off now would change only one of the two indexes, and they would no longer match. Nothing was changed. Repeat the command when the folder is back and the merge is done',
     'home_move_failed': 'the mod folder {old} could not be moved to {new}: {e}. The mod works in {old} for now and tries again on the next run',
-    'home_move_both': 'the old mod folder {old} is still there next to {new}. A chat with the old mod, one that was not reloaded, made it again. Nothing was moved and the mod works in {new}. Check {old} and delete it',
+    'home_move_both': 'the old mod folder {old} is still there next to {new}. A chat with the old mod that was not reloaded made it again, or the old background task «CacheGuard» did. Nothing was moved and the mod works in {new}. Check {old} and delete it',
     'home_job_failed': 'the background job could not be updated: {e}. Check it with /al-health. If it is off, run /al-job on',
+    'home_old_task_failed': 'the old background task «CacheGuard» could not be removed: {e}. Delete it in Task Scheduler. The mod does not move its folder while that task is there. The first run after it is gone moves the folder',
 }
 
 RU = {
@@ -312,8 +313,9 @@ RU = {
     'index_dir_merge_pending': 'записи, сохранённые в {home}, пока папки индекса {dir} не было, ещё не влиты в индекс там. Следующий запуск мода их вольёт. Потом повторите команду. Ничего не изменено',
     'encrypt_index_away': 'папки индекса {dir} сейчас нет, либо то, что сохранилось за это время в {home}, ещё не влито в неё. Включение или выключение шифрования сейчас изменило бы только один из двух индексов, и они перестали бы совпадать. Ничего не изменено. Повторите команду, когда папка вернётся и слияние пройдёт',
     'home_move_failed': 'папку мода {old} не удалось перенести в {new}: {e}. Пока мод работает в {old}, перенос повторится при следующем запуске',
-    'home_move_both': 'старая папка мода {old} осталась рядом с {new}. Её снова создал чат со старым модом, который не перезагружали. Ничего не перенесено, мод работает в {new}. Проверьте {old} и удалите её',
+    'home_move_both': 'старая папка мода {old} осталась рядом с {new}. Её снова создал чат со старым модом, который не перезагружали, или старая фоновая задача «CacheGuard». Ничего не перенесено, мод работает в {new}. Проверьте {old} и удалите её',
     'home_job_failed': 'фоновую задачу не удалось обновить: {e}. Проверьте её в /al-health. Если она выключена, выполните /al-job on',
+    'home_old_task_failed': 'старую фоновую задачу «CacheGuard» не удалось снять: {e}. Удалите её в Планировщике заданий. Пока она есть, мод папку не переносит. Первый запуск после её удаления перенесёт папку',
 }
 
 UK = {
@@ -465,8 +467,9 @@ UK = {
     'index_dir_merge_pending': 'записи, збережені в {home}, поки теки індексу {dir} не було, ще не влиті в індекс там. Наступний запуск мода їх влиє. Потім повторіть команду. Нічого не змінено',
     'encrypt_index_away': 'теки індексу {dir} зараз немає, або те, що збереглося за цей час у {home}, ще не влито в неї. Вмикання чи вимикання шифрування зараз змінило б лише один із двох індексів, і вони перестали б збігатися. Нічого не змінено. Повторіть команду, коли тека повернеться і злиття пройде',
     'home_move_failed': 'теку мода {old} не вдалося перенести в {new}: {e}. Поки що мод працює в {old}, перенесення повториться під час наступного запуску',
-    'home_move_both': 'стара тека мода {old} лишилась поруч із {new}. Її знову створив чат зі старим модом, який не перезавантажували. Нічого не перенесено, мод працює в {new}. Перевірте {old} і видаліть її',
+    'home_move_both': 'стара тека мода {old} лишилась поруч із {new}. Її знову створив чат зі старим модом, який не перезавантажували, або старе фонове завдання «CacheGuard». Нічого не перенесено, мод працює в {new}. Перевірте {old} і видаліть її',
     'home_job_failed': 'фонове завдання не вдалося оновити: {e}. Перевірте його в /al-health. Якщо воно вимкнене, виконайте /al-job on',
+    'home_old_task_failed': 'старе фонове завдання «CacheGuard» не вдалося зняти: {e}. Видаліть його в Планувальнику завдань. Поки воно є, мод теку не переносить. Перший запуск після його видалення перенесе теку',
 }
 
 TABLES = {'en': EN, 'ru': RU, 'uk': UK}

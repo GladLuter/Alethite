@@ -59,7 +59,7 @@ def move_home(old=None, new=None, wait=True):
             return []
         except OSError as e:
             err = e
-            if e.winerror not in (5, 32):
+            if getattr(e, 'winerror', None) not in (5, 32):  # no such field outside Windows
                 break
     if not os.path.exists(old) and os.path.isdir(new):  # another first run moved it between our checks and our rename: nothing failed
         return []

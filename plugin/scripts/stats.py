@@ -7,7 +7,7 @@ from texts import t
 from transcripts import HANDOFF_BLOCK, MOD_TOOL_PREFIXES
 
 MOD_TOOLS = tuple(p + n for p in MOD_TOOL_PREFIXES for n in ('recall', 'recall_more'))
-MOD_CATEGORIES = tuple('tool:mcp:' + p.split('__')[1] for p in MOD_TOOL_PREFIXES)  # the audit names a category after the server
+MOD_CATEGORIES = {cc_token_audit.tool_cat(n) for n in MOD_TOOLS}
 
 BASELINE = {'usd_per_owner_msg': 5.20, 'rewrite_share': 0.417, 'idle60_share': 0.319, 'median_main_context': 428000}  # weekly limit: t('stats_weekly_base')
 

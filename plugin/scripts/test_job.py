@@ -3,6 +3,7 @@ import gc
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -29,11 +30,12 @@ def ran(code=0, out=b'', err=b''):
 
 class Scheduler:
     """The Task Scheduler as the `run` of job.py: its tasks ({name: minutes, or (minutes, the cg.py it runs)}) kept as the XML they were made from, and
-    every call it got ([verb, ...] without 'schtasks') in order. `deny` are the verbs it refuses with 'Access is denied'."""
+    every call it got ([verb, ...] without 'schtasks') in order. `deny` are the verbs it refuses with 'Access is denied'. `probe`, if set, is called with
+    each call before it is answered: what a test wants to see of the disk at that moment."""
 
     def __init__(self, tasks=None, deny=(), running=()):
         self.tasks = {name: self.xml(*(spec if isinstance(spec, tuple) else (spec,))) for name, spec in (tasks or {}).items()}
-        self.calls, self.deny, self.running = [], deny, set(running)  # running: the tasks with an instance up, /End stops it
+        self.calls, self.deny, self.running, self.probe = [], deny, set(running), None  # running: the tasks with an instance up, /End stops it
 
     @staticmethod
     def xml(minutes, script=job.CG):
@@ -42,6 +44,8 @@ class Scheduler:
     def __call__(self, args, **kw):
         verb, name = args[1], args[3]
         self.calls.append(args[1:])
+        if self.probe:
+            self.probe(args[1:])
         answer = lambda code=0, out=b'', err=b'': SimpleNamespace(returncode=code, stdout=out, stderr=err)
         if verb in self.deny:
             return answer(1, err=b'ERROR: Access is denied.\r\n')
@@ -122,6 +126,28 @@ class TaskTest(unittest.TestCase):
         self.assertEqual(job.installed(run=ran(1), supported=lambda: True), 0)
         for interval, minutes in (('PT45M', 45), ('PT1H', 60), ('PT1H30M', 90), ('P1D', 1440)):  # Windows may write the interval in hours or days
             self.assertEqual(job.installed(run=ran(0, ('<Task><Interval>%s</Interval></Task>' % interval).encode('utf-8')), supported=lambda: True), minutes)
+
+    def test_a_task_with_no_interval_in_its_xml_has_the_default_one(self):  # not "no task": the old one would be neither removed nor carried over
+        self.assertEqual(job.installed(run=ran(0, b'<Task><Triggers/></Task>'), supported=lambda: True), job.MINUTES)
+        self.assertEqual(job.installed(run=ran(1, b'<Task><Triggers/></Task>'), supported=lambda: True), 0)  # a refused query is no task
+
+    def test_schtasks_does_not_wait_longer_than_the_prompt_hook_does(self):
+        seen = {}
+
+        def run(args, **kw):
+            seen.update(kw)
+            return SimpleNamespace(returncode=0, stdout=b'', stderr=b'')
+
+        job._schtasks(['/Query', '/TN', 'x'], run)
+        self.assertLess(seen['timeout'], 8)  # the mod kills the prompt hook after 8 s
+
+    def test_a_scheduler_that_hangs_is_a_note_and_never_stops_follow(self):
+        hung = subprocess.TimeoutExpired('schtasks', 5)
+
+        def run(args, **kw):
+            raise hung
+
+        self.assertEqual(job.follow(self.dir, run=run, supported=lambda: True), [t('home_job_failed', e=hung)])
 
     def test_a_refused_delete_is_not_off_while_the_task_stays(self):
         def run(args, **kw):  # the delete is refused, the query still finds the task

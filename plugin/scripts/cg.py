@@ -131,9 +131,11 @@ def _settings(path):
 
 def _aliases(a):
     """settings.projectAliases, {new folder: [old folders]}: a project reads the memory of its old folders too. Anything else than
-    that shape is ignored whole, and so is a broken settings file: an alias is a help to the search, never a reason for it to fail."""
+    that shape is ignored whole, and so is a broken settings file: an alias is a help to the search, never a reason for it to fail. Blank paths are skipped."""
     s = _settings(crypto.settings_path(a.db))[0].get('projectAliases')
-    return s if isinstance(s, dict) and all(isinstance(v, list) and all(isinstance(o, str) for o in v) for v in s.values()) else {}
+    if not (isinstance(s, dict) and all(isinstance(v, list) and all(isinstance(o, str) for o in v) for v in s.values())):
+        return {}
+    return {k: [o for o in v if o.strip()] for k, v in s.items() if k.strip()}  # project_key('') is the folder the process runs in: a blank path would widen the scope to it
 
 
 def _sync_dir(s):
@@ -490,12 +492,12 @@ def _parser():
     return p
 
 
-def _job_step(notes, fn, *args):
-    """A step of the background job's move to the new name: an error is a note in the answer, it never stops the command."""
+def _job_step(notes, key, fn, *args):
+    """A step of the background job's move to the new name: an error is the note `key` in the answer (None comes back), it never stops the command."""
     try:
         return fn(*args)
     except Exception as e:
-        notes.append(texts.t('home_job_failed', e=e))
+        notes.append(texts.t(key, e=e))
 
 
 def _old_task_off():
@@ -523,9 +525,12 @@ def main(argv):
         a = _parser().parse_args(argv)
         texts.lang = a.lang
         if a.db is None:
-            # job is not imported (it costs time) unless the old folder is there: the old task lives and dies with it
-            minutes = os.path.isdir(crypto.OLD_HOME_DIR) and _job_step(home_notes, _old_task_off)
-            home_notes += crypto.move_home(wait=a.cmd not in SHORT)  # the settings and the index are read from the new folder, a run with --db leaves the old one alone
+            # job is imported (it costs time) only when the old folder or --follow-job asks for it; the flag finds an old task that outlived the move
+            minutes = (os.path.isdir(crypto.OLD_HOME_DIR) or a.follow_job) and _job_step(home_notes, 'home_old_task_failed', _old_task_off)
+            if minutes is None and os.path.isdir(crypto.OLD_HOME_DIR) and not os.path.exists(crypto.HOME_DIR):  # None: the old task stays
+                crypto.HOME_DIR = crypto.OLD_HOME_DIR  # it and the mod share one index (its next run would build a second in a folder made again); a later run removes it and moves
+            else:
+                home_notes += crypto.move_home(wait=a.cmd not in SHORT)  # the settings and the index are read from the new folder, a run with --db leaves the old one alone
             a.db = os.path.join(crypto.HOME_DIR, 'index.db')  # a place for files beside it (the handoff, the job's task file) when no index can be used: it is never opened then
             try:
                 a.where = indexdir.resolve()
@@ -539,7 +544,7 @@ def main(argv):
                     crypto.INDEX_DIRS.add(crypto.norm(a.where.configured))
             finally:
                 if minutes:  # the job of the old name comes back under the new one, whatever resolve said
-                    _job_step(home_notes, _new_task_on, os.path.dirname(a.db), minutes)
+                    _job_step(home_notes, 'home_job_failed', _new_task_on, os.path.dirname(a.db), minutes)
         if a.follow_job:
             import job
             home_notes += job.follow(os.path.dirname(a.db))

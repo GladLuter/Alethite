@@ -732,7 +732,7 @@ class CopyFileTest(unittest.TestCase):
 
 @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
 class MoveTest(unittest.TestCase):
-    """indexdir.move on temporary folders. `home` stands for ~/.claude/cacheguard: crypto.HOME_DIR is patched, the real one is never read.
+    """indexdir.move on temporary folders. `home` stands for ~/.claude/alethite: crypto.HOME_DIR is patched, the real one is never read.
     The fakes answer the drive type and the free space, and record what they were asked."""
 
     def setUp(self):

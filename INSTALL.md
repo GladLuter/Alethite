@@ -96,6 +96,7 @@ Values that you set through `/config` under the old plugin are not carried over.
 - Clone `GladLuter/Alethite` into `C:\_git\Alethite`, next to the old clone ("Installing", step 1).
 - Do steps 0 to 5 above. In step 5 the old path is the folder of the old clone on this computer.
 - Delete the old clone after `/al-health` checks out, and only if nothing in it is unpushed.
+- Measurement notes. `/al-stats` now writes into the Obsidian folder `Alethite/Замеры`. The old mod (step 0, and any measurement run before a computer moves) still writes into `Claude-CacheGuard/Замеры`, and Obsidian makes that folder again if you renamed it. After the last computer has moved, move those notes into `Alethite/Замеры` and delete what is left of `Claude-CacheGuard/Замеры`, `Сводка.md` included. The next `/al-stats` builds the summary again from the notes of the new folder.
 - Encryption on the second computer is set up afterwards, as a separate step: "Encryption (stage 5)", step 4 (`/al-encrypt join`).
 
 ## Shared memory of two computers (stage 2)

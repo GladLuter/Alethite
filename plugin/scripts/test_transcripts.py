@@ -214,17 +214,16 @@ class TranscriptsTest(unittest.TestCase):
         self.assertEqual(project_key('rel', '/nowhere'), project_key(os.path.abspath('rel'), '/nowhere'))  # a relative folder is made absolute
 
     def test_project_keys_add_the_old_folders_of_the_aliases_that_name_this_one(self):
-        keys = lambda cwd, aliases, home=None: project_keys(cwd, aliases, home)
-        a = {r'C:\new\proj': [r'C:\old\proj', r'C:\older\proj']}
-        self.assertEqual(keys(r'C:\new\proj', a), [project_key(r'C:\new\proj'), project_key(r'C:\old\proj'), project_key(r'C:\older\proj')])
-        self.assertEqual(keys(r'c:\NEW\proj\.claude\worktrees\w1\src', a), keys(r'C:\new\proj', a))  # the key of the folder, not its spelling
-        self.assertEqual(keys(r'C:\old\proj', a), [project_key(r'C:\old\proj')])  # one way only
-        self.assertEqual(keys(r'C:\new\proj', {}), [project_key(r'C:\new\proj')])
+        names = {r'C:\new\proj': [r'C:\old\proj', r'C:\older\proj']}
+        self.assertEqual(project_keys(r'C:\new\proj', names), [project_key(r'C:\new\proj'), project_key(r'C:\old\proj'), project_key(r'C:\older\proj')])
+        self.assertEqual(project_keys(r'c:\NEW\proj\.claude\worktrees\w1\src', names), project_keys(r'C:\new\proj', names))  # the key of the folder, not its spelling
+        self.assertEqual(project_keys(r'C:\old\proj', names), [project_key(r'C:\old\proj')])  # one way only
+        self.assertEqual(project_keys(r'C:\new\proj', {}), [project_key(r'C:\new\proj')])
         # two names for one folder (another case, a worktree) are merged, and no key comes twice
         two = {r'C:\new\proj': [r'C:\old\proj', r'C:\new\proj'], r'c:\NEW\PROJ\.claude\worktrees\w': [r'C:\old\proj', r'C:\x']}
-        self.assertEqual(keys(r'C:\new\proj', two), [project_key(r'C:\new\proj'), project_key(r'C:\old\proj'), project_key(r'C:\x')])
+        self.assertEqual(project_keys(r'C:\new\proj', two), [project_key(r'C:\new\proj'), project_key(r'C:\old\proj'), project_key(r'C:\x')])
         i3 = r'C:\Users\AIJ'  # the keys of the old folders are made the way the owner's own are
-        self.assertEqual(keys(r'C:\Users\AIJ\new', {r'C:\Users\AIJ\new': [r'C:\Users\AIJ\old']}, i3), [r'~\new', r'~\old'])
+        self.assertEqual(project_keys(r'C:\Users\AIJ\new', {r'C:\Users\AIJ\new': [r'C:\Users\AIJ\old']}, i3), [r'~\new', r'~\old'])
 
     def test_find_session_and_last_usage(self):
         u1 = {'input_tokens': 9, 'cache_read_input_tokens': 9, 'cache_creation_input_tokens': 9, 'output_tokens': 9}

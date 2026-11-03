@@ -77,7 +77,7 @@ def task_xml(command, arguments, minutes, start, user=None):
 
 
 def _schtasks(args, run):
-    r = run(['schtasks', *args], capture_output=True)
+    r = run(['schtasks', *args], capture_output=True, timeout=3)  # a hung scheduler must not hold the 8 s hooks: a step that waits twice (old task, new task) still ends under it
     out = (r.stdout or b'') + (r.stderr or b'')
     return r.returncode, out.decode('utf-8', errors='replace') if isinstance(out, bytes) else out  # schtasks speaks the OEM code page
 
@@ -117,7 +117,7 @@ def installed(run=subprocess.run, supported=is_supported, task=TASK):
         return None
     code, out = _schtasks(['/Query', '/TN', task, '/XML'], run)  # the XML, not the list: that one speaks the language of Windows
     m = re.search(r'<Interval>P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?</Interval>', out) if code == 0 else None  # Windows may write PT1H or P1D
-    return sum(int(n or 0) * k for n, k in zip(m.groups(), (1440, 60, 1))) if m else 0
+    return sum(int(n or 0) * k for n, k in zip(m.groups(), (1440, 60, 1))) if m else (MINUTES if code == 0 else 0)  # a task with no interval in its XML has the default one
 
 
 def target(run=subprocess.run, supported=is_supported, task=TASK):
