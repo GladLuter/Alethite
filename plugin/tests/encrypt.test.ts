@@ -43,9 +43,9 @@ test('encrypt health: a key that cannot be read is told by cg.py in the notes, n
 
 // the engine words it as `<plugin>: $.process.run(<command>) aborted: still running after <N>ms`; runCg puts it in brackets at the end of its own text
 test('encrypt timeout: the words of the engine at the end of the message, in brackets of its own, and no other text', () => {
-  const lead = `${T.pythonMissing('python')} (cacheguard: $.process.run(python)`
+  const lead = `${T.pythonMissing('python')} (alethite: $.process.run(python)`
   expect(isTimeout(`${lead} aborted: still running after 600000ms)`)).toBe(true)
-  expect(isTimeout(`${T.pythonMissing('C:/Program Files (x86)/Python/python.exe')} (cacheguard: $.process.run(C:/Program Files (x86)/Python/python.exe) aborted: still running after 600000ms)`)).toBe(true)
+  expect(isTimeout(`${T.pythonMissing('C:/Program Files (x86)/Python/python.exe')} (alethite: $.process.run(C:/Program Files (x86)/Python/python.exe) aborted: still running after 600000ms)`)).toBe(true)
   expect(isTimeout(`${lead} failed to start: ENOENT: no such file or directory)`)).toBe(false)
   expect(isTimeout(`${lead} aborted)`)).toBe(false) // stopped by the session, not by the clock
   expect(isTimeout('ValueError: the push aborted: still running after 5ms of nothing')).toBe(false)

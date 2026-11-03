@@ -58,11 +58,11 @@ export const gateFor = (command: unknown, lessons: readonly Lesson[], stopped: R
   return lessons.find(l => l.trigger !== null && l.trigger.length >= TRIGGER_MIN && !stopped.has(l.id) && c.includes(l.trigger.toLowerCase()))
 }
 
-// /cg-lessons: one line each, newest first, with the pos `forget` takes and the computer it came from.
+// /al-lessons: one line each, newest first, with the pos `forget` takes and the computer it came from.
 export const formatLessons = (lessons: readonly Lesson[]) =>
   lessons.length === 0 ? T.noLessons : lessons.map(l => `pos=${l.pos} [${l.ts.slice(0, 10)}${l.from ? ` ${l.from}` : ''}] ${oneLine(l.text)}`).join('\n')
 
-// `/cg-lessons forget 1792…` → the pos; null for a plain list; undefined for anything else.
+// `/al-lessons forget 1792…` → the pos; null for a plain list; undefined for anything else.
 export const forgetArg = (args: string) => {
   const a = args.trim()
   if (a === '') return null

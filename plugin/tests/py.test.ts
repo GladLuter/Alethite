@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { healthLines, parseCg } from '../hooks/py'
+import { healthLines, homeNotesOf, parseCg } from '../hooks/py'
 import { T } from '../hooks/text'
 
 test('parseCg: ok JSON', () => expect(parseCg({ exitCode: 0, stdout: '{"hits":[]}', stderr: '' })).toEqual({ hits: [] }))
@@ -72,4 +72,17 @@ test('health: the notes of the index folder come right after the index line, whe
   const quiet = healthLines({ version: '2.1.295', index: { ...index, index_dir: { configured: null, fallback: false, notes: [] } }, memory: null, root: 'C:/w', embedCmd: cmd })
   expect(quiet).toEqual(healthLines({ version: '2.1.295', index: { ...index, index_dir: undefined }, memory: null, root: 'C:/w', embedCmd: cmd }))
   expect(healthLines({ version: '2.1.295', index: 'OperationalError: x', memory: null, root: 'C:/w', embedCmd: cmd }).join(' ')).not.toContain('n1')
+})
+test('health: the notes of the mod folder move come after the notes of the index folder; none, no line', () => {
+  const index = { db: 'C:/h/index.db', convs: 1, rows: 2, size_mb: 3, index_dir: { configured: 'D:/cg', fallback: true, notes: ['n1'] } }
+  const lines = healthLines({ version: '2.1.295', index, memory: null, root: 'C:/w', embedCmd: cmd, homeNotes: ['h1', 'h2'] })
+  expect(lines.slice(lines.indexOf(T.healthIndex(index)) + 1, lines.indexOf(T.healthIndex(index)) + 4)).toEqual(['n1', 'h1', 'h2'])
+  expect(healthLines({ version: '2.1.295', index, memory: null, root: 'C:/w', embedCmd: cmd, homeNotes: [] })).toEqual(healthLines({ version: '2.1.295', index, memory: null, root: 'C:/w', embedCmd: cmd }))
+})
+test('home notes of an answer: the strings of home_notes, nothing for another shape or no JSON', () => {
+  expect(homeNotesOf('{"home_notes":["a","b"],"error":"x"}')).toEqual(['a', 'b'])
+  expect(homeNotesOf('{"home_notes":["a",1,null,""]}')).toEqual(['a'])
+  expect(homeNotesOf('{"home_notes":"a"}')).toEqual([])
+  expect(homeNotesOf('{}')).toEqual([])
+  expect(homeNotesOf('Traceback…')).toEqual([])
 })

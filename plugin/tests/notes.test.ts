@@ -17,8 +17,8 @@ test('flush sends in order and leaves nothing', async () => {
 })
 test('flush of an empty queue sends nothing', async () => expect(await flush([], async () => {})).toEqual({ sent: 0, left: [] }))
 
-test('note path', () => expect(notePath('PC-1', '2026-11-13')).toBe('Claude-CacheGuard/Замеры/2026-11-13 PC-1.md'))
-test('the summary sits in the same folder as the notes', () => expect(SUMMARY_PATH).toBe('Claude-CacheGuard/Замеры/Сводка.md'))
+test('note path', () => expect(notePath('PC-1', '2026-11-13')).toBe('Alethite/Замеры/2026-11-13 PC-1.md'))
+test('the summary sits in the same folder as the notes', () => expect(SUMMARY_PATH).toBe('Alethite/Замеры/Сводка.md'))
 
 const front = (host: string, date: string, usd: number | null) => ({
   host,

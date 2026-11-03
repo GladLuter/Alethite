@@ -1,6 +1,6 @@
 {
-  "name": "cacheguard-local",
-  "description": "CacheGuard — local marketplace for this repo",
+  "name": "alethite-local",
+  "description": "Alethite: local marketplace for this repo",
   "owner": { "name": "Evgenii S" },
-  "plugins": [{ "name": "cacheguard", "source": "./plugin" }]
+  "plugins": [{ "name": "alethite", "source": "./plugin" }]
 }

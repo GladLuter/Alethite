@@ -34,15 +34,15 @@ test('a failed refresh shows its error in the status line', async ($, on) => {
   const statuses: (string | undefined)[] = []
   const store = new Map<string, unknown>()
   wire(on, statuses, () => ({ deny: 'boom' }), undefined, store)
-  await ($ as any).command.run({ command: 'cg-band', args: '' })
+  await ($ as any).command.run({ command: 'al-band', args: '' })
   expect(statuses.some(t => t?.startsWith(T.statusError('')))).toBe(true)
-  expect(store.get('lastError')).toMatchObject({ at: 10_000_000_000, where: 'cg-band' }) // kept for /cg-health too
+  expect(store.get('lastError')).toMatchObject({ at: 10_000_000_000, where: 'al-band' }) // kept for /al-health too
 })
 
 test('"Остаться здесь" and an armed picker last one turn', async ($, on) => {
   wire(on, [], () => ({ value: usage }))
-  await ($ as any).command.run({ command: 'cg-band', args: '' })
-  const ui = await $.ui.mount({ plugin: 'cacheguard', surface: 'terminal', component: 'AbovePrompt', props } as never)
+  await ($ as any).command.run({ command: 'al-band', args: '' })
+  const ui = await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props } as never)
 
   await ui.press({ key: 'launch' })
   expect(await buttons(ui)).toEqual(['send', 'pick', 'cancel'])
@@ -57,9 +57,9 @@ test('"Остаться здесь" and an armed picker last one turn', async ($
 
 test('no band while the model is working', async ($, on) => {
   wire(on, [], () => ({ value: usage }))
-  await ($ as any).command.run({ command: 'cg-band', args: '' }) // forces the band
-  expect(await buttons(await $.ui.mount({ plugin: 'cacheguard', surface: 'terminal', component: 'AbovePrompt', props } as never))).toEqual(['launch', 'stay'])
-  expect(await buttons(await $.ui.mount({ plugin: 'cacheguard', surface: 'terminal', component: 'AbovePrompt', props: { ...props, isWorking: true } } as never))).toEqual([])
+  await ($ as any).command.run({ command: 'al-band', args: '' }) // forces the band
+  expect(await buttons(await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props } as never))).toEqual(['launch', 'stay'])
+  expect(await buttons(await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props: { ...props, isWorking: true } } as never))).toEqual([])
 })
 
 const noSize = () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } })
@@ -70,8 +70,8 @@ test('after a restart the size comes from cg.py last-turn, asked once per chat',
   const store = new Map<string, unknown>()
   const at = new Date(10_000_000_000 - 2 * 3_600_000).toISOString()
   wire(on, statuses, noSize, (_, e) => (argvs.push(e.argv), ran(JSON.stringify({ tokens: 300_000, at, model: 'm' }))), store)
-  await ($ as any).command.run({ command: 'cg-band', args: '' })
-  await ($ as any).command.run({ command: 'cg-band', args: '' })
+  await ($ as any).command.run({ command: 'al-band', args: '' })
+  await ($ as any).command.run({ command: 'al-band', args: '' })
   expect(statuses).toContain(T.ctx('300k', T.cacheExpired))
   expect(argvs.filter(a => a.includes('last-turn')).length).toBe(1)
   expect(store.get('turn:id')).toEqual({ at: Date.parse(at), tokens: 300_000 })
@@ -89,24 +89,24 @@ test('the turn size is kept for the last 200 chats: the 201st pushes out the old
   expect(store.get('turn:id')).toEqual({ at: 10_000_000_000, tokens: 512_000 })
 })
 
-test('python missing: one toast, the error is kept for /cg-health', async ($, on) => {
+test('python missing: one toast, the error is kept for /al-health', async ($, on) => {
   const toasts: string[] = []
   on('ui.toast', (_: unknown, e: { text: string }) => (toasts.push(e.text), { value: undefined }))
   wire(on, [], noSize, () => ({ deny: 'ENOENT' }))
   on('session.root', () => ({ value: 'C:/w' }))
-  await ($ as any).command.run({ command: 'cg-band', args: '' })
-  await ($ as any).command.run({ command: 'cg-band', args: '' })
+  await ($ as any).command.run({ command: 'al-band', args: '' })
+  await ($ as any).command.run({ command: 'al-band', args: '' })
   // the engine's own reason follows (a timeout must not read like a missing command), worded by the engine
   const lead = `${T.pythonMissing('python')} (`
   expect(toasts).toHaveLength(1)
   expect(toasts[0]!.startsWith(T.toast(T.failed('last-turn', lead)))).toBe(true)
   expect(toasts[0]!.endsWith('ENOENT)')).toBe(true)
-  const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
   expect(text).toContain('last-turn')
   expect(text).toContain(lead)
 })
 
-test('/cg-health: version, index figures, auto-memory folder with its fact count', async ($, on) => {
+test('/al-health: version, index figures, auto-memory folder with its fact count', async ($, on) => {
   const dir = 'C:/mem/memory'
   const files = [{ path: 'C:/p/CLAUDE.md', type: 'Project', tokens: 1 }, { path: `${dir}/MEMORY.md`, type: 'AutoMem', tokens: 1 }]
   const vectors = { model: 'embeddinggemma', with_vectors: 3000, total: 3400, updated: '2026-10-18T09:00:00Z' }
@@ -115,8 +115,8 @@ test('/cg-health: version, index figures, auto-memory folder with its fact count
   wire(on, [], () => ({ value: { context: { window: 1_000_000, breakdown: { memoryFiles: files } }, rateLimits: [] } }), (_, e) => (argvs.push(e.argv), e.argv.includes('status') ? ran(JSON.stringify(status)) : noTurn()))
   on('session.root', () => ({ value: 'C:/w' }))
   on('fs.list', () => ({ value: ['MEMORY.md', 'a.md', 'b.md', 'notes.txt'].map(name => ({ name, kind: 'file', size: 1, mtimeMs: 0, isLink: false })) }))
-  const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
-  expect(argvs.find(a => a.includes('status'))!.slice(4)).toEqual(['status', '--cwd=C:/w']) // the root, the same folder that recall scopes by
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
+  expect(argvs.find(a => a.includes('status'))!.slice(4)).toEqual(['--follow-job', 'status', '--cwd=C:/w']) // the root, the same folder that recall scopes by
   expect(text).toContain(T.projectLine('C:/w', 5))
   expect(text).not.toContain(T.projectEmpty)
   expect(text).toContain('2.1.295')
@@ -126,11 +126,11 @@ test('/cg-health: version, index figures, auto-memory folder with its fact count
   expect(text).toMatch(/python ".*cg\.py" --lang en embed --model embeddinggemma --max-seconds 100000/) // 400 records have no vectors: how to finish them, in the mod's language
 })
 
-test('/cg-health: a project that matches no conversation is said so', async ($, on) => {
+test('/al-health: a project that matches no conversation is said so', async ($, on) => {
   const status = { db: 'C:/x/mem.db', convs: 12, rows: 3400, last_update: null, size_mb: 1.5, project: { key: 'c:/w', convs: 0 } }
   wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) => (e.argv.includes('status') ? ran(JSON.stringify(status)) : noTurn()))
   on('session.root', () => ({ value: 'C:/w' }))
-  const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
   expect(text).toContain(T.projectLine('C:/w', 0))
   expect(text).toContain(T.projectEmpty)
 })
@@ -147,13 +147,13 @@ const box = (on: any, draft: string, log: string[], gate: Promise<unknown> = Pro
 const withMemory = { value: { ...usage, context: { ...usage.context, breakdown: { memoryFiles: [{ path: 'C:/mem/memory/MEMORY.md', type: 'AutoMem', tokens: 1 }] } } } }
 const handoffOk = (_: unknown, e: { argv: string[] }) => (e.argv.includes('handoff') ? ran(JSON.stringify({ text: '[al-handoff]x[/al-handoff]', path: 'C:/h/id.md' })) : noTurn())
 const mountBand = async ($: any) => {
-  await $.command.run({ command: 'cg-band', args: '' })
-  return $.ui.mount({ plugin: 'cacheguard', surface: 'terminal', component: 'AbovePrompt', props } as never)
+  await $.command.run({ command: 'al-band', args: '' })
+  return $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props } as never)
 }
 
 type Drawn = { type: string; props?: Record<string, unknown>; children: Drawn[] }
 
-test('the band is a frame of its own, the CacheGuard title first in it, bold, above its lines and buttons', async ($, on) => {
+test('the band is a frame of its own, the Alethite title first in it, bold, above its lines and buttons', async ($, on) => {
   wire(on, [], () => ({ value: usage }))
   const band = (await (await mountBand($)).drawn()) as unknown as Drawn
   const frame = band.children[0]!
@@ -241,7 +241,7 @@ test('new worker: busy for the whole launch, the arm button is ignored meanwhile
   expect(await ui.findAll({ type: 'Button', text: T.busy })).toEqual([])
 })
 
-test('new worker: a failed handoff leaves the chat alone, tells why and is kept for /cg-health', async ($, on) => {
+test('new worker: a failed handoff leaves the chat alone, tells why and is kept for /al-health', async ($, on) => {
   const toasts: string[] = []
   const log: string[] = []
   const store = new Map<string, unknown>()
@@ -292,12 +292,14 @@ const started = async ($: any, on: any, answer: (a: string[]) => unknown, status
   on('session.cwd', () => ({ value: 'C:/w/plugin/scripts' })) // after a shell `cd`: must not reach the search
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   // argv: python, cg.py, --lang, <language>, then the command
-  m.clock = wire(on, statuses, answerUsage, (_, e: any) => (m.runs.push({ argv: e.argv.slice(4), timeoutMs: e.init?.timeoutMs }), m.langs.push(e.argv.slice(2, 4)), e.argv.includes('last-turn') ? lastTurn() : answer(e.argv.slice(4))), m.store)
+  m.clock = wire(on, statuses, answerUsage, (_, e: any) => (m.runs.push({ argv: e.argv.slice(4), timeoutMs: e.init?.timeoutMs }), m.langs.push(e.argv.slice(2, 4)), e.argv.includes('last-turn') ? lastTurn() : answer(verb(e.argv.slice(4)))), m.store)
   await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false })
   return m
 }
-const recall = ($: any, input: object = { query: 'кэш' }) => $.tool.call({ tool: 'mcp__cacheguard__recall', ...input })
-const ofCg = <R extends { argv: string[] }>(m: { runs: R[] }, cmd: string) => m.runs.filter(r => r.argv[0] === cmd)
+const recall = ($: any, input: object = { query: 'кэш' }) => $.tool.call({ tool: 'mcp__alethite__recall', ...input })
+// the call without the mod's own flag, which goes before the command name (see --follow-job below)
+const verb = (a: string[]) => (a[0] === '--follow-job' ? a.slice(1) : a)
+const ofCg = <R extends { argv: string[] }>(m: { runs: R[] }, cmd: string) => m.runs.filter(r => verb(r.argv)[0] === cmd)
 
 test('memory tools: all in the prompt, not behind ToolSearch', async ($, on) => {
   const m = await started($, on, () => ran('{}'))
@@ -325,7 +327,7 @@ test('recall: nothing found says what to try', async ($, on) => {
   expect(await recall($)).toEqual({ result: T.noHits('кэш', 'project') })
 })
 
-test('recall: cg.py fails: the model reads an error, the owner a toast, /cg-health the cause', async ($, on) => {
+test('recall: cg.py fails: the model reads an error, the owner a toast, /al-health the cause', async ($, on) => {
   const m = await started($, on, () => failed('OperationalError: x'))
   expect(await recall($)).toEqual({ deny: T.recallFailed('OperationalError: x') })
   expect(m.toasts).toEqual([T.toast(T.failed('recall', 'OperationalError: x'))])
@@ -346,7 +348,7 @@ test('recall: unreadable transcripts reach the owner, the hits still reach the m
   expect(m.store.get('lastError')).toMatchObject({ where: 'recall', msg: T.indexErrorFirst(2, bad.path, bad.error) })
 })
 
-test('recall: no vector search: the model reads why, the owner gets one toast per load, /cg-health keeps the cause', async ($, on) => {
+test('recall: no vector search: the model reads why, the owner gets one toast per load, /al-health keeps the cause', async ($, on) => {
   const why = 'Ollama не отвечает: тест'
   const m = await started($, on, () => found({ vector: why }))
   const told = { result: [hitLine, T.vectorOff(why)].join('\n') }
@@ -362,7 +364,7 @@ test('recall: two searches at once without vectors still give one toast', async 
   expect(m.toasts).toEqual([T.toast(T.vectorOff('Ollama is not answering: x'))])
 })
 
-test('recall: a later error is not pushed out of /cg-health by every search without vectors', async ($, on) => {
+test('recall: a later error is not pushed out of /al-health by every search without vectors', async ($, on) => {
   const m = await started($, on, () => found({ vector: 'Ollama is not answering: x' }))
   await recall($)
   m.store.set('lastError', { at: 1, where: 'sync', msg: 'later' })
@@ -372,13 +374,13 @@ test('recall: a later error is not pushed out of /cg-health by every search with
 
 test('recall_more: reads around a hit', async ($, on) => {
   const m = await started($, on, () => ran(JSON.stringify({ rows: [{ ts: '2026-10-10T08:00:00Z', kind: 'owner', pos: 42, text: 'привет' }] })))
-  expect(await $.tool.call({ tool: 'mcp__cacheguard__recall_more', conv: 'S', pos: 42 })).toEqual({ result: '[2026-10-10 owner pos=42] привет' })
+  expect(await $.tool.call({ tool: 'mcp__alethite__recall_more', conv: 'S', pos: 42 })).toEqual({ result: '[2026-10-10 owner pos=42] привет' })
   expect(ofCg(m, 'expand')[0]!.argv).toEqual(['expand', '--conv=S', '--pos=42', '--compress', 'ultra'])
 })
 
 test('recall_more: a failure is an error for the model and a toast for the owner', async ($, on) => {
   const m = await started($, on, () => failed('boom'))
-  expect(await $.tool.call({ tool: 'mcp__cacheguard__recall_more', conv: 'S', pos: 42 })).toEqual({ deny: T.recallFailed('boom') })
+  expect(await $.tool.call({ tool: 'mcp__alethite__recall_more', conv: 'S', pos: 42 })).toEqual({ deny: T.recallFailed('boom') })
   expect(m.toasts).toEqual([T.toast(T.failed('recall_more', 'boom'))])
 })
 
@@ -390,27 +392,27 @@ test('index: 3 s after session.start, in the background, with errors on the stat
   const m = await started($, on, a => (a[0] === 'embed' ? embedded() : indexed([bad])), statuses)
   expect(ofCg(m, 'index')).toEqual([]) // session.start did not wait for it, nor run it
   await m.clock.advance(3_000)
-  expect(ofCg(m, 'index')).toEqual([{ argv: ['index'], timeoutMs: 600_000 }])
+  expect(ofCg(m, 'index')).toEqual([{ argv: ['--follow-job', 'index'], timeoutMs: 600_000 }])
   expect(statuses).toContain(T.indexErrors(1))
   expect(m.toasts).toEqual([])
   expect(m.store.get('lastError')).toMatchObject({ where: 'index' })
 })
 
-test('index: a failed background run goes to the status line, /cg-health and one toast', async ($, on) => {
+test('index: a failed background run goes to the status line, /al-health and one toast', async ($, on) => {
   const statuses: (string | undefined)[] = []
   const m = await started($, on, () => failed('database is locked'), statuses)
   await m.clock.advance(3_000)
   expect(statuses).toContain(T.statusError('database is locked'))
   expect(m.toasts).toEqual([T.toast(T.catchUpFailed('index'))])
   expect(m.store.get('lastError')).toMatchObject({ where: 'index', msg: 'database is locked' })
-  expect(ofCg(m, 'embed')).toEqual([]) // the same database would fail the same way, and the first cause must stay in /cg-health
+  expect(ofCg(m, 'embed')).toEqual([]) // the same database would fail the same way, and the first cause must stay in /al-health
 })
 
 test('embed: right after the index in the same timer, 120 s of work at most, and the setting names the model', { options: { embedModel: 'bge-m3' } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'embed' ? embedded() : a[0] === 'recall' ? found() : indexed()))
   await m.clock.advance(3_000)
-  expect(m.runs.filter(r => r.argv[0] === 'index' || r.argv[0] === 'embed')).toEqual([
-    { argv: ['index'], timeoutMs: 600_000 },
+  expect(m.runs.filter(r => verb(r.argv)[0] === 'index' || r.argv[0] === 'embed')).toEqual([
+    { argv: ['--follow-job', 'index'], timeoutMs: 600_000 },
     { argv: ['embed', '--model', 'bge-m3', '--max-seconds', '120'], timeoutMs: 180_000 },
   ])
   await recall($)
@@ -418,7 +420,7 @@ test('embed: right after the index in the same timer, 120 s of work at most, and
   expect(m.toasts).toEqual([])
 })
 
-// the embed run answers `answer`; the owner must see `msg` on the status line and in /cg-health, and hear of it in one toast
+// the embed run answers `answer`; the owner must see `msg` on the status line and in /al-health, and hear of it in one toast
 const embedGoesWrong = async ($: any, on: any, answer: unknown, msg: string) => {
   const statuses: (string | undefined)[] = []
   const m = await started($, on, a => (a[0] === 'embed' ? answer : indexed()), statuses)
@@ -428,10 +430,10 @@ const embedGoesWrong = async ($: any, on: any, answer: unknown, msg: string) => 
   expect(m.toasts).toEqual([T.toast(T.catchUpFailed('embed'))])
 }
 
-test('embed: a failed run reaches the status line, /cg-health and a toast', ($, on) => embedGoesWrong($, on, failed('Ollama не отвечает: x'), 'Ollama не отвечает: x'))
+test('embed: a failed run reaches the status line, /al-health and a toast', ($, on) => embedGoesWrong($, on, failed('Ollama не отвечает: x'), 'Ollama не отвечает: x'))
 test('embed: errors in a finished run do too', ($, on) => embedGoesWrong($, on, embedded([{ error: 'RuntimeError: модель m не найдена' }]), 'RuntimeError: модель m не найдена'))
 
-test('catch-up: the toast comes once per load of the mod, every failure is kept for /cg-health', async ($, on) => {
+test('catch-up: the toast comes once per load of the mod, every failure is kept for /al-health', async ($, on) => {
   const m = await started($, on, a => (a[0] === 'embed' ? failed('Ollama не отвечает: x') : indexed()))
   await m.clock.advance(3_000)
   expect(m.toasts).toEqual([T.toast(T.catchUpFailed('embed'))])
@@ -448,11 +450,33 @@ test('toasts start with the mod name, once; status lines do not (the engine adds
   const m = await started($, on, a => (a[0] === 'embed' ? failed('Ollama не отвечает: x') : a[0] === 'recall' ? found({ errors: [bad], vector: 'нет' }) : a[0] === 'expand' ? failed('boom') : indexed([bad])), statuses)
   await m.clock.advance(3_000) // refresh, unreadable transcripts and a failed embed on the status line; the failed catch-up in a toast
   await recall($) // unreadable transcripts and no vector search: two toasts
-  await $.tool.call({ tool: 'mcp__cacheguard__recall_more', conv: 'S', pos: 1 }) // a failure: a toast
+  await $.tool.call({ tool: 'mcp__alethite__recall_more', conv: 'S', pos: 1 }) // a failure: a toast
   expect(statuses).toHaveLength(3)
   expect(m.toasts).toHaveLength(4)
-  for (const t of statuses) expect(t).not.toContain('CacheGuard')
-  for (const t of m.toasts) expect(t).toMatch(/^CacheGuard: (?!.*CacheGuard)/s)
+  for (const t of statuses) expect(t).not.toContain('Alethite')
+  for (const t of m.toasts) expect(t).toMatch(/^Alethite: (?!.*Alethite)/s)
+})
+
+test('exactly nine commands are registered, all al-*, none cg-*', async ($, on) => {
+  const names: string[] = []
+  on('command.register', (_: unknown, e: { name: string }) => (names.push(e.name), { value: { command: e.name } }))
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  mock.env(on, {})
+  on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  wire(on, [], () => ({ value: usage }))
+  await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false })
+  expect(names).toEqual(['al-band', 'al-health', 'al-index', 'al-stats', 'al-sync', 'al-lessons', 'al-job', 'al-encrypt', 'al-index-dir'])
+  expect(names.filter(n => n.startsWith('cg-'))).toEqual([])
+})
+
+test('--follow-job goes before the command name in the index run of a session start and in the status of /al-health, and in no other call', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'embed' ? embedded() : a[0] === 'status' ? ran('{"db":"d","convs":0,"rows":0,"size_mb":0}') : a[0] === 'recall' ? found() : indexed()))
+  await m.clock.advance(3_000)
+  await ($ as any).command.run({ command: 'al-health', args: '' })
+  await ($ as any).command.run({ command: 'al-index', args: '' })
+  await recall($)
+  expect(m.runs.filter(r => r.argv.includes('--follow-job')).map(r => r.argv)).toEqual([['--follow-job', 'index'], ['--follow-job', 'status', '--cwd=C:/w']])
+  expect(ofCg(m, 'index').map(r => r.argv)).toEqual([['--follow-job', 'index'], ['index']]) // the owner's /al-index is a plain run
 })
 
 // item 2: the engine refuses a tool schema
@@ -470,27 +494,27 @@ test('session.start: a refused registration leaves the status line, the timers a
   expect(statuses.at(-1)!.startsWith(T.statusError(''))).toBe(true) // ...and the refusal is the last word
   expect(statuses.at(-1)).toContain('schema refused')
   expect(store.get('lastError')).toMatchObject({ where: 'register', msg: expect.stringContaining('schema refused') })
-  expect(names).toEqual({ commands: ['cg-band', 'cg-health', 'cg-index', 'cg-stats', 'cg-sync', 'cg-lessons', 'cg-job', 'cg-encrypt', 'cg-index-dir'], tools: ['recall', 'recall_more', 'lesson_save'] }) // every tool was tried, the commands went through
+  expect(names).toEqual({ commands: ['al-band', 'al-health', 'al-index', 'al-stats', 'al-sync', 'al-lessons', 'al-job', 'al-encrypt', 'al-index-dir'], tools: ['recall', 'recall_more', 'lesson_save'] }) // every tool was tried, the commands went through
   await clock.advance(30_000) // the timers run
   expect(statuses.at(-1)).toMatch(/^ctx /)
 })
 
-test('/cg-index: updates, "rebuild" re-reads everything, the answer has the figures', async ($, on) => {
+test('/al-index: updates, "rebuild" re-reads everything, the answer has the figures', async ($, on) => {
   const stats = { files: 3, rows: 120, convs: 7, seconds: 1.234, errors: [] }
   const m = await started($, on, () => ran(JSON.stringify(stats)))
-  expect((await ($ as any).command.run({ command: 'cg-index', args: '' })).text).toBe(T.cgIndexDone(stats))
-  await ($ as any).command.run({ command: 'cg-index', args: 'rebuild' })
+  expect((await ($ as any).command.run({ command: 'al-index', args: '' })).text).toBe(T.cgIndexDone(stats))
+  await ($ as any).command.run({ command: 'al-index', args: 'rebuild' })
   expect(ofCg(m, 'index').map(r => r.argv)).toEqual([['index'], ['index', '--rebuild']])
 })
 
-test('/cg-index: unreadable transcripts and failures are shown in a toast', async ($, on) => {
+test('/al-index: unreadable transcripts and failures are shown in a toast', async ($, on) => {
   let answer: unknown = ran(JSON.stringify({ files: 0, rows: 0, convs: 0, seconds: 0, errors: [bad] }))
   const m = await started($, on, () => answer)
-  await ($ as any).command.run({ command: 'cg-index', args: '' })
+  await ($ as any).command.run({ command: 'al-index', args: '' })
   expect(m.toasts).toEqual([T.toast(T.indexErrors(1))])
   answer = failed('no such table')
-  expect((await ($ as any).command.run({ command: 'cg-index', args: '' })).text).toBe(T.cgIndexFailed)
-  expect(m.toasts[1]).toBe(T.toast(T.failed('cg-index', 'no such table')))
+  expect((await ($ as any).command.run({ command: 'al-index', args: '' })).text).toBe(T.cgIndexFailed)
+  expect(m.toasts[1]).toBe(T.toast(T.failed('al-index', 'no such table')))
 })
 
 // ---- short memory ----
@@ -500,7 +524,7 @@ test('prompt: the memory rule is the last section, on the session side, the same
   const engine = [{ id: 'intro', text: 'a', scope: 'shared' as const }, { id: 'env', text: 'b', scope: 'session' as const }]
   on('prompt.compose', () => ({ sections: engine }))
   const first = (await ($ as any).prompt.compose(facts)).sections
-  expect(first).toEqual([...engine, { id: 'cacheguard:memory-rule', text: T.memoryRule, scope: 'session' }])
+  expect(first).toEqual([...engine, { id: 'alethite:memory-rule', text: T.memoryRule, scope: 'session' }])
   expect((await ($ as any).prompt.compose(facts)).sections).toEqual(first)
 })
 
@@ -535,7 +559,7 @@ test('remembered: no toast for MEMORY.md, a file elsewhere, a refused, an errore
   expect(r.toasts).toEqual([])
 })
 
-test('remembered: a throw while judging the write does not break it; the cause goes to the status line and /cg-health', async ($, on) => {
+test('remembered: a throw while judging the write does not break it; the cause goes to the status line and /al-health', async ($, on) => {
   const statuses: (string | undefined)[] = []
   const store = new Map<string, unknown>()
   const r = rig($, on)
@@ -578,12 +602,12 @@ const fakeVault = (on: any) => {
 const statsRig = async ($: any, on: any, answer: (a: string[]) => unknown = () => ran(JSON.stringify({ metrics: {}, note: NOTE, errors: [] })), env: Record<string, string> = { COMPUTERNAME: 'PC-1' }) => {
   const vault = fakeVault(on)
   const m = await started($, on, a => (a[0] === 'stats' ? answer(a) : ran('{}')), undefined, undefined, env)
-  const stats = (args = '') => $.command.run({ command: 'cg-stats', args }) as Promise<{ text: string }>
+  const stats = (args = '') => $.command.run({ command: 'al-stats', args }) as Promise<{ text: string }>
   const today = () => flag(ofCg(m, 'stats').at(-1)!.argv, '--today')
   return { vault, m, stats, today }
 }
 
-test('/cg-stats: cg.py gets the period, the computer, the limits and the size of the memory rule; the figures are in the reply', async ($, on) => {
+test('/al-stats: cg.py gets the period, the computer, the limits and the size of the memory rule; the figures are in the reply', async ($, on) => {
   const { m, stats, today } = await statsRig($, on)
   const { text } = await stats()
   const { argv, timeoutMs } = ofCg(m, 'stats')[0]!
@@ -596,19 +620,19 @@ test('/cg-stats: cg.py gets the period, the computer, the limits and the size of
   expect(text).not.toContain('host: PC-1') // the frontmatter is for the vault, not for the reply
 })
 
-test('/cg-stats 30: the period is as long as asked', async ($, on) => {
+test('/al-stats 30: the period is as long as asked', async ($, on) => {
   const { m, stats, today } = await statsRig($, on)
   await stats(' 30 ')
   expect(Date.parse(today()) - Date.parse(flag(ofCg(m, 'stats')[0]!.argv, '--since'))).toBe(30 * 86_400_000)
 })
 
-test('/cg-stats: no sense in the days: say so, run nothing', async ($, on) => {
+test('/al-stats: no sense in the days: say so, run nothing', async ($, on) => {
   const { m, stats } = await statsRig($, on)
   for (const bad of ['abc', '0', '-3', '2.5']) expect((await stats(bad)).text).toBe(T.cgStatsDays)
   expect(ofCg(m, 'stats')).toEqual([])
 })
 
-test('/cg-stats: Obsidian up: the note and the summary are written, the outbox is empty', async ($, on) => {
+test('/al-stats: Obsidian up: the note and the summary are written, the outbox is empty', async ($, on) => {
   const { vault, m, stats, today } = await statsRig($, on)
   vault.files.set(`${FOLDER}/2026-10-01 PC-2.md`, OTHER)
   const { text } = await stats()
@@ -623,13 +647,13 @@ test('/cg-stats: Obsidian up: the note and the summary are written, the outbox i
   expect(text).toContain(T.cgStatsSent(1))
 })
 
-test('/cg-stats: Obsidian down: the error is shown, the note waits in the outbox, the next run sends it', async ($, on) => {
+test('/al-stats: Obsidian down: the error is shown, the note waits in the outbox, the next run sends it', async ($, on) => {
   const { vault, m, stats, today } = await statsRig($, on)
   vault.fail = () => true
   const { text } = await stats()
   expect(m.toasts).toHaveLength(1)
-  expect(m.toasts[0]).toContain(T.failed('cg-stats', '').trim())
-  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-stats' })
+  expect(m.toasts[0]).toContain(T.failed('al-stats', '').trim())
+  expect(m.store.get('lastError')).toMatchObject({ where: 'al-stats' })
   expect(m.store.get('outbox')).toEqual([{ path: notePath('PC-1', today()), content: NOTE }])
   expect(text).toContain(T.cgStatsQueued(1))
   expect(text).toContain('| метрика | база | сейчас |') // the figures are not lost with the vault
@@ -641,7 +665,7 @@ test('/cg-stats: Obsidian down: the error is shown, the note waits in the outbox
   expect(m.store.get('outbox')).toEqual([])
 })
 
-test("/cg-stats: an answer with isError is a failure too, with the server's words", async ($, on) => {
+test("/al-stats: an answer with isError is a failure too, with the server's words", async ($, on) => {
   const { vault, m, stats } = await statsRig($, on)
   vault.fail = () => true
   vault.failure = 'isError'
@@ -650,7 +674,7 @@ test("/cg-stats: an answer with isError is a failure too, with the server's word
   expect((m.store.get('outbox') as unknown[]).length).toBe(1)
 })
 
-test('/cg-stats: what waited from an earlier day goes first', async ($, on) => {
+test('/al-stats: what waited from an earlier day goes first', async ($, on) => {
   const { vault, m, stats, today } = await statsRig($, on)
   const old = { path: notePath('PC-1', '2026-01-01'), content: 'old' }
   await m.store.set('outbox', [old])
@@ -664,7 +688,7 @@ test('/cg-stats: what waited from an earlier day goes first', async ($, on) => {
   expect(text).toContain(T.cgStatsSent(2))
 })
 
-test('/cg-stats: the vault dies after the first of two: only the rest stays queued', async ($, on) => {
+test('/al-stats: the vault dies after the first of two: only the rest stays queued', async ($, on) => {
   const { vault, m, stats, today } = await statsRig($, on)
   const old = { path: notePath('PC-1', '2026-01-01'), content: 'old' }
   await m.store.set('outbox', [old])
@@ -675,18 +699,18 @@ test('/cg-stats: the vault dies after the first of two: only the rest stays queu
   expect(text).toContain(T.cgStatsQueued(1))
 })
 
-test('/cg-stats: the summary cannot be built: the note is safe, the owner is told', async ($, on) => {
+test('/al-stats: the summary cannot be built: the note is safe, the owner is told', async ($, on) => {
   const { vault, m, stats, today } = await statsRig($, on)
   vault.fail = tool => tool === 'list_vault_files'
   const { text } = await stats()
   expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
   expect(m.store.get('outbox')).toEqual([])
-  expect(m.toasts[0]).toContain('cg-stats-summary')
-  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-stats-summary' })
+  expect(m.toasts[0]).toContain('al-stats-summary')
+  expect(m.store.get('lastError')).toMatchObject({ where: 'al-stats-summary' })
   expect(text).toContain(T.cgStatsSummaryFailed)
 })
 
-test('/cg-stats: the folder listing is truncated: the note is written, the summary is not rebuilt, the owner is told', async ($, on) => {
+test('/al-stats: the folder listing is truncated: the note is written, the summary is not rebuilt, the owner is told', async ($, on) => {
   const { vault, m, stats, today } = await statsRig($, on)
   for (let i = 0; i < 1001; i++) vault.files.set(`${FOLDER}/old-${i}.md`, OTHER)
   const { text } = await stats()
@@ -694,11 +718,11 @@ test('/cg-stats: the folder listing is truncated: the note is written, the summa
   expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
   expect(vault.files.has(SUMMARY_PATH)).toBe(false)
   expect(m.toasts[0]).toContain(T.summaryTruncated)
-  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-stats-summary' })
+  expect(m.store.get('lastError')).toMatchObject({ where: 'al-stats-summary' })
   expect(text).toContain(T.cgStatsSummaryFailed)
 })
 
-test('/cg-stats: the summary rebuild skips the summary itself, a non-.md file and a note in a subfolder', async ($, on) => {
+test('/al-stats: the summary rebuild skips the summary itself, a non-.md file and a note in a subfolder', async ($, on) => {
   const { vault, stats, today } = await statsRig($, on)
   vault.files.set(SUMMARY_PATH, 'old summary')
   vault.files.set(`${FOLDER}/2026-10-01 PC-2.md`, OTHER)
@@ -710,29 +734,29 @@ test('/cg-stats: the summary rebuild skips the summary itself, a non-.md file an
   expect(vault.files.get(SUMMARY_PATH)).toContain('PC-2')
 })
 
-test('/cg-stats: cg.py reports what made the figures wrong: a toast, /cg-health, a word in the reply; the note is written all the same', async ($, on) => {
+test('/al-stats: cg.py reports what made the figures wrong: a toast, /al-health, a word in the reply; the note is written all the same', async ($, on) => {
   const errors = [{ path: 'audit', error: 'files_unreadable: 2' }]
   const { vault, m, stats, today } = await statsRig($, on, () => ran(JSON.stringify({ metrics: {}, note: NOTE, errors })))
   const { text } = await stats()
   expect(m.toasts).toEqual([T.toast(T.indexErrors(1))])
-  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-stats', msg: T.indexErrorFirst(1, 'audit', 'files_unreadable: 2') })
+  expect(m.store.get('lastError')).toMatchObject({ where: 'al-stats', msg: T.indexErrorFirst(1, 'audit', 'files_unreadable: 2') })
   expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
   expect(text).toContain(T.cgStatsErrors(1))
   expect(text).toContain(T.cgStatsSent(1))
 })
 
-test('/cg-stats: cg.py fails: a toast, nothing is queued or sent', async ($, on) => {
+test('/al-stats: cg.py fails: a toast, nothing is queued or sent', async ($, on) => {
   const { vault, m, stats } = await statsRig($, on, () => failed('PermissionError: x'))
   expect((await stats()).text).toBe(T.cgStatsFailed)
-  expect(m.toasts).toEqual([T.toast(T.failed('cg-stats', 'PermissionError: x'))])
+  expect(m.toasts).toEqual([T.toast(T.failed('al-stats', 'PermissionError: x'))])
   expect(m.store.get('outbox')).toBeUndefined()
   expect(vault.calls).toEqual([])
 })
 
-test('/cg-stats: no computer name, no note', async ($, on) => {
+test('/al-stats: no computer name, no note', async ($, on) => {
   const { vault, m, stats } = await statsRig($, on, undefined, {})
   expect((await stats()).text).toBe(T.cgStatsFailed)
-  expect(m.toasts).toEqual([T.toast(T.failed('cg-stats', T.noHost))])
+  expect(m.toasts).toEqual([T.toast(T.failed('al-stats', T.noHost))])
   expect(vault.calls).toEqual([])
 })
 
@@ -742,7 +766,7 @@ test('cg.py is told the language of the mod: English by default', async ($, on) 
   await m.clock.advance(3_000)
   expect(m.langs.length).toBeGreaterThan(1)
   for (const lang of m.langs) expect(lang).toEqual(['--lang', 'en'])
-  expect((await ($ as any).command.run({ command: 'cg-band', args: '' })).text).toBe(T.cgBandOn)
+  expect((await ($ as any).command.run({ command: 'al-band', args: '' })).text).toBe(T.cgBandOn)
 })
 
 test('language ru: the mod speaks Russian to the owner and to the model, and so does cg.py', { options: { language: 'ru' } }, async ($, on) => {
@@ -750,16 +774,16 @@ test('language ru: the mod speaks Russian to the owner and to the model, and so 
   const m = await started($, on, a => (a[0] === 'embed' ? embedded() : indexed()))
   await m.clock.advance(3_000)
   for (const lang of m.langs) expect(lang).toEqual(['--lang', 'ru'])
-  expect((await ($ as any).command.run({ command: 'cg-band', args: '' })).text).toBe(ru.cgBandOn)
+  expect((await ($ as any).command.run({ command: 'al-band', args: '' })).text).toBe(ru.cgBandOn)
   expect(m.specs.map(s => s.description)).toEqual([ru.recallDescription, ru.recallMoreDescription, ru.lessonSaveDescription])
-  expect((await ($ as any).prompt.compose(facts)).sections).toEqual([{ id: 'cacheguard:memory-rule', text: ru.memoryRule, scope: 'session' }])
+  expect((await ($ as any).prompt.compose(facts)).sections).toEqual([{ id: 'alethite:memory-rule', text: ru.memoryRule, scope: 'session' }])
 })
 
 test('language uk: Ukrainian to the owner and to the model, and to cg.py', { options: { language: 'uk' } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'embed' ? embedded() : indexed()))
   await m.clock.advance(3_000)
   for (const lang of m.langs) expect(lang).toEqual(['--lang', 'uk'])
-  expect((await ($ as any).command.run({ command: 'cg-band', args: '' })).text).toBe(uk.cgBandOn)
+  expect((await ($ as any).command.run({ command: 'al-band', args: '' })).text).toBe(uk.cgBandOn)
   expect(m.specs.map(s => s.description)).toEqual([uk.recallDescription, uk.recallMoreDescription, uk.lessonSaveDescription])
 })
 
@@ -767,51 +791,54 @@ test('a language the mod does not know is English', { options: { language: 'xx' 
   const m = await started($, on, () => indexed())
   await m.clock.advance(3_000)
   expect(m.langs[0]).toEqual(['--lang', 'en'])
-  expect((await ($ as any).command.run({ command: 'cg-band', args: '' })).text).toBe(T.cgBandOn)
+  expect((await ($ as any).command.run({ command: 'al-band', args: '' })).text).toBe(T.cgBandOn)
 })
 
 // ---- the mod's own settings file ----
-const SETTINGS = 'C:\\h\\.claude\\cacheguard\\settings.json'
+const SETTINGS = 'C:\\h\\.claude\\alethite\\settings.json'
+const OLD_SETTINGS = 'C:\\h\\.claude\\cacheguard\\settings.json' // where the file lies until cg.py has moved the folder (its first run)
 const home = { USERPROFILE: 'C:\\h' }
-// the file system holds `file` at SETTINGS (undefined: no file there); what the mod writes is collected. A Windows path reaches the
-// hooks resolved against the folder of the run on Linux, so the path is known by its end
+// the file system holds `file` at SETTINGS (undefined: no file there), or the files of `at` (path → text); what the mod writes is collected. A
+// Windows path reaches the hooks resolved against the folder of the run on Linux, so the path is known by its end
 const isSettings = (path: string) => path.endsWith(SETTINGS)
-const settingsRig = (on: any, file: string | undefined) => {
+const settingsRig = (on: any, file: string | undefined, at: Record<string, string> = file === undefined ? {} : { [SETTINGS]: file }) => {
   const written: [string, string][] = []
-  on('fs.exists', (_: unknown, e: { path: string }) => ({ value: isSettings(e.path) && file !== undefined }))
-  on('fs.read', (_: unknown, e: { path: string }) => (isSettings(e.path) && file !== undefined ? { value: file } : { deny: 'ENOENT' }))
+  const key = (path: string) => Object.keys(at).find(k => path.endsWith(k))
+  const isFolder = (path: string) => Object.keys(at).some(k => path.endsWith(k.slice(0, k.lastIndexOf('\\')))) // the folder of a file is there with it
+  on('fs.exists', (_: unknown, e: { path: string }) => ({ value: key(e.path) !== undefined || isFolder(e.path) }))
+  on('fs.read', (_: unknown, e: { path: string }) => (key(e.path) !== undefined ? { value: at[key(e.path)!] } : { deny: 'ENOENT' }))
   on('fs.write', (_: unknown, e: { path: string; text: string }) => (written.push([e.path, e.text]), { value: undefined }))
   return written
 }
 
-test('settings file: its values win over /config, a key that is no setting is named in a toast, /cg-health names the file', { options: { syncDir: 'D:\\old' } }, async ($, on) => {
+test('settings file: its values win over /config, a key that is no setting is named in a toast, /al-health names the file', { options: { syncDir: 'D:\\old' } }, async ($, on) => {
   settingsRig(on, '{ "language": "ru", "syncDir": "Z:\\\\cg", "colour": 1 }')
   const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')), [], undefined, home)
-  await ($ as any).command.run({ command: 'cg-sync', args: '' })
+  await ($ as any).command.run({ command: 'al-sync', args: '' })
   expect(ofCg(m, 'sync')[0]!.argv[1]).toBe('--sync-dir=Z:\\cg')
   expect(m.langs.at(-1)).toEqual(['--lang', 'ru'])
   expect(m.toasts).toEqual([T.toast(T.failed('settings', ru.settingsBad!(SETTINGS, ['colour'])))])
-  expect((await ($ as any).command.run({ command: 'cg-health', args: '' })).text).toContain(ru.healthSettings!(SETTINGS))
+  expect((await ($ as any).command.run({ command: 'al-health', args: '' })).text).toContain(ru.healthSettings!(SETTINGS))
 })
 
 test('settings file: cg.py writes indexCipher there on "encrypt on": it is a setting of the mod, no bad key', async ($, on) => {
   settingsRig(on, '{ "shareCipher": "cryptography", "indexCipher": "efs" }')
   const m = await started($, on, a => (a[0] === 'encrypt' ? ran('{"action":"on","done":true,"notes":[]}') : ran('{}')), [], undefined, home)
-  await ($ as any).command.run({ command: 'cg-encrypt', args: 'on' })
+  await ($ as any).command.run({ command: 'al-encrypt', args: 'on' })
   expect(m.toasts).toEqual([T.toast(T.encryptWindow)]) // no settingsBad toast
   expect(ofCg(m, 'encrypt')[0]!.argv).toContain('--index-cipher=efs')
 })
 
-test('settings file: /cg-encrypt reads it again: a chat not reloaded after the edit must not turn the index back with its old ciphers', async ($, on) => {
+test('settings file: /al-encrypt reads it again: a chat not reloaded after the edit must not turn the index back with its old ciphers', async ($, on) => {
   let file = '{ "shareCipher": "sqlcipher", "indexCipher": "sqlcipher" }'
   on('fs.exists', (_: unknown, e: { path: string }) => ({ value: isSettings(e.path) }))
   on('fs.read', (_: unknown, e: { path: string }) => (isSettings(e.path) ? { value: file } : { deny: 'ENOENT' }))
   const m = await started($, on, a => (a[0] === 'encrypt' ? ran('{"action":"on","done":true,"notes":[]}') : ran('{}')), [], undefined, home)
   file = '{ "shareCipher": "cryptography", "indexCipher": "efs" }' // edited, the chat not reloaded
-  await ($ as any).command.run({ command: 'cg-encrypt', args: 'on' })
+  await ($ as any).command.run({ command: 'al-encrypt', args: 'on' })
   expect(ofCg(m, 'encrypt')[0]!.argv).toEqual(['encrypt', 'on', '--sync-dir=', '--share-cipher=cryptography', '--index-cipher=efs', '--model', 'embeddinggemma'])
   file = '{ "indexCipher": "sqlcipher", }' // broken now: the values it had hold, and the owner is told
-  await ($ as any).command.run({ command: 'cg-encrypt', args: 'on' })
+  await ($ as any).command.run({ command: 'al-encrypt', args: 'on' })
   expect(ofCg(m, 'encrypt')[1]!.argv).toContain('--index-cipher=efs')
   expect(m.toasts.filter(x => x.includes(SETTINGS))).toHaveLength(1)
 })
@@ -819,15 +846,53 @@ test('settings file: /cg-encrypt reads it again: a chat not reloaded after the e
 test('settings file: missing, it is written with the values of /config and nothing is said', { options: { language: 'uk' } }, async ($, on) => {
   const written = settingsRig(on, undefined)
   const m = await started($, on, () => ran('{}'), [], undefined, home)
-  expect(written.map(([path]) => isSettings(path))).toEqual([true])
+  expect(written.map(([path]) => isSettings(path))).toEqual([true]) // neither folder has one: it is born in the new one
   expect(JSON.parse(written[0]![1])).toMatchObject({ language: 'uk', syncDir: '', compression: 'ultra', python: 'python', indexCipher: 'sqlcipher', shareCipher: 'sqlcipher' })
   expect(m.toasts).toEqual([])
+})
+
+test('reads the old settings file when the new one is missing: nothing is written, so the new folder is not made before cg.py moves the old one', { options: { language: 'uk', syncDir: 'D:\\old' } }, async ($, on) => {
+  const written = settingsRig(on, undefined, { [OLD_SETTINGS]: '{ "language": "ru", "syncDir": "Z:\\\\cg" }' })
+  const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')), [], undefined, home)
+  await ($ as any).command.run({ command: 'al-sync', args: '' })
+  expect(ofCg(m, 'sync')[0]!.argv[1]).toBe('--sync-dir=Z:\\cg') // the values of the old file hold
+  expect(m.langs.at(-1)).toEqual(['--lang', 'ru'])
+  expect((await ($ as any).command.run({ command: 'al-health', args: '' })).text).toContain(ru.healthSettings!(OLD_SETTINGS)) // the file in use is named
+  expect(written).toEqual([])
+  expect(m.toasts).toEqual([])
+})
+
+test('prefers the new settings file when both exist', { options: { language: 'uk' } }, async ($, on) => {
+  const written = settingsRig(on, undefined, { [SETTINGS]: '{ "language": "ru" }', [OLD_SETTINGS]: '{ "language": "en" }' })
+  const m = await started($, on, () => indexed(), [], undefined, home)
+  await ($ as any).command.run({ command: 'al-index', args: '' })
+  expect(m.langs.at(-1)).toEqual(['--lang', 'ru'])
+  expect((await ($ as any).command.run({ command: 'al-health', args: '' })).text).toContain(ru.healthSettings!(SETTINGS))
+  expect(written).toEqual([])
+})
+
+test('settings file: an old folder with no settings file in it gets the default one, the new folder is not made before cg.py moves the old one', { options: { language: 'uk' } }, async ($, on) => {
+  const written = settingsRig(on, undefined, { 'C:\\h\\.claude\\cacheguard\\index.db': '' })
+  await started($, on, () => ran('{}'), [], undefined, home)
+  expect(written.map(([path]) => path.endsWith(OLD_SETTINGS))).toEqual([true])
+  expect(written.some(([path]) => isSettings(path))).toBe(false)
+})
+
+test('settings file: /al-encrypt finds it where it is now, after cg.py moved the folder under a chat that read the old one', async ($, on) => {
+  const at: Record<string, string> = { [OLD_SETTINGS]: '{ "shareCipher": "sqlcipher", "indexCipher": "sqlcipher" }' }
+  const written = settingsRig(on, undefined, at)
+  const m = await started($, on, a => (a[0] === 'encrypt' ? ran('{"action":"on","done":true,"notes":[]}') : ran('{}')), [], undefined, home)
+  at[SETTINGS] = '{ "shareCipher": "cryptography", "indexCipher": "efs" }' // the move: the old file is gone, the settings are in the new folder
+  delete at[OLD_SETTINGS]
+  await ($ as any).command.run({ command: 'al-encrypt', args: 'on' })
+  expect(ofCg(m, 'encrypt')[0]!.argv).toContain('--index-cipher=efs')
+  expect(written).toEqual([])
 })
 
 test('settings file: broken JSON: a toast with the file, and the values of /config hold', { options: { language: 'uk' } }, async ($, on) => {
   const written = settingsRig(on, '{ "language": "ru", }')
   const m = await started($, on, () => indexed(), [], undefined, home)
-  await ($ as any).command.run({ command: 'cg-index', args: '' })
+  await ($ as any).command.run({ command: 'al-index', args: '' })
   expect(m.langs.at(-1)).toEqual(['--lang', 'uk'])
   expect(m.toasts).toHaveLength(1)
   expect(m.toasts[0]).toContain(SETTINGS)
@@ -835,20 +900,20 @@ test('settings file: broken JSON: a toast with the file, and the values of /conf
 })
 
 // ---- sync of two computers ----
-const SHARE = '\\\\NAS\\share\\cacheguard'
+const SHARE = '\\\\NAS\\share\\alethite'
 const synced = (over: object = {}) =>
   ran(JSON.stringify({ machine: 'AIJ-HP', pushed: 3, pulled: 5, vectors: { pushed: 3, pulled: 5 }, forgotten: 0, skipped_vectors: 0, peers: { MTLAPTOP: 2 }, memory: { pushed: 0, pulled: 1, conflicts: 0 }, warnings: [], errors: [], ...over }))
 const unreachable = { where: 'sync', error: `the sync folder is unavailable: ${SHARE} (FileNotFoundError: x)` }
 
-test('/cg-sync: off without a folder: says where to set it and runs nothing', async ($, on) => {
+test('/al-sync: off without a folder: says where to set it and runs nothing', async ($, on) => {
   const m = await started($, on, () => synced())
-  expect((await ($ as any).command.run({ command: 'cg-sync', args: '' })).text).toBe(T.cgSyncOff)
+  expect((await ($ as any).command.run({ command: 'al-sync', args: '' })).text).toBe(T.cgSyncOff)
   expect(ofCg(m, 'sync')).toEqual([])
 })
 
-test('/cg-sync: the folder, the model, the auto-memory folder and the project root go to cg.py; the reply sums it up', { options: { syncDir: ` ${SHARE} ` } }, async ($, on) => {
+test('/al-sync: the folder, the model, the auto-memory folder and the project root go to cg.py; the reply sums it up', { options: { syncDir: ` ${SHARE} ` } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')), [], () => withMemory)
-  const { text } = await ($ as any).command.run({ command: 'cg-sync', args: '' })
+  const { text } = await ($ as any).command.run({ command: 'al-sync', args: '' })
   const [run] = ofCg(m, 'sync')
   expect(run).toEqual({ argv: ['sync', `--sync-dir=${SHARE}`, '--model', 'embeddinggemma', '--max-seconds', '60', '--memory-dir=C:/mem/memory', '--project-cwd=C:/w', '--share-cipher=sqlcipher'], timeoutMs: 120_000 })
   expect(text.split('\n')).toEqual([
@@ -859,53 +924,53 @@ test('/cg-sync: the folder, the model, the auto-memory folder and the project ro
   expect(m.toasts).toEqual([])
 })
 
-test('/cg-sync: a folder pasted with Explorer\'s quotes is the folder', { options: { syncDir: ` "${SHARE}" ` } }, async ($, on) => {
+test('/al-sync: a folder pasted with Explorer\'s quotes is the folder', { options: { syncDir: ` "${SHARE}" ` } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')))
-  await ($ as any).command.run({ command: 'cg-sync', args: '' })
+  await ($ as any).command.run({ command: 'al-sync', args: '' })
   expect(ofCg(m, 'sync')[0]!.argv[1]).toBe(`--sync-dir=${SHARE}`)
 })
 
-test('/cg-sync: the cipher of the sync folder is the setting', { options: { syncDir: SHARE, shareCipher: 'cryptography' } }, async ($, on) => {
+test('/al-sync: the cipher of the sync folder is the setting', { options: { syncDir: SHARE, shareCipher: 'cryptography' } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')))
-  await ($ as any).command.run({ command: 'cg-sync', args: 'skip MTLAPTOP 12' })
+  await ($ as any).command.run({ command: 'al-sync', args: 'skip MTLAPTOP 12' })
   expect(ofCg(m, 'sync')[0]!.argv.slice(-4)).toEqual(['--share-cipher=cryptography', '--skip-batch', 'MTLAPTOP', '12'])
 })
 
-test('/cg-sync: no auto-memory folder in this chat: no memory step, and the reply says so', { options: { syncDir: SHARE } }, async ($, on) => {
+test('/al-sync: no auto-memory folder in this chat: no memory step, and the reply says so', { options: { syncDir: SHARE } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'sync' ? synced({ memory: null }) : ran('{}')))
-  const { text } = await ($ as any).command.run({ command: 'cg-sync', args: '' })
+  const { text } = await ($ as any).command.run({ command: 'al-sync', args: '' })
   expect(ofCg(m, 'sync')[0]!.argv.some(a => a.startsWith('--memory-dir'))).toBe(false)
   expect(text).toContain(T.syncMemoryOff)
 })
 
-test('/cg-sync skip: the owner goes on past a broken batch; without a computer and a number, how to ask', { options: { syncDir: SHARE } }, async ($, on) => {
+test('/al-sync skip: the owner goes on past a broken batch; without a computer and a number, how to ask', { options: { syncDir: SHARE } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')))
-  await ($ as any).command.run({ command: 'cg-sync', args: 'skip MTLAPTOP 12' })
+  await ($ as any).command.run({ command: 'al-sync', args: 'skip MTLAPTOP 12' })
   expect(ofCg(m, 'sync')[0]!.argv.slice(-3)).toEqual(['--skip-batch', 'MTLAPTOP', '12'])
-  expect((await ($ as any).command.run({ command: 'cg-sync', args: 'skip 12' })).text).toBe(T.cgSyncSkipUsage)
+  expect((await ($ as any).command.run({ command: 'al-sync', args: 'skip 12' })).text).toBe(T.cgSyncSkipUsage)
   expect(ofCg(m, 'sync')).toHaveLength(1)
 })
 
-test('/cg-sync: errors of the run are in the reply, in one toast, and /cg-health keeps the first', { options: { syncDir: SHARE } }, async ($, on) => {
+test('/al-sync: errors of the run are in the reply, in one toast, and /al-health keeps the first', { options: { syncDir: SHARE } }, async ($, on) => {
   const broken = { where: 'pull', machine: 'MTLAPTOP', batch: 3, error: 'batch 3 is broken' }
   const m = await started($, on, a => (a[0] === 'sync' ? synced({ errors: [broken, unreachable] }) : ran('{}')))
-  const { text } = await ($ as any).command.run({ command: 'cg-sync', args: '' })
+  const { text } = await ($ as any).command.run({ command: 'al-sync', args: '' })
   expect(text).toContain(T.cgSyncError('batch 3 is broken'))
   expect(text).toContain(T.cgSyncError(unreachable.error))
   expect(m.toasts).toEqual([T.toast(T.syncErrors(2))])
-  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-sync', msg: 'batch 3 is broken' })
+  expect(m.store.get('lastError')).toMatchObject({ where: 'al-sync', msg: 'batch 3 is broken' })
 })
 
-test('/cg-sync: cg.py fails: a toast and a short reply', { options: { syncDir: SHARE } }, async ($, on) => {
+test('/al-sync: cg.py fails: a toast and a short reply', { options: { syncDir: SHARE } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'sync' ? failed('OperationalError: database is locked') : ran('{}')))
-  expect((await ($ as any).command.run({ command: 'cg-sync', args: '' })).text).toBe(T.cgSyncFailed)
-  expect(m.toasts).toEqual([T.toast(T.failed('cg-sync', 'OperationalError: database is locked'))])
+  expect((await ($ as any).command.run({ command: 'al-sync', args: '' })).text).toBe(T.cgSyncFailed)
+  expect(m.toasts).toEqual([T.toast(T.failed('al-sync', 'OperationalError: database is locked'))])
 })
 
 test('background: the sync follows the index and the vectors, 60 s in cg.py, 120 s for the process', { options: { syncDir: SHARE } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'sync' ? synced() : a[0] === 'embed' ? embedded() : indexed()))
   await m.clock.advance(3_000)
-  const steps = m.runs.filter(r => r.argv[0] !== 'last-turn').map(r => [r.argv[0], r.timeoutMs])
+  const steps = m.runs.filter(r => r.argv[0] !== 'last-turn').map(r => [verb(r.argv)[0], r.timeoutMs])
   // the lessons are read at the start and again after the sync, which may have brought the other computer's (stage 4)
   expect(steps).toEqual([['lessons', 120_000], ['index', 600_000], ['embed', 180_000], ['sync', 120_000], ['lessons', 120_000]])
   expect(ofCg(m, 'sync')[0]!.argv).toContain('--max-seconds')
@@ -925,7 +990,7 @@ test('background: the sync runs even when the vectors failed; both are told', { 
   expect(m.toasts).toEqual([T.toast(T.catchUpFailed('embed'))])
 })
 
-test('background: an unavailable folder: the status line, /cg-health and one toast per load; the local memory goes on', { options: { syncDir: SHARE } }, async ($, on) => {
+test('background: an unavailable folder: the status line, /al-health and one toast per load; the local memory goes on', { options: { syncDir: SHARE } }, async ($, on) => {
   const statuses: (string | undefined)[] = []
   const m = await started($, on, a => (a[0] === 'sync' ? synced({ pushed: 0, pulled: 0, errors: [unreachable] }) : a[0] === 'embed' ? embedded() : a[0] === 'recall' ? found() : indexed()), statuses)
   await m.clock.advance(3_000)
@@ -938,7 +1003,7 @@ test('background: an unavailable folder: the status line, /cg-health and one toa
   expect(await recall($)).toEqual({ result: hitLine })
 })
 
-test('/cg-health: the folder, the computers, their last batches, the errors', { options: { syncDir: SHARE } }, async ($, on) => {
+test('/al-health: the folder, the computers, their last batches, the errors', { options: { syncDir: SHARE } }, async ($, on) => {
   const sync = {
     machine: 'AIJ-HP',
     last: { at: '2026-10-19T10:00:00Z', dir: SHARE, pushed: 3, pulled: 5, memory: null, errors: 1, error: 'batch 8 is broken' },
@@ -951,7 +1016,7 @@ test('/cg-health: the folder, the computers, their last batches, the errors', { 
   const status = { db: 'C:/x/mem.db', convs: 12, rows: 140, last_update: null, size_mb: 1.5, sync }
   wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) => (e.argv.includes('status') ? ran(JSON.stringify(status)) : noTurn()))
   on('session.root', () => ({ value: 'C:/w' }))
-  const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
   for (const line of [
     T.healthSync(SHARE, 'AIJ-HP'),
     T.healthOrigins('AIJ-HP 100, MTLAPTOP 40'),
@@ -965,34 +1030,34 @@ test('/cg-health: the folder, the computers, their last batches, the errors', { 
     expect(text).toContain(line)
 })
 
-test('/cg-health: sync off is said', async ($, on) => {
+test('/al-health: sync off is said', async ($, on) => {
   wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) => (e.argv.includes('status') ? ran('{"db":"d","convs":0,"rows":0,"size_mb":0}') : noTurn()))
   on('session.root', () => ({ value: 'C:/w' }))
-  expect((await ($ as any).command.run({ command: 'cg-health', args: '' })).text).toContain(T.healthSyncOff)
+  expect((await ($ as any).command.run({ command: 'al-health', args: '' })).text).toContain(T.healthSyncOff)
 })
 
 // ---- stage 3: compression and the memory in the context ----
 test('compression: the setting reaches recall, recall_more and the handoff', { options: { compression: 'lite' } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'expand' ? ran('{"rows":[]}') : found()))
   await recall($)
-  await $.tool.call({ tool: 'mcp__cacheguard__recall_more', conv: 'S', pos: 1 })
+  await $.tool.call({ tool: 'mcp__alethite__recall_more', conv: 'S', pos: 1 })
   expect(ofCg(m, 'recall')[0]!.argv.slice(-2)).toEqual(['--compress', 'lite'])
   expect(ofCg(m, 'expand')[0]!.argv.slice(-2)).toEqual(['--compress', 'lite'])
 })
 
-test('/cg-health: the compression level and what MEMORY.md takes of every request', { options: { compression: 'full' } }, async ($, on) => {
+test('/al-health: the compression level and what MEMORY.md takes of every request', { options: { compression: 'full' } }, async ($, on) => {
   const files = [{ path: 'C:/mem/memory/MEMORY.md', type: 'AutoMem', tokens: 950 }]
   wire(on, [], () => ({ value: { context: { window: 1_000_000, breakdown: { memoryFiles: files } }, rateLimits: [] } }), (_, e) =>
     e.argv.includes('status') ? ran('{"db":"d","convs":0,"rows":0,"size_mb":0}') : noTurn(),
   )
   on('session.root', () => ({ value: 'C:/w' }))
   on('fs.list', () => ({ value: [] }))
-  const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
   expect(text).toContain(T.compressionLine('full'))
   expect(text).toContain(T.memoryIndexTokens(950))
 })
 
-test('/cg-stats: cg.py gets what MEMORY.md takes and the compression level', async ($, on) => {
+test('/al-stats: cg.py gets what MEMORY.md takes and the compression level', async ($, on) => {
   const { m, stats } = await statsRig($, on)
   await stats()
   const { argv } = ofCg(m, 'stats')[0]!
@@ -1018,7 +1083,7 @@ const lessonRig = async ($: any, on: any, found: object[] = [{ ...lesson, score:
   const m = await started($, on, a =>
     a[0] === 'lessons' ? listed(list) : a[0] === 'lessons-match' ? ran(JSON.stringify({ lessons: found, vector: 'ok' })) : a[0] === 'lesson-save' ? ran(JSON.stringify({ id: 9, conv: 'lessons-abc', pos: 1, text: 'Action: x\nSymptom: y\nCause: z', new: true, vector: 'ok' })) : a[0] === 'forget' ? ran('{"forgotten":1}') : ran('{}'),
   )
-  await ($ as any).command.run({ command: 'cg-lessons', args: '' }) // the list, awaited: the start reads it in the background
+  await ($ as any).command.run({ command: 'al-lessons', args: '' }) // the list, awaited: the start reads it in the background
   return { m, contexts }
 }
 const typed = ($: any, text: string, extra: object = {}) => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' }, ...extra })
@@ -1027,7 +1092,7 @@ const gateText = () => ['[al-lessons]', T.lessonGate('Action: gh api in a loop |
 
 test('lesson_save: the fields go to cg.py one item each, the owner gets a toast, the model the lesson', async ($, on) => {
   const { m } = await lessonRig($, on)
-  const r = await ($ as any).tool.call({ tool: 'mcp__cacheguard__lesson_save', action: '-x', symptom: 'HTTP 429', cause: 'limit', fix: '', trigger: 7 })
+  const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: '-x', symptom: 'HTTP 429', cause: 'limit', fix: '', trigger: 7 })
   expect(ofCg(m, 'lesson-save')[0]!.argv).toEqual(['lesson-save', '--cwd', 'C:/w', '--model', 'embeddinggemma', '--action=-x', '--symptom=HTTP 429', '--cause=limit'])
   expect(r).toEqual({ result: T.lessonSaved('Action: x\nSymptom: y\nCause: z') })
   expect(m.toasts).toEqual([T.toast(T.lessonToast('Action: x | Symptom: y | Cause: z'))]) // the whole lesson on one line, Fix included
@@ -1038,7 +1103,7 @@ test('lessons: one that fits goes beside the owner\'s message once a chat, in th
   const { m } = await lessonRig($, on, undefined, undefined, { context: contexts })
   await typed($, 'короткий') // too short to be about anything
   await typed($, 'сообщение от другого плагина', { origin: { kind: 'plugin', name: 'x' } })
-  await typed($, '/cg-health', { command: { name: 'cg-health', args: '' } })
+  await typed($, '/al-health', { command: { name: 'al-health', args: '' } })
   expect(ofCg(m, 'lessons-match')).toEqual([])
   await typed($, 'опять 429 на сборке, что делать?')
   await typed($, 'опять 429 на сборке, что делать?')
@@ -1063,11 +1128,11 @@ test('lessons: a project without lessons runs no Python on a message', async ($,
   expect(ofCg(m, 'lessons-match')).toEqual([])
 })
 
-test('lessons: a failed search costs the owner a line in /cg-health once, and the message goes on as typed', async ($, on) => {
+test('lessons: a failed search costs the owner a line in /al-health once, and the message goes on as typed', async ($, on) => {
   const contexts: string[][] = []
   on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => (contexts.push([...(e.context ?? [])]), { text: e.text }))
   const m = await started($, on, a => (a[0] === 'lessons' ? listed() : a[0] === 'lessons-match' ? failed('OperationalError: database is locked') : ran('{}')))
-  await ($ as any).command.run({ command: 'cg-lessons', args: '' })
+  await ($ as any).command.run({ command: 'al-lessons', args: '' })
   await typed($, 'опять 429 на сборке, что делать?')
   m.store.set('lastError', { at: 1, where: 'sync', msg: 'later' })
   await typed($, 'опять 429 на сборке, что делать?')
@@ -1116,34 +1181,34 @@ test('lessons: after a compaction of the chat a lesson is shown and stops a comm
   expect(await round()).toEqual([1, true])
 })
 
-test('/cg-lessons: the list; forget deletes by pos through cg.py; anything else, how to ask', async ($, on) => {
+test('/al-lessons: the list; forget deletes by pos through cg.py; anything else, how to ask', async ($, on) => {
   const { m } = await lessonRig($, on)
-  expect((await ($ as any).command.run({ command: 'cg-lessons', args: '' })).text).toBe(
+  expect((await ($ as any).command.run({ command: 'al-lessons', args: '' })).text).toBe(
     'pos=1792000000000 [2026-10-20] Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos',
   )
-  expect((await ($ as any).command.run({ command: 'cg-lessons', args: 'forget 1792000000000' })).text).toBe(T.cgLessonsForgotten(1))
+  expect((await ($ as any).command.run({ command: 'al-lessons', args: 'forget 1792000000000' })).text).toBe(T.cgLessonsForgotten(1))
   expect(ofCg(m, 'forget')[0]!.argv).toEqual(['forget', '--conv=lessons-abc', '--pos=1792000000000'])
-  expect((await ($ as any).command.run({ command: 'cg-lessons', args: 'forget 5' })).text).toBe(T.cgLessonsForgotten(0))
-  expect((await ($ as any).command.run({ command: 'cg-lessons', args: 'drop all' })).text).toBe(T.cgLessonsUsage)
+  expect((await ($ as any).command.run({ command: 'al-lessons', args: 'forget 5' })).text).toBe(T.cgLessonsForgotten(0))
+  expect((await ($ as any).command.run({ command: 'al-lessons', args: 'drop all' })).text).toBe(T.cgLessonsUsage)
 })
 
-test('/cg-health: how many lessons, how often they came back and what that cost', async ($, on) => {
+test('/al-health: how many lessons, how often they came back and what that cost', async ($, on) => {
   const { m } = await lessonRig($, on)
   await typed($, 'опять 429 на сборке, что делать?')
   await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })
   const counts = m.store.get('lessonCounts') as Record<string, number>
-  const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
   expect(text).toContain(T.healthLessons(1, 1, counts.chars!, 1, true))
 })
 
 // ---- the background job (stage 4) ----
 const lastRun = { at: '2026-10-20T10:00:00Z', index: { rows: 3, errors: 0 }, embed: { skipped: 'battery' }, sync: { pushed: 2, pulled: 5, errors: 1 }, errors: [{ where: 'sync', error: 'batch 4 is broken' }] }
 
-test('/cg-job: on and off go to cg.py with the minutes; the state shows the last run; anything else, how to ask', async ($, on) => {
+test('/al-job: on and off go to cg.py with the minutes; the state shows the last run; anything else, how to ask', async ($, on) => {
   const m = await started($, on, a =>
     a[0] !== 'job' ? ran('{}') : a[1] === 'install' ? ran(JSON.stringify({ installed: true, minutes: Number(a[3]) })) : a[1] === 'remove' ? ran('{"installed":false}') : ran(JSON.stringify({ supported: true, minutes: 30, last: lastRun })),
   )
-  const run = async (args: string) => (await ($ as any).command.run({ command: 'cg-job', args })).text
+  const run = async (args: string) => (await ($ as any).command.run({ command: 'al-job', args })).text
   expect(await run('on')).toBe(T.cgJobOn(30))
   expect(await run('on 15')).toBe(T.cgJobOn(15))
   expect(await run('off')).toBe(T.cgJobOff)
@@ -1156,19 +1221,19 @@ test('/cg-job: on and off go to cg.py with the minutes; the state shows the last
   expect(ofCg(m, 'job').map(r => r.argv)).toEqual([['job', 'install', '--minutes', '30'], ['job', 'install', '--minutes', '15'], ['job', 'remove'], ['job', 'status']])
 })
 
-test('/cg-job: not on this system, said plainly; a failure is a toast', async ($, on) => {
+test('/al-job: not on this system, said plainly; a failure is a toast', async ($, on) => {
   const m = await started($, on, a => (a[0] !== 'job' ? ran('{}') : a[1] === 'status' ? ran(JSON.stringify({ supported: false, minutes: null, last: null })) : failed('ValueError: the background job is for Windows for now')))
-  expect((await ($ as any).command.run({ command: 'cg-job', args: '' })).text).toBe([T.cgJobState(null), T.jobNever].join('\n'))
-  expect((await ($ as any).command.run({ command: 'cg-job', args: 'on' })).text).toBe(T.cgJobFailed)
-  expect(m.toasts).toEqual([T.toast(T.failed('cg-job', 'ValueError: the background job is for Windows for now'))])
+  expect((await ($ as any).command.run({ command: 'al-job', args: '' })).text).toBe([T.cgJobState(null), T.jobNever].join('\n'))
+  expect((await ($ as any).command.run({ command: 'al-job', args: 'on' })).text).toBe(T.cgJobFailed)
+  expect(m.toasts).toEqual([T.toast(T.failed('al-job', 'ValueError: the background job is for Windows for now'))])
 })
 
-test('/cg-health: the background job\'s last run', async ($, on) => {
+test('/al-health: the background job\'s last run', async ($, on) => {
   wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) =>
     e.argv.includes('status') ? ran(JSON.stringify({ db: 'd', convs: 0, rows: 0, size_mb: 0, job: lastRun })) : noTurn(),
   )
   on('session.root', () => ({ value: 'C:/w' }))
-  const { text } = await ($ as any).command.run({ command: 'cg-health', args: '' })
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
   expect(text).toContain(T.jobError('sync', 'batch 4 is broken'))
 })
 
@@ -1199,7 +1264,7 @@ test('lessons: with three that fit the third comes with the next message, and on
   const m = await started($, on, a =>
     a[0] === 'lessons' ? listed(three) : a[0] === 'lessons-match' ? ran(JSON.stringify({ lessons: three.slice(0, Number(a[a.indexOf('--limit') + 1])).map(l => ({ ...l, score: 0.8 })), vector: 'ok' })) : ran('{}'),
   )
-  await ($ as any).command.run({ command: 'cg-lessons', args: '' })
+  await ($ as any).command.run({ command: 'al-lessons', args: '' })
   for (let i = 0; i < 3; i++) await typed($, 'опять 429 на сборке, что делать?')
   expect(contexts.map(c => c.length)).toEqual([1, 1, 0])
   expect([/a7.*a8/s.test(contexts[0]![0]!), contexts[1]![0]!.includes('a9'), contexts[1]![0]!.includes('a7')]).toEqual([true, true, false])
@@ -1220,7 +1285,7 @@ test('lessons: a chat open for long learns of a lesson saved elsewhere, every 10
 
 test('lesson_save: a refusal is told as a refused save, not as a failed search', async ($, on) => {
   const m = await started($, on, a => (a[0] === 'lesson-save' ? failed('ValueError: the lesson needs: cause') : ran('{}')))
-  const r = await ($ as any).tool.call({ tool: 'mcp__cacheguard__lesson_save', action: 'a', symptom: 's' })
+  const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'a', symptom: 's' })
   expect(r).toEqual({ deny: T.lessonSaveFailed('ValueError: the lesson needs: cause') })
   expect(m.toasts).toEqual([T.toast(T.failed('lesson_save', 'ValueError: the lesson needs: cause'))])
 })
@@ -1228,10 +1293,10 @@ test('lesson_save: a refusal is told as a refused save, not as a failed search',
 // ---- encryption (stage 5) ----
 const encrypted = { on: true, db: 'sqlcipher', key: 'ok', notes: [] }
 
-test('/cg-encrypt: on, join and off point to the window first, wait as long as the host allows and tell how it ended; the folder and both ciphers are the settings', { options: { syncDir: SHARE, shareCipher: 'cryptography', indexCipher: 'efs' } }, async ($, on) => {
+test('/al-encrypt: on, join and off point to the window first, wait as long as the host allows and tell how it ended; the folder and both ciphers are the settings', { options: { syncDir: SHARE, shareCipher: 'cryptography', indexCipher: 'efs' } }, async ($, on) => {
   const seen: number[] = [] // the toasts there were when cg.py was started
   const m = await started($, on, a => (a[0] === 'encrypt' ? (seen.push(m.toasts.length), ran(JSON.stringify({ action: a[1], done: a[1] !== 'join', notes: a[1] === 'join' ? ['n1'] : [] }))) : ran('{}')))
-  const run = async (args: string) => (await ($ as any).command.run({ command: 'cg-encrypt', args })).text
+  const run = async (args: string) => (await ($ as any).command.run({ command: 'al-encrypt', args })).text
   expect(await run('on')).toBe(T.encryptDone('on'))
   expect(await run('join')).toBe([T.encryptUnfinished, 'n1'].join('\n'))
   expect(await run('off')).toBe(T.encryptDone('off'))
@@ -1241,9 +1306,9 @@ test('/cg-encrypt: on, join and off point to the window first, wait as long as t
   expect(m.toasts).toEqual(Array(3).fill(T.toast(T.encryptWindow)))
 })
 
-test('/cg-encrypt: the state asks no window and shows the health lines; a word it does not know says how to ask and runs nothing', async ($, on) => {
+test('/al-encrypt: the state asks no window and shows the health lines; a word it does not know says how to ask and runs nothing', async ($, on) => {
   const m = await started($, on, a => (a[0] === 'encrypt' ? ran(JSON.stringify({ ...encrypted, on: false, db: 'plain', key: 'missing', notes: ['n1'] })) : ran('{}')))
-  const run = async (args: string) => (await ($ as any).command.run({ command: 'cg-encrypt', args })).text
+  const run = async (args: string) => (await ($ as any).command.run({ command: 'al-encrypt', args })).text
   expect(await run('')).toBe([T.healthEncryptionOff, 'n1'].join('\n'))
   expect(await run('status')).toBe([T.healthEncryptionOff, 'n1'].join('\n'))
   expect(await run('join now')).toBe(T.cgEncryptUsage)
@@ -1251,42 +1316,42 @@ test('/cg-encrypt: the state asks no window and shows the health lines; a word i
   expect(m.toasts).toEqual([])
 })
 
-test('/cg-encrypt: cg.py fails: a toast with its words, a short reply, the error kept for /cg-health', async ($, on) => {
+test('/al-encrypt: cg.py fails: a toast with its words, a short reply, the error kept for /al-health', async ($, on) => {
   const m = await started($, on, a => (a[0] === 'encrypt' ? failed('ValueError: the recovery code is not right') : ran('{}')))
-  expect((await ($ as any).command.run({ command: 'cg-encrypt', args: 'join' })).text).toBe(T.cgEncryptFailed)
-  expect(m.toasts).toEqual([T.toast(T.encryptWindow), T.toast(T.failed('cg-encrypt', 'ValueError: the recovery code is not right'))])
-  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-encrypt', msg: 'ValueError: the recovery code is not right' })
+  expect((await ($ as any).command.run({ command: 'al-encrypt', args: 'join' })).text).toBe(T.cgEncryptFailed)
+  expect(m.toasts).toEqual([T.toast(T.encryptWindow), T.toast(T.failed('al-encrypt', 'ValueError: the recovery code is not right'))])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'al-encrypt', msg: 'ValueError: the recovery code is not right' })
 })
 
-test('/cg-encrypt: a run the host stopped at its time limit says so and what to do, not that Python did not start; a start failure still says the latter', async ($, on) => {
-  let why = 'cacheguard: $.process.run(python) aborted: still running after 600000ms' // as the engine words it
+test('/al-encrypt: a run the host stopped at its time limit says so and what to do, not that Python did not start; a start failure still says the latter', async ($, on) => {
+  let why = 'alethite: $.process.run(python) aborted: still running after 600000ms' // as the engine words it
   const m = await started($, on, a => (a[0] === 'encrypt' ? { deny: why } : ran('{}')))
-  const run = async (args: string) => (await ($ as any).command.run({ command: 'cg-encrypt', args })).text
-  expect(await run('join')).toBe(`cg-encrypt join: ${T.encryptTimeout('join')}`)
-  expect(m.toasts).toEqual([T.toast(T.encryptWindow), T.toast(T.failed('cg-encrypt', T.encryptTimeout('join')))])
-  expect(m.toasts[1]).not.toContain('cg-encrypt — cg-encrypt') // the name once at the head of the toast, not twice
-  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-encrypt', msg: T.encryptTimeout('join') })
+  const run = async (args: string) => (await ($ as any).command.run({ command: 'al-encrypt', args })).text
+  expect(await run('join')).toBe(`al-encrypt join: ${T.encryptTimeout('join')}`)
+  expect(m.toasts).toEqual([T.toast(T.encryptWindow), T.toast(T.failed('al-encrypt', T.encryptTimeout('join')))])
+  expect(m.toasts[1]).not.toContain('al-encrypt — al-encrypt') // the name once at the head of the toast, not twice
+  expect(m.store.get('lastError')).toMatchObject({ where: 'al-encrypt', msg: T.encryptTimeout('join') })
   why = 'failed to start: ENOENT'
   expect(await run('on')).toBe(T.cgEncryptFailed)
   expect(m.toasts.at(-1)).toContain(T.pythonMissing('python'))
 })
 
-test('/cg-health: the encryption line, from what cg.py status reports', async ($, on) => {
+test('/al-health: the encryption line, from what cg.py status reports', async ($, on) => {
   wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) =>
     e.argv.includes('status') ? ran(JSON.stringify({ db: 'd', convs: 0, rows: 0, size_mb: 0, encryption: { ...encrypted, notes: ['n1'] } })) : noTurn(),
   )
   on('session.root', () => ({ value: 'C:/w' }))
-  const lines = (await ($ as any).command.run({ command: 'cg-health', args: '' })).text.split('\n')
+  const lines = (await ($ as any).command.run({ command: 'al-health', args: '' })).text.split('\n')
   expect(lines[lines.indexOf(T.healthEncryptionOn('SQLCipher', 'SQLCipher')) + 1]).toBe('n1')
 })
 
-// ---- the index folder (/cg-index-dir) ----
+// ---- the index folder (/al-index-dir) ----
 const moved = { action: 'index-dir', done: true, dir: 'D:/cg', notes: ['the note'] }
 
-test('/cg-index-dir: with no path the window opens, with a path it is given; both wait as long as the host allows and tell how it ended', async ($, on) => {
+test('/al-index-dir: with no path the window opens, with a path it is given; both wait as long as the host allows and tell how it ended', async ($, on) => {
   const seen: number[] = [] // the toasts there were when cg.py was started
   const m = await started($, on, a => (a[0] === 'index-dir' ? (seen.push(m.toasts.length), ran(JSON.stringify(a.length === 1 ? { ...moved, done: false, dir: '' } : moved))) : ran('{}')))
-  const run = async (args: string) => (await ($ as any).command.run({ command: 'cg-index-dir', args })).text
+  const run = async (args: string) => (await ($ as any).command.run({ command: 'al-index-dir', args })).text
   expect(await run('')).toBe([T.indexDirUnfinished, 'The note'].join('\n'))
   expect(await run(' "D:/cg" ')).toBe([T.indexDirDone('D:/cg'), 'The note'].join('\n'))
   expect(ofCg(m, 'index-dir')).toEqual([{ argv: ['index-dir'], timeoutMs: 600_000 }, { argv: ['index-dir', '--path=D:/cg'], timeoutMs: 600_000 }])
@@ -1294,20 +1359,20 @@ test('/cg-index-dir: with no path the window opens, with a path it is given; bot
   expect(m.toasts).toEqual([T.toast(T.indexDirWindow)])
 })
 
-test('/cg-index-dir: a refusal of cg.py is in the reply with its reason, in a toast and kept for /cg-health', async ($, on) => {
+test('/al-index-dir: a refusal of cg.py is in the reply with its reason, in a toast and kept for /al-health', async ($, on) => {
   const m = await started($, on, a => (a[0] === 'index-dir' ? failed('ValueError: D:/cg is not on a local disk. Nothing was changed') : ran('{}')))
-  expect((await ($ as any).command.run({ command: 'cg-index-dir', args: 'D:/cg' })).text).toBe('cg-index-dir: D:/cg is not on a local disk. Nothing was changed')
-  expect(m.toasts).toEqual([T.toast(T.failed('cg-index-dir', 'ValueError: D:/cg is not on a local disk. Nothing was changed'))])
-  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-index-dir', msg: 'ValueError: D:/cg is not on a local disk. Nothing was changed' })
+  expect((await ($ as any).command.run({ command: 'al-index-dir', args: 'D:/cg' })).text).toBe('al-index-dir: D:/cg is not on a local disk. Nothing was changed')
+  expect(m.toasts).toEqual([T.toast(T.failed('al-index-dir', 'ValueError: D:/cg is not on a local disk. Nothing was changed'))])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'al-index-dir', msg: 'ValueError: D:/cg is not on a local disk. Nothing was changed' })
 })
 
-test('/cg-index-dir: a run the host stopped at its time limit says so and what to do; a start failure says Python did not start', async ($, on) => {
-  let why = 'cacheguard: $.process.run(python) aborted: still running after 600000ms' // as the engine words it
+test('/al-index-dir: a run the host stopped at its time limit says so and what to do; a start failure says Python did not start', async ($, on) => {
+  let why = 'alethite: $.process.run(python) aborted: still running after 600000ms' // as the engine words it
   const m = await started($, on, a => (a[0] === 'index-dir' ? { deny: why } : ran('{}')))
-  const run = async () => (await ($ as any).command.run({ command: 'cg-index-dir', args: '' })).text
-  expect(await run()).toBe(`cg-index-dir: ${T.indexDirTimeout}`)
-  expect(m.toasts).toEqual([T.toast(T.indexDirWindow), T.toast(T.failed('cg-index-dir', T.indexDirTimeout))])
-  expect(m.store.get('lastError')).toMatchObject({ where: 'cg-index-dir', msg: T.indexDirTimeout })
+  const run = async () => (await ($ as any).command.run({ command: 'al-index-dir', args: '' })).text
+  expect(await run()).toBe(`al-index-dir: ${T.indexDirTimeout}`)
+  expect(m.toasts).toEqual([T.toast(T.indexDirWindow), T.toast(T.failed('al-index-dir', T.indexDirTimeout))])
+  expect(m.store.get('lastError')).toMatchObject({ where: 'al-index-dir', msg: T.indexDirTimeout })
   why = 'failed to start: ENOENT'
   expect(await run()).toContain(T.pythonMissing('python'))
 })
@@ -1315,7 +1380,7 @@ test('/cg-index-dir: a run the host stopped at its time limit says so and what t
 test('index notice: any answer of cg.py that carries one gives a toast when it differs from the last one shown, and an answer with none forgets it', async ($, on) => {
   let notice: string | undefined = 'the index of the test is not in D:/one'
   const m = await started($, on, a => (a[0] === 'index' ? ran(JSON.stringify({ files: 0, rows: 0, convs: 0, seconds: 0, errors: [], index_notice: notice })) : ran('{}')))
-  const index = () => ($ as any).command.run({ command: 'cg-index', args: '' })
+  const index = () => ($ as any).command.run({ command: 'al-index', args: '' })
   await index()
   await index()
   expect(m.toasts).toEqual([T.toast(notice!)])
@@ -1366,10 +1431,10 @@ test('index problem: an error answer carries it too, and a check that fails keep
   const refused = { value: { exitCode: 1, stdout: JSON.stringify({ error: `ValueError: ${problem}`, index_problem: problem }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   const m = await started($, on, a => (a[0] === 'index' ? refused : ran('{}')), statuses, () => (isBroken ? { deny: 'boom' } : { value: usage }), {}, () => lastTurn())
   expect(statuses.some(t => t?.includes(T.indexProblemStatus))).toBe(false)
-  await ($ as any).command.run({ command: 'cg-index', args: '' })
+  await ($ as any).command.run({ command: 'al-index', args: '' })
   expect(statuses.at(-1)).toBe(`${T.ctx('512k', T.cacheUnknown)} · ${T.indexProblemStatus}`) // the error answer set it
   isBroken = true // a failed refresh puts its error on the status line, and the warning stays beside it
-  await ($ as any).command.run({ command: 'cg-band', args: '' })
+  await ($ as any).command.run({ command: 'al-band', args: '' })
   expect(statuses.at(-1)!.startsWith(T.statusError(''))).toBe(true)
   expect(statuses.at(-1)!.endsWith(` · ${T.indexProblemStatus}`)).toBe(true)
   lastTurn = () => ({ deny: 'boom' }) // the check itself fails
@@ -1378,11 +1443,36 @@ test('index problem: an error answer carries it too, and a check that fails keep
   expect(m.toasts).toEqual([T.toast(problem)])
 })
 
-test('/cg-health: the notes of the index folder follow the index line', async ($, on) => {
+test('/al-health: the notes of the index folder follow the index line', async ($, on) => {
   wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) =>
     e.argv.includes('status') ? ran(JSON.stringify({ db: 'd', convs: 0, rows: 0, size_mb: 0, index_dir: { configured: 'D:/cg', fallback: true, notes: ['n1'] } })) : noTurn(),
   )
   on('session.root', () => ({ value: 'C:/w' }))
-  const lines = (await ($ as any).command.run({ command: 'cg-health', args: '' })).text.split('\n')
+  const lines = (await ($ as any).command.run({ command: 'al-health', args: '' })).text.split('\n')
   expect(lines[lines.findIndex(l => l.startsWith('Index:')) + 1]).toBe('n1')
+})
+
+test('home_notes: each new note of cg.py gives one toast, and /al-health tells all of them right after the index', async ($, on) => {
+  let notes: string[] = ['the folder of the test could not be moved: busy']
+  const m = await started($, on, a => (a[0] === 'status' ? ran(JSON.stringify({ db: 'd', convs: 0, rows: 0, size_mb: 0, home_notes: notes })) : a[0] === 'index' ? ran(JSON.stringify({ files: 0, rows: 0, convs: 0, seconds: 0, errors: [], home_notes: notes })) : a[0] === 'embed' ? embedded() : ran('{}')))
+  const first = notes[0]!
+  const run = (command: string) => ($ as any).command.run({ command, args: '' })
+  await run('al-index')
+  await run('al-index')
+  await m.clock.advance(30_000) // the timer asks cg.py again: no new toast
+  expect(m.toasts).toEqual([T.toast(first)])
+  notes = [first, 'the old folder of the test can be deleted']
+  await run('al-index')
+  expect(m.toasts).toEqual([T.toast(first), T.toast(notes[1]!)])
+  const lines = (await run('al-health')).text.split('\n')
+  const at = lines.findIndex(l => l.startsWith('Index:'))
+  expect(lines.slice(at + 1, at + 3)).toEqual(notes)
+  expect(m.toasts).toHaveLength(2)
+})
+
+test('home_notes: a note beside an error answer is told as well', async ($, on) => {
+  const refused = { value: { exitCode: 1, stdout: JSON.stringify({ error: 'boom', home_notes: ['a note beside an error'] }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  const m = await started($, on, a => (a[0] === 'index' ? refused : ran('{}')))
+  await ($ as any).command.run({ command: 'al-index', args: '' })
+  expect(m.toasts).toEqual([T.toast('a note beside an error'), T.toast(T.failed('al-index', 'boom'))])
 })
