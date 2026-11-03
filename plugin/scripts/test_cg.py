@@ -676,9 +676,9 @@ class CgTest(unittest.TestCase):
 
     # the background job follows the rename: the old task goes with the old folder, the new one comes back with its interval
 
-    def scheduler(self, tasks=None, deny=()):
+    def scheduler(self, tasks=None, deny=(), running=()):
         """The Task Scheduler of this test, with these tasks: cg.main asks it about the old task and about the new one."""
-        s = Scheduler(tasks, deny)
+        s = Scheduler(tasks, deny, running)
         patch = s.patched()
         patch.start()
         self.addCleanup(patch.stop)
@@ -689,11 +689,18 @@ class CgTest(unittest.TestCase):
         s = self.scheduler({'CacheGuard': 45})
         code, out, _ = self.main_home('status')
         self.assertEqual(code, 0, out)
-        self.assertEqual([(c[0], c[2]) for c in s.calls], [('/Query', 'CacheGuard'), ('/Delete', 'CacheGuard'), ('/Query', 'Alethite'), ('/Create', 'Alethite')])
+        self.assertEqual([(c[0], c[2]) for c in s.calls], [('/Query', 'CacheGuard'), ('/End', 'CacheGuard'), ('/Delete', 'CacheGuard'), ('/Query', 'Alethite'), ('/Create', 'Alethite')])
         self.assertEqual(list(s.tasks), ['Alethite'])
         self.assertIn('<Interval>PT45M</Interval>', s.tasks['Alethite'])
         self.assertTrue(os.path.isfile(os.path.join(new, 'job.xml')))  # beside the index
-        self.assertNotIn('home_notes', out)
+        self.assertNotIn('home_notes', out)  # /End found nothing running and said so: no note for that
+
+    def test_running_old_task_is_ended_before_it_is_deleted(self):  # its instance would hold the old index open and the folder could not move
+        old, new = self.old_home()
+        s = self.scheduler({'CacheGuard': 45}, running=('CacheGuard',))
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, 'home_notes' in out, os.path.exists(old), os.path.isdir(new), s.running), (0, False, False, True, set()), out)
+        self.assertEqual([c[0] for c in s.calls if c[2] == 'CacheGuard'], ['/Query', '/End', '/Delete'])
 
     def test_old_task_removed_when_both_folders_exist(self):  # the old code would make the old folder again
         old, new = self.old_home()

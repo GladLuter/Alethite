@@ -503,7 +503,7 @@ def _old_task_off():
     import job
     minutes = job.installed(task=job.OLD_TASK)
     if minutes:
-        job.remove(task=job.OLD_TASK)
+        job.remove(task=job.OLD_TASK, end=True)  # a running old `maintain` would keep the old index open and the folder could not move
     return minutes or 0
 
 

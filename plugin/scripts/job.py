@@ -100,9 +100,11 @@ def install(folder, minutes=MINUTES, python=sys.executable, run=subprocess.run, 
     return {'installed': True, 'minutes': minutes, 'command': command, 'file': path}
 
 
-def remove(run=subprocess.run, supported=is_supported, task=TASK):
+def remove(run=subprocess.run, supported=is_supported, task=TASK, end=False):
     if not supported():
         raise ValueError(t('job_windows_only'))
+    if end:
+        _schtasks(['/End', '/TN', task], run)  # a delete leaves a running instance up; with none running /End is refused, and that is fine
     code, out = _schtasks(['/Delete', '/TN', task, '/F'], run)
     if code and installed(run, supported, task):  # no such task is what was asked for, a refusal (Access is denied) is not
         raise RuntimeError(t('job_schtasks', e=' '.join(out.split())))

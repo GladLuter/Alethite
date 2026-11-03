@@ -31,9 +31,9 @@ class Scheduler:
     """The Task Scheduler as the `run` of job.py: its tasks ({name: minutes, or (minutes, the cg.py it runs)}) kept as the XML they were made from, and
     every call it got ([verb, ...] without 'schtasks') in order. `deny` are the verbs it refuses with 'Access is denied'."""
 
-    def __init__(self, tasks=None, deny=()):
+    def __init__(self, tasks=None, deny=(), running=()):
         self.tasks = {name: self.xml(*(spec if isinstance(spec, tuple) else (spec,))) for name, spec in (tasks or {}).items()}
-        self.calls, self.deny = [], deny
+        self.calls, self.deny, self.running = [], deny, set(running)  # running: the tasks with an instance up, /End stops it
 
     @staticmethod
     def xml(minutes, script=job.CG):
@@ -52,6 +52,10 @@ class Scheduler:
             return answer(1, err=b'ERROR: The system cannot find the file specified.\r\n')
         elif verb == '/Delete':
             del self.tasks[name]
+        elif verb == '/End':
+            if name not in self.running:
+                return answer(1, err=b'ERROR: There are no running instances of the task.\r\n')
+            self.running.discard(name)
         else:  # /Query /XML
             return answer(out=self.tasks[name].encode('utf-8'))
         return answer()
@@ -135,6 +139,17 @@ class TaskTest(unittest.TestCase):
         self.assertEqual((s.calls[-1], list(s.tasks)), (['/Delete', '/TN', 'CacheGuard', '/F'], ['Alethite']))
         job.remove(s, lambda: True)
         self.assertEqual((s.calls[-1], list(s.tasks)), (['/Delete', '/TN', 'Alethite', '/F'], []))
+
+    def test_remove_can_end_a_running_instance_first(self):
+        s = Scheduler({'CacheGuard': 45}, running=('CacheGuard',))
+        job.remove(s, lambda: True, task='CacheGuard', end=True)
+        self.assertEqual(([c[0] for c in s.calls], list(s.tasks), s.running), (['/End', '/Delete'], [], set()))
+        s = Scheduler({'CacheGuard': 45})  # nothing runs: /End is refused and the delete still goes
+        job.remove(s, lambda: True, task='CacheGuard', end=True)
+        self.assertEqual(([c[0] for c in s.calls], list(s.tasks)), (['/End', '/Delete'], []))
+        s = Scheduler({'CacheGuard': 45}, running=('CacheGuard',))
+        job.remove(s, lambda: True, task='CacheGuard')  # no end asked: the instance is left alone
+        self.assertEqual(([c[0] for c in s.calls], s.running), (['/Delete'], {'CacheGuard'}))
 
     def test_target_reads_script_path_from_task_xml(self):
         script = 'C:\\Users\\A&B\\plugin\\scripts\\cg.py'  # the XML says &amp;
