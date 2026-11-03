@@ -4,6 +4,7 @@ when it fits, and the mod finds that out mechanically (the vectors of the owner'
 A lesson is a record like any other: it goes to the other computer in the batches, cg.py forget deletes it, it gets vectors, recall finds it."""
 import datetime
 import hashlib
+import json
 import re
 import time
 
@@ -83,8 +84,8 @@ def save(conn, project, fields, now=None):
 
 
 def listing(conn, project):
-    """The lessons of `project` (None: all), newest first: {'id', 'conv', 'pos', 'ts', 'text', 'trigger', 'from'}."""
-    rows = conn.execute(_SELECT + ' ORDER BY pos DESC', {'p': project}).fetchall()  # not ts: two lessons of one millisecond tie
+    """The lessons of `project` (None: all; else a list of project keys), newest first: {'id', 'conv', 'pos', 'ts', 'text', 'trigger', 'from'}."""
+    rows = conn.execute(_SELECT + ' ORDER BY pos DESC', {'p': json.dumps(project)}).fetchall()  # not ts: two lessons of one millisecond tie
     return [{'id': rid, 'conv': conv, 'pos': pos, 'ts': ts, 'text': text, 'trigger': fields_of(text).get('trigger'), 'from': origin}
             for rid, conv, pos, ts, text, origin in rows]
 

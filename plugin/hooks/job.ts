@@ -10,7 +10,7 @@ export type JobRun = {
   errors: { where: string; error: string }[]
 }
 
-// `/cg-job` → status; `on [minutes]` → install; `off` → remove; null for anything else.
+// `/al-job` → status; `on [minutes]` → install; `off` → remove; null for anything else.
 export const jobArgs = (args: string): string[] | null => {
   const [what, minutes, ...rest] = args.trim().split(/\s+/).filter(Boolean)
   if (what === undefined) return ['job', 'status']
@@ -27,6 +27,6 @@ export const jobDid = (r: JobRun) =>
     ...(r.sync ? [T.jobSync(r.sync.pushed, r.sync.pulled)] : []),
   ].join(', ')
 
-// The /cg-health lines of the job: its last run, and the first error of it.
+// The /al-health lines of the job: its last run, and the first error of it.
 export const jobHealth = (r: JobRun | null | undefined) =>
   r ? [T.jobLast(new Date(r.at).toLocaleString(T.locale), jobDid(r), r.errors.length), ...(r.errors[0] ? [T.jobError(r.errors[0].where, r.errors[0].error)] : [])] : [T.jobNever]

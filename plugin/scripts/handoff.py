@@ -5,7 +5,7 @@ import subprocess
 
 from compress import compress
 from texts import t
-from transcripts import HANDOFF_END, HANDOFF_START, find_session, read_records
+from transcripts import HANDOFF_END, HANDOFF_MARK, HANDOFF_START, find_session, read_records
 
 _CAP = 10500  # the whole text
 _STOPPED_CAP = 7000  # the "where we stopped" section
@@ -108,8 +108,8 @@ def build_handoff(projects, session_id, today, memory_dir=None, level='off'):
 
     def render():
         parts = ['\n'.join(head), stopped(fixed + early)] + ([t('handoff_state') + '\n' + '\n\n'.join(git)] if git else [])
-        # a marker quoted inside the text would end the block early for strip_handoff
-        body = '\n\n'.join(parts).replace(HANDOFF_START, '[cg-handoff ]').replace(HANDOFF_END, '[/cg-handoff ]')
+        # a marker quoted inside the text, of either name, would end the block early for strip_handoff
+        body = HANDOFF_MARK.sub(lambda m: m.group()[:-1] + ' ]', '\n\n'.join(parts))
         return HANDOFF_START + '\n' + body + '\n' + HANDOFF_END
 
     out = render()

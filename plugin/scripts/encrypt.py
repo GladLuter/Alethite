@@ -1,4 +1,4 @@
-"""The commands behind /cg-encrypt: encryption on, a key joined from another computer, encryption off, and its state. Each one can be run
+"""The commands behind /al-encrypt: encryption on, a key joined from another computer, encryption off, and its state. Each one can be run
 again after any interruption and goes on from where it stopped: first the key, then the index files, then the sync folder. The key and the
 recovery code are in no result, exception or output; the code goes only to the window (`ui.show_code`).
 `ui` is the windows: show_code(code), confirm(text) -> bool, ask_code() -> str | None (None: cancelled)."""
@@ -278,7 +278,7 @@ def _delete(path):
 
 
 def _flag(conn, value):
-    """meta.share_unfinished for /cg-health: 'pending' (the new generation is not all out), 'old' (the old data is still in the folder)."""
+    """meta.share_unfinished for /al-health: 'pending' (the new generation is not all out), 'old' (the old data is still in the folder)."""
     if value:
         conn.execute("INSERT OR REPLACE INTO meta VALUES('share_unfinished', ?)", (value,))
     else:
@@ -293,7 +293,7 @@ def _generations(old):
 
 def _share(conn, sync_dir, machine, key, cipher, ui, notes, **kw):
     """Moves the sync folder to the wanted form (`key` None: open): our new generation out, then the old ones gone once the owner agrees.
-    The flag is set before each step and cleared only when the last one is done, so a failure or a kill in between leaves it for /cg-health.
+    The flag is set before each step and cleared only when the last one is done, so a failure or a kill in between leaves it for /al-health.
     Whether the new generation is out is read from the folder after the sync, not taken from the sync having returned: it may stop at the
     time cap, or an own batch that cannot be read may keep the new generation from starting."""
     _flag(conn, 'pending')

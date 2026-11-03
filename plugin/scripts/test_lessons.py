@@ -41,7 +41,7 @@ class LessonsTest(unittest.TestCase):
         self.assertEqual(row, ('lesson', lessons.conv_of(A), out['pos']))
         self.assertEqual(self.conn.execute('SELECT cls, origin, pushed FROM keys WHERE id = ?', (out['id'],)).fetchone(), ('lesson', None, 0))
         self.assertEqual(lessons.save(self.conn, A, dict(RATE))['new'], False)  # the same lesson again changes nothing
-        self.assertEqual(search(self.conn, '429', A)[0]['kind'], 'lesson')  # recall finds it as any record
+        self.assertEqual(search(self.conn, '429', [A])[0]['kind'], 'lesson')  # recall finds it as any record
 
     def test_what_a_lesson_needs(self):
         with self.assertRaisesRegex(ValueError, 'cause'):
@@ -63,7 +63,7 @@ class LessonsTest(unittest.TestCase):
         lessons.save(self.conn, A, RATE, now)
         lessons.save(self.conn, A, dict(RATE, action='второй урок', trigger=None), now)
         lessons.save(self.conn, B, dict(RATE, action='урок другого проекта'))
-        mine = lessons.listing(self.conn, A)
+        mine = lessons.listing(self.conn, [A])
         self.assertEqual([(l['text'].split('\n')[0], l['trigger']) for l in mine],
                          [('Action: второй урок', None), ('Action: запустил сборку ещё раз сразу после ошибки', 'gh api /repos')])
         self.assertEqual(len(lessons.listing(self.conn, None)), 3)
@@ -74,8 +74,8 @@ class LessonsTest(unittest.TestCase):
         lessons.save(self.conn, B, dict(RATE, action='урок другого проекта'), now)
         lessons.save(self.conn, A, dict(RATE, action='второй урок'), now)
         old = "SELECT rowid FROM chunks WHERE kind = 'lesson' AND " + memdb.IN_PROJECT + ' ORDER BY pos DESC'
-        for p in (A, B, None):
-            self.assertEqual([l['id'] for l in lessons.listing(self.conn, p)], [r[0] for r in self.conn.execute(old, {'p': p})])
+        for p in ([A], [B], [A, B], None):
+            self.assertEqual([l['id'] for l in lessons.listing(self.conn, p)], [r[0] for r in self.conn.execute(old, {'p': json.dumps(p)})])
 
     def test_listing_after_the_project_key_was_migrated(self):
         raw, home = r'C:\old\proj', r'C:\Users\x'
@@ -83,9 +83,9 @@ class LessonsTest(unittest.TestCase):
         new = project_key(raw, home)
         self.conn.execute('UPDATE conv_projects SET project = ?', (new,))  # what _migrate does; the lesson conv keeps the hash of the raw key
         old = "SELECT rowid FROM chunks WHERE kind = 'lesson' AND " + memdb.IN_PROJECT
-        want = [r[0] for r in self.conn.execute(old, {'p': new})]
+        want = [r[0] for r in self.conn.execute(old, {'p': json.dumps([new])})]
         self.assertEqual(len(want), 1)
-        self.assertEqual([l['id'] for l in lessons.listing(self.conn, new)], want)
+        self.assertEqual([l['id'] for l in lessons.listing(self.conn, [new])], want)
 
     def test_save_finds_a_repeat_and_continues_pos(self):
         now = datetime.datetime(2026, 10, 20, 9, 0, tzinfo=datetime.timezone.utc)
@@ -101,22 +101,33 @@ class LessonsTest(unittest.TestCase):
         lessons.save(self.conn, B, RATE)  # another project's lesson never comes
         embed_pending(self.conn, embed_fn=fake)
         # the bag of words of the fake embedder: 0.32 for the lesson that fits, 0.17 for the one that does not, 0.07 for another theme
-        found, state = lessons.match(self.conn, 'опять HTTP 429 лимит запросов в час на сборке', A, MODEL, 0.25, embed_fn=fake)
+        found, state = lessons.match(self.conn, 'опять HTTP 429 лимит запросов в час на сборке', [A], MODEL, 0.25, embed_fn=fake)
         self.assertEqual((state, [l['id'] for l in found]), ('ok', [fit['id']]))
         self.assertGreaterEqual(found[0]['score'], 0.25)
-        self.assertEqual(lessons.match(self.conn, 'покрась кнопку в синий', A, MODEL, 0.25, embed_fn=fake)[0], [])
+        self.assertEqual(lessons.match(self.conn, 'покрась кнопку в синий', [A], MODEL, 0.25, embed_fn=fake)[0], [])
+
+    def test_a_project_with_aliases_sees_the_lessons_of_all_its_keys(self):  # the folder moved: the lessons stay under the old key
+        old = project_key('C:\\old\\proj', 'C:\\Users\\x')
+        gone = lessons.save(self.conn, old, RATE)
+        mine = lessons.save(self.conn, A, dict(RATE, action='урок новой папки'))
+        embed_pending(self.conn, embed_fn=fake)
+        self.assertEqual([l['id'] for l in lessons.listing(self.conn, [A])], [mine['id']])
+        self.assertEqual({l['id'] for l in lessons.listing(self.conn, [A, old])}, {gone['id'], mine['id']})
+        text = 'опять HTTP 429 лимит запросов в час на сборке'
+        self.assertIn(gone['id'], [l['id'] for l in lessons.match(self.conn, text, [A, old], MODEL, 0.25, embed_fn=fake)[0]])
+        self.assertNotIn(gone['id'], [l['id'] for l in lessons.match(self.conn, text, [A], MODEL, 0.25, embed_fn=fake)[0]])
 
     def test_matching_costs_nothing_without_lessons_and_says_why_it_could_not(self):
-        self.assertEqual(lessons.match(self.conn, 'что угодно', A, MODEL, 0.4, embed_fn=never), ([], 'ok'))  # no lessons: Ollama not asked
+        self.assertEqual(lessons.match(self.conn, 'что угодно', [A], MODEL, 0.4, embed_fn=never), ([], 'ok'))  # no lessons: Ollama not asked
         lessons.save(self.conn, A, RATE)
-        self.assertEqual(lessons.match(self.conn, 'что угодно', A, MODEL, 0.4, embed_fn=never)[0], [])  # no vectors yet: nor now
+        self.assertEqual(lessons.match(self.conn, 'что угодно', [A], MODEL, 0.4, embed_fn=never)[0], [])  # no vectors yet: nor now
         embed_pending(self.conn, embed_fn=fake)
 
         def down(texts, model, timeout):
             raise RuntimeError('Ollama не отвечает: тест')
 
-        self.assertEqual(lessons.match(self.conn, '429', A, MODEL, 0.4, embed_fn=down), ([], 'Ollama не отвечает: тест'))
-        self.assertIn('other', lessons.match(self.conn, '429', A, 'other', 0.4, embed_fn=never)[1])
+        self.assertEqual(lessons.match(self.conn, '429', [A], MODEL, 0.4, embed_fn=down), ([], 'Ollama не отвечает: тест'))
+        self.assertIn('other', lessons.match(self.conn, '429', [A], 'other', 0.4, embed_fn=never)[1])
 
     def test_a_new_lesson_gets_its_vectors_at_once_when_the_model_is_the_indexs(self):
         embed_pending(self.conn, embed_fn=fake)  # the index holds this model's vectors (here: of nothing yet)
@@ -137,18 +148,18 @@ class LessonsTest(unittest.TestCase):
         embed_pending(self.conn, embed_fn=fake)
         for conn, name in ((self.conn, 'AIJ-HP'), (other, 'MTLAPTOP')):
             self.assertEqual(cgsync.sync(conn, share, name, digest=lambda m: None)['errors'], [])
-        there = lessons.listing(other, A)
+        there = lessons.listing(other, [A])
         self.assertEqual([l['trigger'] for l in there], ['gh api /repos'])
         self.assertEqual(there[0]['from'], 'AIJ-HP')
         self.assertEqual(memdb.forget(self.conn, out['conv'], out['pos']), 1)
         cgsync.sync(self.conn, share, 'AIJ-HP', digest=lambda m: None)
         cgsync.sync(other, share, 'MTLAPTOP', digest=lambda m: None)
-        self.assertEqual(lessons.listing(other, A), [])
+        self.assertEqual(lessons.listing(other, [A]), [])
 
     def test_recall_finds_a_lesson_by_the_trace(self):
         lessons.save(self.conn, A, RATE)
         embed_pending(self.conn, embed_fn=fake)
-        hits, state = hybrid_search(self.conn, 'лишние вызовы', A, also=['429 лимит'], embed_fn=fake)
+        hits, state = hybrid_search(self.conn, 'лишние вызовы', [A], also=['429 лимит'], embed_fn=fake)
         self.assertEqual((state, hits[0]['kind']), ('ok', 'lesson'))
 
     def test_cli(self):

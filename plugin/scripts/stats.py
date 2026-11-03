@@ -4,9 +4,10 @@ import math
 import cc_token_audit
 import memdb
 from texts import t
-from transcripts import HANDOFF_END, HANDOFF_START
+from transcripts import HANDOFF_BLOCK, MOD_TOOL_PREFIXES
 
-MOD_TOOLS = ('mcp__cacheguard__recall', 'mcp__cacheguard__recall_more')
+MOD_TOOLS = tuple(p + n for p in MOD_TOOL_PREFIXES for n in ('recall', 'recall_more'))
+MOD_CATEGORIES = {cc_token_audit.tool_cat(n) for n in MOD_TOOLS}
 
 BASELINE = {'usd_per_owner_msg': 5.20, 'rewrite_share': 0.417, 'idle60_share': 0.319, 'median_main_context': 428000}  # weekly limit: t('stats_weekly_base')
 
@@ -28,12 +29,12 @@ def metrics(projects, conn, since, until=None, errors=None, machine=None):
     main = R['stats']['main']  # {'chains': 0} when the period holds no main chat
     rw = R['cache_rewrites']
     # what the audit charges to the results of recall and recall_more: their tokens in the context of every later request
-    tools = next((c for c in R['categories'] if c['category'] == 'tool:mcp:cacheguard'), {'cost_usd': 0, 'share': 0})
+    tools = [c for c in R['categories'] if c['category'] in MOD_CATEGORIES]
     return {'since': since, 'until': until, 'cost_main': cost, 'owner_msgs': n, 'usd_per_owner_msg': cost / n if n else None,
             'rewrite_share': rw['total']['share_of_all_cost'], 'idle60_share': rw['by_cause']['idle >= 60 min']['share_of_all_cost'],
             'median_main_context': main.get('prompt_total_median', 0), 'main_calls': main.get('calls', 0),
             'recall_calls': load['recall_calls'], 'recall_tokens': round(load['recall_chars'] / cc_token_audit.CHARS_PER_TOKEN),
-            'recall_cost': tools['cost_usd'], 'recall_share': tools['share'],
+            'recall_cost': sum(c['cost_usd'] for c in tools), 'recall_share': sum(c['share'] for c in tools),
             'handoffs': load['handoffs'], 'handoff_tokens': round(load['handoff_chars'] / cc_token_audit.CHARS_PER_TOKEN)}
 
 
@@ -57,12 +58,9 @@ def memory_load(since, until=None):
                 out['recall_calls'] += 1
                 out['recall_chars'] += cc_token_audit.result_chars(b.get('content'))
             elif (o.get('type') == 'user' and inside and b.get('type') == 'text' and isinstance(b.get('text'), str)
-                  and b['text'].lstrip().startswith(HANDOFF_START)):  # a message that only mentions the marker is no handoff
-                text = b['text']
-                start = text.index(HANDOFF_START)
-                end = text.find(HANDOFF_END, start)
+                  and (block := HANDOFF_BLOCK.match(b['text'].lstrip()))):  # a message that only mentions the marker is no handoff
                 out['handoffs'] += 1
-                out['handoff_chars'] += (end + len(HANDOFF_END) if end >= 0 else len(text)) - start
+                out['handoff_chars'] += len(block.group())
     return out, visit
 
 

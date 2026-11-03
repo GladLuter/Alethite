@@ -32,6 +32,16 @@ export const indexProblemOf = (stdout: string): string | undefined => {
   }
 }
 
+// The notes of cg.py about the move of the mod folder (home_notes, in an error answer too), already worded: none when the answer has none or is no JSON.
+export const homeNotesOf = (stdout: string): string[] => {
+  try {
+    const notes = JSON.parse(stdout).home_notes
+    return Array.isArray(notes) ? notes.filter((n): n is string => typeof n === 'string' && n !== '') : []
+  } catch {
+    return []
+  }
+}
+
 type Vectors = { model: string | null; with_vectors: number; total: number; failed?: number; updated: string | null }
 type Project = { key: string; convs: number }
 
@@ -50,6 +60,7 @@ export const healthLines = (h: {
   settingsFile?: string
   shareCipher?: string
   lessons?: { count: number; shown: number; chars: number; stopped: number; on: boolean }
+  homeNotes?: string[] // the notes of the move of the mod folder in the status answer shown
 }) => {
   const job = typeof h.index === 'string' ? undefined : (h.index.job as JobRun | null | undefined)
   const v = typeof h.index === 'string' ? undefined : (h.index.vectors as Vectors | undefined)
@@ -60,6 +71,7 @@ export const healthLines = (h: {
     T.healthVersion(h.version),
     typeof h.index === 'string' ? T.healthIndexError(h.index) : T.healthIndex(h.index),
     ...(dir?.notes ?? []), // where the index is, when it is not where indexDir says: cg.py words it
+    ...(h.homeNotes ?? []), // the move of the mod folder: likewise
     ...(p ? [T.projectLine(h.root, p.convs), ...(p.convs === 0 ? [T.projectEmpty] : [])] : []),
     ...(v
       ? [T.vectorsLine(v.model, v.with_vectors, v.total, v.updated), ...(v.failed ? [T.vectorsFailed(v.failed)] : []), ...(v.with_vectors < v.total ? [T.vectorsHint(h.embedCmd)] : [])]

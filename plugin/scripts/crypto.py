@@ -10,6 +10,7 @@ import hmac
 import importlib
 import json
 import os
+import pathlib
 import re
 import sqlite3
 import stat
@@ -19,7 +20,7 @@ import time
 from texts import t
 
 KEY_FIELD = 'encryptionKey'
-ENTROPY = b'Claude-CacheGuard'  # another program of the same user does not open the blob by accident
+ENTROPY = b'Claude-CacheGuard'  # another program of the same user does not open the blob by accident; the old name stays on purpose: a key sealed before the rename must open
 PREFIX = 'dpapi:'
 CIPHERS = ('sqlcipher', 'cryptography')
 INDEX_CIPHERS = ('sqlcipher', 'efs')
@@ -30,12 +31,48 @@ INDEX_PAGE = 16384  # the SQLCipher index and the one under EFS: the vector read
 _MODULE = {'sqlcipher': 'sqlcipher3'}
 
 
-HOME_DIR = os.path.join(os.path.expanduser('~'), '.claude', 'cacheguard')  # the mod's own folder: the settings, and the index unless moved
+OLD_HOME_DIR = os.path.join(os.path.expanduser('~'), '.claude', 'cacheguard')  # the folder of the name before the rename: move_home takes it over once
+HOME_DIR = os.path.join(os.path.expanduser('~'), '.claude', 'alethite')  # the mod's own folder: the settings, and the index unless moved
 INDEX_DIRS = set()  # norm() of every other folder an index lives in: the settings of such an index are still the home ones, the key is there
 
 
 def norm(path):
     return os.path.normcase(os.path.abspath(path))
+
+
+def move_home(old=None, new=None, wait=True):
+    """The old mod folder becomes the new one, once (a rename: the settings, the index and the handoffs go with it). The notes for `home_notes`, in
+    the owner's language: none when there is nothing to move or it went through. A folder in use (5, 32) is waited for up to 10 s (`wait`; without
+    it one try, for a command the mod kills after 8 s), then this process goes on in the old one; another refusal is told at once, as is a new
+    folder next to the old one (nothing is moved or merged then)."""
+    global HOME_DIR
+    old, new = old or OLD_HOME_DIR, new or HOME_DIR
+    if not os.path.isdir(old):
+        return []
+    if os.path.exists(new):
+        return [t('home_move_both', old=old, new=new)]
+    for i in range(100 if wait else 1):
+        if i:
+            time.sleep(0.1)
+        try:
+            os.rename(old, new)
+            return []
+        except OSError as e:
+            err = e
+            if getattr(e, 'winerror', None) not in (5, 32):  # no such field outside Windows
+                break
+    if not os.path.exists(old) and os.path.isdir(new):  # another first run moved it between our checks and our rename: nothing failed
+        return []
+    HOME_DIR = old
+    return [t('home_move_failed', old=old, new=new, e=err)]
+
+
+def moved(path):
+    """A path stored under the old name that lies in the old mod folder: with that folder gone, the same place in the new one."""
+    p = pathlib.Path(path)
+    if os.path.exists(OLD_HOME_DIR) or not p.is_relative_to(OLD_HOME_DIR):
+        return path
+    return str(pathlib.Path(HOME_DIR, p.relative_to(OLD_HOME_DIR)))
 
 
 def settings_path(db):
@@ -45,7 +82,7 @@ def settings_path(db):
 
 
 def _check(key):
-    return hashlib.sha256(b'cacheguard-code' + key).digest()[:3]
+    return hashlib.sha256(b'cacheguard-code' + key).digest()[:3]  # the old name stays on purpose: every recovery code written down has this checksum
 
 
 def make_code(key):
@@ -68,7 +105,7 @@ def parse_code(code):
 
 def fingerprint(key):
     """Tells keys apart without revealing one: a share written under another key is refused by it."""
-    return hashlib.sha256(b'cacheguard-fingerprint' + key).hexdigest()[:16]
+    return hashlib.sha256(b'cacheguard-fingerprint' + key).hexdigest()[:16]  # the old name stays on purpose: every share written so far carries this fingerprint
 
 
 def opaque(key, name):

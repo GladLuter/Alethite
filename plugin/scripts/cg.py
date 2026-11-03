@@ -1,4 +1,4 @@
-"""Command line of Claude-CacheGuard: every command prints one JSON object in UTF-8; an error is {"error": "<Type>: <text>"} with exit code 1."""
+"""Command line of Alethite: every command prints one JSON object in UTF-8; an error is {"error": "<Type>: <text>"} with exit code 1."""
 import argparse
 import contextlib
 import datetime
@@ -17,7 +17,7 @@ import memdb
 import texts
 import vectors
 from compress import LEVELS, compress
-from transcripts import find_session, last_usage, project_key
+from transcripts import find_session, last_usage, project_key, project_keys
 
 
 INDEX_FREE = ('last-turn', 'compress', 'handoff')  # the commands that read no index: no merge waits for them, and they still work when the index cannot be used
@@ -56,11 +56,11 @@ def _status(a):
     note = {'pending': 'note_share_pending', 'old': 'note_old_share_kept'}.get(memdb.meta(conn, 'share_unfinished'))  # set by `encrypt`, in the index
     if note:
         out['encryption']['notes'].append(texts.t(note))
-    out['job'] = json.loads(memdb.meta(conn, 'job_last') or 'null')  # the background job's last run (stage 4), for /cg-health
+    out['job'] = json.loads(memdb.meta(conn, 'job_last') or 'null')  # the background job's last run (stage 4), for /al-health
     out['index_dir'] = indexdir.status(conn, a.where)
     if a.cwd:  # the scope of «в этом проекте»: a key that matches no conversation makes the project search find nothing
-        key = project_key(a.cwd)
-        out['project'] = {'key': key, 'convs': conn.execute('SELECT count(*) FROM convs WHERE ' + memdb.IN_PROJECT, {'p': key}).fetchone()[0]}
+        keys = project_keys(a.cwd, _aliases(a))
+        out['project'] = {'key': keys[0], 'convs': conn.execute('SELECT count(*) FROM convs WHERE ' + memdb.IN_PROJECT, {'p': json.dumps(keys)}).fetchone()[0]}
     return out
 
 
@@ -70,7 +70,7 @@ def _recall(a):
         upd = memdb.update(conn, a.projects)  # seconds when nothing is new
     except Exception as e:  # e.g. the index stays locked by another run: what it already holds is still searched
         upd = {'errors': [memdb._error(a.projects, e)]}
-    hits, vector = vectors.hybrid_search(conn, a.query, None if a.all else project_key(a.cwd), a.limit, model=a.model, also=a.also)
+    hits, vector = vectors.hybrid_search(conn, a.query, None if a.all else project_keys(a.cwd, _aliases(a)), a.limit, model=a.model, also=a.also)
     return {'hits': _squeeze(hits, 'snippet', a.compress), 'errors': upd['errors'], 'vector': vector}
 
 
@@ -119,7 +119,7 @@ def _embed(a):
 # ---- the background job (stage 4): what the scheduled task runs, and the task itself
 
 def _settings(path):
-    """The mod's own settings file (%USERPROFILE%\\.claude\\cacheguard\\settings.json): the job runs with what the mod runs with.
+    """The mod's own settings file (%USERPROFILE%\\.claude\\alethite\\settings.json): the job runs with what the mod runs with.
     (settings, None), or ({}, why) when the file is broken: the job goes on with the defaults and says so."""
     try:
         return crypto._read(path), None
@@ -127,6 +127,15 @@ def _settings(path):
         return {}, str(e)
     except (ValueError, OSError) as e:  # a file that cannot be decoded, or one that an editor holds or the owner may not read
         return {}, '%s: %s' % (path, e)
+
+
+def _aliases(a):
+    """settings.projectAliases, {new folder: [old folders]}: a project reads the memory of its old folders too. Anything else than
+    that shape is ignored whole, and so is a broken settings file: an alias is a help to the search, never a reason for it to fail. Blank paths are skipped."""
+    s = _settings(crypto.settings_path(a.db))[0].get('projectAliases')
+    if not (isinstance(s, dict) and all(isinstance(v, list) and all(isinstance(o, str) for o in v) for v in s.values())):
+        return {}
+    return {k: [o for o in v if o.strip()] for k, v in s.items() if k.strip()}  # project_key('') is the folder the process runs in: a blank path would widen the scope to it
 
 
 def _sync_dir(s):
@@ -177,13 +186,13 @@ def _memory_dir(path):
 def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
     """One run of the background job: the index, then the vectors (on mains power, while no chat embeds), then the sync (when a folder
     is set). Each step under the lock a chat takes for it, so a chat and the job never do one thing twice at a time; a step that fails
-    does not stop the next. The result is kept in meta.job_last for /cg-health. The short memory waits for a chat: only a chat knows its
+    does not stop the next. The result is kept in meta.job_last for /al-health. The short memory waits for a chat: only a chat knows its
     project's auto-memory folder."""
     import job, sync
     battery, digest = battery or job.on_battery, digest or sync.ollama_digest
     try:
         conn = memdb.connect(a.db)  # first: it also makes the folder the lock files lie in
-    except ValueError as e:  # an encrypted index and no key that opens it: nowhere to keep the run, /cg-health tells the same from `status`
+    except ValueError as e:  # an encrypted index and no key that opens it: nowhere to keep the run, /al-health tells the same from `status`
         return {'errors': [{'where': 'index', 'error': '%s: %s' % (type(e).__name__, e)}]}
     try:
         lock = memdb.lock(a.db, 'maintain', 0)  # noqa: F841 (held until the return)
@@ -199,7 +208,7 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     out = {'at': stamp, 'index': None, 'embed': None, 'sync': None, 'errors': []}
     fault = lambda where, e: out['errors'].append({'where': where, 'error': '%s: %s' % (type(e).__name__, e)})
-    # a run cut off (the task's 30-minute limit) never gets to the end: /cg-health must not show the run before it as all well
+    # a run cut off (the task's 30-minute limit) never gets to the end: /al-health must not show the run before it as all well
     conn.execute("INSERT OR REPLACE INTO meta VALUES('job_last', ?)", (json.dumps(dict(out, errors=[{'where': 'job', 'error': texts.t('job_unfinished')}]), ensure_ascii=False),))
     if broken:
         out['errors'].append({'where': 'settings', 'error': broken})
@@ -263,7 +272,7 @@ def _last_turn(a):
 def _handoff(a):
     from handoff import build_handoff
     text = build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress)
-    folder = os.path.join(os.path.dirname(a.db), 'handoffs')  # next to the index: ~/.claude/cacheguard/handoffs by default
+    folder = os.path.join(os.path.dirname(a.db), 'handoffs')  # next to the index: ~/.claude/alethite/handoffs by default
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, a.session + '.md')
     with open(path, 'w', encoding='utf-8', newline='\n') as f:  # written before the answer: the owner's insurance if clear/submit fails
@@ -313,7 +322,7 @@ def _all_locks(a, busy):
 
 
 def _encrypt(a):
-    """/cg-encrypt: on, join, off (windows ask the owner; the code is shown there and nowhere else) and status. No connection to the index
+    """/al-encrypt: on, join, off (windows ask the owner; the code is shown there and nowhere else) and status. No connection to the index
     is held meanwhile: Windows cannot replace a file that is open. The sync folder and the cipher come from the settings file unless given."""
     import dialogs, encrypt
     if a.action == 'status':
@@ -331,7 +340,7 @@ def _encrypt(a):
 
 
 def _index_dir(a):
-    """/cg-index-dir: the index moves to the folder of --path, or of the window that asks when there is none. Alone like encrypt: the locks of
+    """/al-index-dir: the index moves to the folder of --path, or of the window that asks when there is none. Alone like encrypt: the locks of
     the background job are held until `move` has switched over, and given back there (the old copy could not be deleted with them open)."""
     import dialogs
     ui = dialogs.WindowsUI()
@@ -362,11 +371,11 @@ def _lesson_save(a):
 
 
 def _lessons(a):
-    return {'lessons': lessons.listing(memdb.connect(a.db), None if a.all else project_key(a.cwd))}
+    return {'lessons': lessons.listing(memdb.connect(a.db), None if a.all else project_keys(a.cwd, _aliases(a)))}
 
 
 def _lessons_match(a):
-    found, state = lessons.match(memdb.connect(a.db), a.text, project_key(a.cwd), a.model, a.min_score, a.limit, timeout=a.timeout)
+    found, state = lessons.match(memdb.connect(a.db), a.text, project_keys(a.cwd, _aliases(a)), a.model, a.min_score, a.limit, timeout=a.timeout)
     return {'lessons': found, 'vector': state}
 
 
@@ -388,6 +397,7 @@ def _parser():
     p.set_defaults(where=None)  # the answer of resolve, once `main` has one
     p.add_argument('--projects', default=os.path.join(os.path.expanduser('~'), '.claude', 'projects'))
     p.add_argument('--lang', default='en')  # of the texts the owner and the model read: errors, the handoff, the note
+    p.add_argument('--follow-job', action='store_true')  # the mod's calls only: the background job is made again to run this cg.py (job.follow)
     sub = p.add_subparsers(dest='cmd', required=True)
 
     def add(name, fn):
@@ -482,26 +492,63 @@ def _parser():
     return p
 
 
+def _job_step(notes, key, fn, *args):
+    """A step of the background job's move to the new name: an error is the note `key` in the answer (None comes back), it never stops the command."""
+    try:
+        return fn(*args)
+    except Exception as e:
+        notes.append(texts.t(key, e=e))
+
+
+def _old_task_off():
+    """The background job of the old name is taken off before its folder moves (its code would make the old folder again). Its interval, 0 if none."""
+    import job
+    minutes = job.installed(task=job.OLD_TASK)
+    if minutes:
+        job.remove(task=job.OLD_TASK, end=True)  # a running old `maintain` would keep the old index open and the folder could not move
+    return minutes or 0
+
+
+def _new_task_on(folder, minutes):
+    import job
+    if not job.installed():
+        job.install(folder, minutes)
+
+
 def main(argv):
     for stream in (sys.stdout, sys.stderr, sys.stdin):  # stderr: the progress line of embed; stdin: the text cg.py compress reads
         if stream is not None:  # pythonw, the background job's, has none of them
             stream.reconfigure(encoding='utf-8')
     problem = merged = a = None  # problem: why the index cannot be used, every answer says so, an error answer too
+    home_notes = []  # of the one-time move of the mod folder (crypto.move_home), told in every answer as well
     try:
         a = _parser().parse_args(argv)
         texts.lang = a.lang
         if a.db is None:
+            # job is imported (it costs time) only when the old folder or --follow-job asks for it; the flag finds an old task that outlived the move
+            minutes = (os.path.isdir(crypto.OLD_HOME_DIR) or a.follow_job) and _job_step(home_notes, 'home_old_task_failed', _old_task_off)
+            if minutes is None and os.path.isdir(crypto.OLD_HOME_DIR) and not os.path.exists(crypto.HOME_DIR):  # None: the old task stays
+                home_notes.append(texts.t('home_move_waits', old=crypto.OLD_HOME_DIR, new=crypto.HOME_DIR))  # only here does a move wait for the task
+                crypto.HOME_DIR = crypto.OLD_HOME_DIR  # it and the mod share one index (its next run would build a second in a folder made again); a later run removes it and moves
+            else:
+                home_notes += crypto.move_home(wait=a.cmd not in SHORT)  # the settings and the index are read from the new folder, a run with --db leaves the old one alone
+            a.db = os.path.join(crypto.HOME_DIR, 'index.db')  # a place for files beside it (the handoff, the job's task file) when no index can be used: it is never opened then
             try:
                 a.where = indexdir.resolve()
             except (ValueError, OSError) as e:
                 problem = str(e)
                 if a.cmd not in INDEX_FREE:
                     raise
-                a.db = os.path.join(crypto.HOME_DIR, 'index.db')  # a place for files beside it (the handoff), the index itself is never opened
             else:
                 a.db = a.where.db
                 if a.where.configured:  # the settings of an index in that folder are still the home ones
                     crypto.INDEX_DIRS.add(crypto.norm(a.where.configured))
+            finally:
+                if minutes:  # the job of the old name comes back under the new one, whatever resolve said
+                    _job_step(home_notes, 'home_job_failed', _new_task_on, os.path.dirname(a.db), minutes)
+        if a.follow_job:
+            import job
+            home_notes += job.follow(os.path.dirname(a.db))
         # the folder is back and the home folder has a temporary index: it is merged first, and its locks are given back before the command
         # a plain pair never reads the key (memdb._open): a key that cannot be read must not stop it
         # a merge of a big index takes seconds: not in a run that needs no index, nor in the prompt hook's lessons-match, which has eight
@@ -532,6 +579,8 @@ def main(argv):
             out['index_notice'] = note
     if problem:
         out['index_problem'] = problem
+    if home_notes:
+        out['home_notes'] = home_notes
     print(json.dumps(out, ensure_ascii=False))
     return code
 

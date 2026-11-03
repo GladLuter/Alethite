@@ -92,6 +92,15 @@ class HandoffTest(unittest.TestCase):
         self.assertIn('черновик', t)
         self.assertEqual(strip_handoff(t).strip(), '')  # a reply that quotes the end marker must not cut the handoff short
 
+    def test_markers_of_both_names_in_the_body_are_escaped(self):  # a quoted mark would end the block early for strip_handoff
+        self.write('P/S.jsonl', [u('сделай'), a([text('метки: [cg-handoff] [/cg-handoff] [al-handoff] [/al-handoff]')])])
+        t = self.build()
+        self.assertEqual((t.count('[al-handoff]'), t.count('[/al-handoff]')), (1, 1))  # the frame only
+        self.assertNotIn('[cg-handoff]', t)
+        self.assertNotIn('[/cg-handoff]', t)
+        for m in ('[cg-handoff ]', '[/cg-handoff ]', '[al-handoff ]', '[/al-handoff ]'):
+            self.assertIn(m, t)
+
     def test_edited_files_are_not_listed(self):
         self.write('P/S.jsonl', [u('сделай'), a([tool('Edit', file_path='C:\\r\\main.py'), tool('Edit', file_path='C:\\r\\main.py')], ts=LATER)])
         self.write('P/S/subagents/agent-a1.jsonl', [u('сделай Y'), a([tool('Write', file_path='C:\\r\\only_sub.py')])])
@@ -134,8 +143,8 @@ class HandoffTest(unittest.TestCase):
 
     def check_cap(self, t):
         self.assertLessEqual(len(t), 10500)
-        self.assertTrue(t.startswith('[cg-handoff]'))
-        self.assertTrue(t.rstrip().endswith('[/cg-handoff]'))
+        self.assertTrue(t.startswith('[al-handoff]'))
+        self.assertTrue(t.rstrip().endswith('[/al-handoff]'))
         self.assertIn('КОНЕЦ', t)
 
     def test_cap_drops_oldest_early_replies_first(self):
@@ -180,7 +189,7 @@ class HandoffTest(unittest.TestCase):
     def test_compression_takes_the_quotes_only(self):  # stage 3: ids, paths, git and the markers stay as they are
         self.write('P/S.jsonl', [u('Это очень важное сообщение владельца.'), a([text('Ответ: это тоже **готово**.')])])
         t = build_handoff(self.projects, 'S', '2026-10-13', None, 'ultra')
-        self.assertTrue(t.startswith('[cg-handoff]') and t.rstrip().endswith('[/cg-handoff]'))
+        self.assertTrue(t.startswith('[al-handoff]') and t.rstrip().endswith('[/al-handoff]'))
         self.assertIn('**Ты:** важное сообщение владельца', t)
         self.assertIn('**Claude:** ответ готово', t)  # «тоже» is a filler
         self.assertIn('claude --resume S', t)

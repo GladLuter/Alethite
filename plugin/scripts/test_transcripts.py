@@ -2,7 +2,7 @@ import json
 import os
 import tempfile
 import unittest
-from transcripts import find_session, last_usage, project_key, read_records, strip_handoff
+from transcripts import find_session, last_usage, project_key, project_keys, read_records, strip_handoff
 
 TS = '2026-10-13T10:00:00.000Z'
 
@@ -82,6 +82,18 @@ class TranscriptsTest(unittest.TestCase):
         self.assertEqual(strip_handoff('a[cg-handoff]x[/cg-handoff]b'), 'ab')
         # the owner writing about the marker keeps every word
         self.assertEqual(strip_handoff('Что делает [cg-handoff] в начале? Поправь README.'), 'Что делает [cg-handoff] в начале? Поправь README.')
+
+    def test_old_and_new_handoff_blocks_are_cut(self):  # the rename: transcripts of both times
+        path = self.write('s.jsonl', [u('a [cg-handoff]x[/cg-handoff] b [al-handoff]y[/al-handoff] c')])
+        self.assertEqual([t.split() for t in self.owner_texts(path)], [['a', 'b', 'c']])
+
+    def test_old_and_new_lessons_blocks_are_cut(self):
+        path = self.write('s.jsonl', [u('a [cg-lessons]x[/cg-lessons] b [al-lessons]y[/al-lessons] c')])
+        self.assertEqual([t.split() for t in self.owner_texts(path)], [['a', 'b', 'c']])
+
+    def test_tool_calls_of_both_names_are_skipped(self):
+        path = self.write('s.jsonl', [a([tool('mcp__cacheguard__recall', query='q'), tool('mcp__alethite__recall', query='q'), tool('Bash', command='ls')])])
+        self.assertEqual([r['text'] for r in read_records(path)[0]], ['Bash: ls'])
 
     def test_a_lone_surrogate_does_not_stop_the_file(self):
         path = self.write('s.jsonl', [json.dumps(u('ok \ud83d cut')), u('дальше')])  # the line holds the escape, as Claude Code writes it
@@ -200,6 +212,18 @@ class TranscriptsTest(unittest.TestCase):
         self.assertEqual(project_key(r'C:\_git\X', i3), project_key(r'C:\_git\X', laptop))  # outside the profile: the path itself
         self.assertEqual(project_key('/home/a/proj', '/home/a'), os.path.join('~', 'proj'))  # ~\\proj on Windows
         self.assertEqual(project_key('rel', '/nowhere'), project_key(os.path.abspath('rel'), '/nowhere'))  # a relative folder is made absolute
+
+    def test_project_keys_add_the_old_folders_of_the_aliases_that_name_this_one(self):
+        names = {r'C:\new\proj': [r'C:\old\proj', r'C:\older\proj']}
+        self.assertEqual(project_keys(r'C:\new\proj', names), [project_key(r'C:\new\proj'), project_key(r'C:\old\proj'), project_key(r'C:\older\proj')])
+        self.assertEqual(project_keys(r'c:\NEW\proj\.claude\worktrees\w1\src', names), project_keys(r'C:\new\proj', names))  # the key of the folder, not its spelling
+        self.assertEqual(project_keys(r'C:\old\proj', names), [project_key(r'C:\old\proj')])  # one way only
+        self.assertEqual(project_keys(r'C:\new\proj', {}), [project_key(r'C:\new\proj')])
+        # two names for one folder (another case, a worktree) are merged, and no key comes twice
+        two = {r'C:\new\proj': [r'C:\old\proj', r'C:\new\proj'], r'c:\NEW\PROJ\.claude\worktrees\w': [r'C:\old\proj', r'C:\x']}
+        self.assertEqual(project_keys(r'C:\new\proj', two), [project_key(r'C:\new\proj'), project_key(r'C:\old\proj'), project_key(r'C:\x')])
+        i3 = r'C:\Users\AIJ'  # the keys of the old folders are made the way the owner's own are
+        self.assertEqual(project_keys(r'C:\Users\AIJ\new', {r'C:\Users\AIJ\new': [r'C:\Users\AIJ\old']}, i3), [r'~\new', r'~\old'])
 
     def test_find_session_and_last_usage(self):
         u1 = {'input_tokens': 9, 'cache_read_input_tokens': 9, 'cache_creation_input_tokens': 9, 'output_tokens': 9}

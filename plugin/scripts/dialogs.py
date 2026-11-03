@@ -1,5 +1,5 @@
-"""The windows of /cg-encrypt (Windows only): the recovery code, a Yes/No question, a hidden entry of the code. Also the folder window of
-/cg-index-dir. What a window shows or takes never leaves it: a failure says what failed (the system's error number), never the text of
+"""The windows of /al-encrypt (Windows only): the recovery code, a Yes/No question, a hidden entry of the code. Also the folder window of
+/al-index-dir. What a window shows or takes never leaves it: a failure says what failed (the system's error number), never the text of
 the window, and a typed code comes back only as the return value, never in a message, a printed line or an exception."""
 import ctypes
 import os

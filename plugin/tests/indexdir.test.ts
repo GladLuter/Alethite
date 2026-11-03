@@ -34,11 +34,11 @@ test('index dir reply: an index that was there already is not announced as moved
 })
 
 test('index dir refusal: the reason of cg.py without its Python exception name; any other text as it is', () => {
-  expect(indexDirRefusal('ValueError: D:\\X is not a local disk. Nothing was changed')).toBe('cg-index-dir: D:\\X is not a local disk. Nothing was changed')
-  expect(indexDirRefusal('PermissionError: [WinError 5] denied')).toBe('cg-index-dir: [WinError 5] denied')
-  expect(indexDirRefusal('Exception: boom')).toBe('cg-index-dir: boom')
-  expect(indexDirRefusal('Error: boom')).toBe('cg-index-dir: boom')
-  expect(indexDirRefusal('SettingsBroken: the file is broken')).toBe('cg-index-dir: the file is broken')
-  expect(indexDirRefusal(T.indexDirTimeout)).toBe(`cg-index-dir: ${T.indexDirTimeout}`)
-  expect(indexDirRefusal('Note: the text is not a name of an error')).toBe('cg-index-dir: Note: the text is not a name of an error')
+  expect(indexDirRefusal('ValueError: D:\\X is not a local disk. Nothing was changed')).toBe('al-index-dir: D:\\X is not a local disk. Nothing was changed')
+  expect(indexDirRefusal('PermissionError: [WinError 5] denied')).toBe('al-index-dir: [WinError 5] denied')
+  expect(indexDirRefusal('Exception: boom')).toBe('al-index-dir: boom')
+  expect(indexDirRefusal('Error: boom')).toBe('al-index-dir: boom')
+  expect(indexDirRefusal('SettingsBroken: the file is broken')).toBe('al-index-dir: the file is broken')
+  expect(indexDirRefusal(T.indexDirTimeout)).toBe(`al-index-dir: ${T.indexDirTimeout}`)
+  expect(indexDirRefusal('Note: the text is not a name of an error')).toBe('al-index-dir: Note: the text is not a name of an error')
 })

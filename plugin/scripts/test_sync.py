@@ -148,7 +148,7 @@ class SyncTest(unittest.TestCase):
         self.assertFalse(any('ёжик' in t for t in self.b.embedded))
         self.assertFalse(any('ноутбук' in t for t in self.a.embedded))
         self.assertEqual((self.a.embed()['done'], self.b.embed()['done']), (0, 0))
-        # each record is ours or theirs: /cg-health tells them apart
+        # each record is ours or theirs: /al-health tells them apart
         self.assertEqual(cgsync.status(self.a.conn, 'AIJ-HP')['origins'], {'AIJ-HP': 2, 'MTLAPTOP': 2})
 
     # 2. repeat
@@ -364,7 +364,7 @@ class SyncTest(unittest.TestCase):
         os.remove(os.path.join(self.share, 'MTLAPTOP', 'batch-00000001.jsonl.gz'))
         r = self.a.sync()
         self.assertEqual((r['errors'][0]['batch'], r['pulled']), (1, 0))
-        self.assertIn('/cg-sync skip MTLAPTOP 1', r['errors'][0]['error'])
+        self.assertIn('/al-sync skip MTLAPTOP 1', r['errors'][0]['error'])
 
     def test_a_hiccup_of_the_share_or_a_locked_index_is_no_broken_batch_and_offers_no_skip(self):  # the next sync simply tries again
         import sqlcipher3  # an encrypted index raises its own class, once it is loaded
@@ -386,7 +386,7 @@ class SyncTest(unittest.TestCase):
             with self.subTest(name):
                 with open(os.path.join(self.share, 'MTLAPTOP', 'batch-00000001.jsonl.gz'), 'wb') as f:
                     f.write(data)
-                self.assertIn('/cg-sync skip MTLAPTOP 1', self.a.sync()['errors'][0]['error'])
+                self.assertIn('/al-sync skip MTLAPTOP 1', self.a.sync()['errors'][0]['error'])
 
     # 4. an unavailable folder
     def test_an_unavailable_folder_is_an_error_and_the_local_memory_works(self):
@@ -399,7 +399,7 @@ class SyncTest(unittest.TestCase):
             self.assertIn(gone, r['errors'][0]['error'])
         self.assertEqual(search(self.a.conn, 'ёжик')[0]['conv'], 'SA')
         self.assertEqual(hybrid_search(self.a.conn, 'ёжик', embed_fn=fake)[1], 'ok')
-        last = json.loads(memdb.meta(self.a.conn, 'sync_last'))  # kept for /cg-health
+        last = json.loads(memdb.meta(self.a.conn, 'sync_last'))  # kept for /al-health
         self.assertEqual((last['errors'], last['stopped']), (1, True))
         self.assertFalse(os.path.exists(os.path.join(self.root, 'nas-off')))  # an absent share is not made on the local disk
 
@@ -445,8 +445,8 @@ class SyncTest(unittest.TestCase):
         for c in (self.a, self.b):
             key = project_key(c.cwd, c.home)
             self.assertEqual(key, '~\\work\\proj')
-            self.assertEqual({h['conv'] for h in search(c.conn, 'ответ', project=key)}, {'SA', 'SB'})
-            self.assertEqual(search(c.conn, 'ответ', project=project_key('C:\\_git\\other', c.home)), [])
+            self.assertEqual({h['conv'] for h in search(c.conn, 'ответ', project=[key])}, {'SA', 'SB'})
+            self.assertEqual(search(c.conn, 'ответ', project=[project_key('C:\\_git\\other', c.home)]), [])
 
     # 8. short memory
     def test_a_fact_from_the_i3_comes_into_the_laptops_memory(self):

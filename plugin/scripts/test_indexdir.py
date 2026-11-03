@@ -174,6 +174,26 @@ class ResolveTest(unittest.TestCase):
             self.assertEqual(resolve(), Where(self.db, self.far, True, None))
         usage.assert_called_with(self.home)
 
+    def test_index_dir_setting_inside_old_folder_resolves_to_new(self):  # indexDir was written under the old name, the folder moved with the file
+        old = os.path.join(os.path.dirname(self.home), 'old')  # gone, as after crypto.move_home
+        inside = os.path.join(self.home, 'idx')
+        self.touch(os.path.join(inside, 'index.db'))
+        with mock.patch.object(crypto, 'OLD_HOME_DIR', old), mock.patch.object(crypto, 'HOME_DIR', self.home):
+            self.settings(indexDir=os.path.join(old, 'idx'))
+            self.assertEqual(self.where(), Where(os.path.join(inside, 'index.db'), inside, False, None))
+            self.settings(indexDir=old)  # the old home itself is "no indexDir", like the new one
+            self.assertEqual(self.where(), Where(self.db, None, False, None))
+
+    def test_index_elsewhere_stays_and_settings_move(self):
+        root = os.path.dirname(self.home)
+        old, new = os.path.join(root, 'old'), os.path.join(root, 'new')
+        self.touch(os.path.join(old, 'settings.json'), json.dumps({'indexDir': self.far}))
+        self.touch(self.far_db)
+        with mock.patch.object(crypto, 'OLD_HOME_DIR', old), mock.patch.object(crypto, 'HOME_DIR', new):
+            self.assertEqual(crypto.move_home(), [])
+            self.assertEqual(resolve(), Where(self.far_db, self.far, False, None))  # the same index, its settings now from the new home
+        self.assertEqual((os.path.isfile(os.path.join(new, 'settings.json')), os.path.exists(old)), (True, False))
+
 
 class StatusTest(unittest.TestCase):
     def setUp(self):
@@ -211,6 +231,15 @@ class StatusTest(unittest.TestCase):
         use_lang(self, 'en')
         self.assertEqual(indexdir.status(self.conn, None)['notes'], [t('index_merged', dir='D:\\x', home='H', n=3)])
         self.assertIn('(records: 3)', indexdir.status(self.conn, None)['notes'][0])
+
+    def test_old_copy_inside_old_folder_is_found_after_move(self):  # meta.old_copy and merge_done were written under the old name
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        old, new = (os.path.join(d.name, n) for n in ('old', 'new'))
+        self.meta(old_copy=os.path.join(old, 'idx') + '\nC:\\other', merge_done=json.dumps({'dir': 'D:\\x', 'home': old, 'n': 3}))
+        with mock.patch.object(crypto, 'OLD_HOME_DIR', old), mock.patch.object(crypto, 'HOME_DIR', new):
+            notes = indexdir.status(self.conn, None)['notes']
+        self.assertEqual(notes, [t('index_old_copy', dir=os.path.join(new, 'idx')), t('index_old_copy', dir='C:\\other'), t('index_merged', dir='D:\\x', home=new, n=3)])
 
     def test_the_notes_of_the_index_itself_show_without_a_where(self):  # a run with --db has none
         self.meta(old_copy='C:\\old', merge_error='диск занят')  # a failed merge needs both folders to be told, and a run with --db knows neither
@@ -703,7 +732,7 @@ class CopyFileTest(unittest.TestCase):
 
 @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
 class MoveTest(unittest.TestCase):
-    """indexdir.move on temporary folders. `home` stands for ~/.claude/cacheguard: crypto.HOME_DIR is patched, the real one is never read.
+    """indexdir.move on temporary folders. `home` stands for ~/.claude/alethite: crypto.HOME_DIR is patched, the real one is never read.
     The fakes answer the drive type and the free space, and record what they were asked."""
 
     def setUp(self):
@@ -809,7 +838,7 @@ class MoveTest(unittest.TestCase):
         self.assertEqual(crypto.INDEX_DIRS, {crypto.norm(self.target)})
         self.assertTrue(os.path.exists(self.src))  # No: nothing of the old copy is touched
         self.assertEqual(self.old_copy(self.new_db()), self.home)
-        with contextlib.closing(memdb.connect(self.new_db())) as conn:  # and /cg-health says where it lies
+        with contextlib.closing(memdb.connect(self.new_db())) as conn:  # and /al-health says where it lies
             self.assertEqual(indexdir.status(conn, Where(self.new_db(), self.target, False, None))['notes'], [t('index_old_copy', dir=self.home)])
 
     def test_yes_deletes_the_listed_files_of_the_old_copy_and_its_note_and_nothing_else(self):
@@ -1076,7 +1105,7 @@ class MoveTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.target))
 
     def efs_home(self):
-        """full_home in a home folder that EFS holds from the start (the files are born encrypted, as `/cg-encrypt on` leaves them), with a key."""
+        """full_home in a home folder that EFS holds from the start (the files are born encrypted, as `/al-encrypt on` leaves them), with a key."""
         crypto.efs_encrypt(self.home)
         self.full_home()
         key = secrets.token_bytes(32)

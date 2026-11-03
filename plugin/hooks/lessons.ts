@@ -9,8 +9,8 @@ export type Found = { id: number; conv: string; pos: number; text: string; score
 
 export const FIELDS = ['action', 'symptom', 'cause', 'fix', 'trigger'] as const
 // the marks the index cuts out of the owner's words (transcripts.py), whatever the engine keeps of the context
-export const START = '[cg-lessons]'
-export const END = '[/cg-lessons]'
+export const START = '[al-lessons]'
+export const END = '[/al-lessons]'
 const LESSON_CHARS = 600 // one lesson in the context; two at most a message: about 300 tokens when they fit, none when they do not
 
 // Each value one `--field=…` item: one starting with `-` must not be read as a flag. An empty or a non-text value is left out, and
@@ -58,11 +58,11 @@ export const gateFor = (command: unknown, lessons: readonly Lesson[], stopped: R
   return lessons.find(l => l.trigger !== null && l.trigger.length >= TRIGGER_MIN && !stopped.has(l.id) && c.includes(l.trigger.toLowerCase()))
 }
 
-// /cg-lessons: one line each, newest first, with the pos `forget` takes and the computer it came from.
+// /al-lessons: one line each, newest first, with the pos `forget` takes and the computer it came from.
 export const formatLessons = (lessons: readonly Lesson[]) =>
   lessons.length === 0 ? T.noLessons : lessons.map(l => `pos=${l.pos} [${l.ts.slice(0, 10)}${l.from ? ` ${l.from}` : ''}] ${oneLine(l.text)}`).join('\n')
 
-// `/cg-lessons forget 1792…` → the pos; null for a plain list; undefined for anything else.
+// `/al-lessons forget 1792…` → the pos; null for a plain list; undefined for anything else.
 export const forgetArg = (args: string) => {
   const a = args.trim()
   if (a === '') return null

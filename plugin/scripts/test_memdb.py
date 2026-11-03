@@ -44,6 +44,11 @@ class LockTest(unittest.TestCase):
             self.assertEqual(conn.execute('PRAGMA busy_timeout').fetchone()[0], 30000)
             conn.close()
 
+    def test_connect_without_a_path_follows_the_home_folder_at_the_call(self):  # move_home may change HOME_DIR after memdb is imported
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(crypto, 'HOME_DIR', d):
+            connect().close()
+            self.assertTrue(os.path.isfile(os.path.join(d, 'index.db')))
+
     def test_lock_is_one_per_name_and_index_and_ends_with_its_connection(self):
         with tempfile.TemporaryDirectory() as d:
             db = os.path.join(d, 'index.db')
@@ -92,6 +97,8 @@ class EncryptedIndexTest(unittest.TestCase):
         try:
             self.assertEqual(update(conn, self.projects)['rows'], 1)
             self.assertEqual(len(search(conn, 'зашифрованноеслово')), 1)
+            self.assertEqual(len(search(conn, 'зашифрованноеслово', project=['c:\\нет', project_key('C:\\a')])), 1)  # json_each in SQLCipher
+            self.assertEqual(search(conn, 'зашифрованноеслово', project=['c:\\нет']), [])
         finally:
             conn.close()
         self.assertTrue(crypto.is_encrypted(self.db))
@@ -583,10 +590,15 @@ class MemdbTest(unittest.TestCase):
         self.write('P1/S1/subagents/workflows/wf_1/agent-a1.jsonl', [owner_line('найди ёжик', cwd='')])  # no cwd: the project comes from the parent
         self.write('P2/S2.jsonl', [owner_line('ёжик в другом проекте', cwd='C:\\b')])
         self.update()
-        hits = search(self.conn, 'ёжик', project=project_key('C:\\a'))
+        hits = search(self.conn, 'ёжик', project=[project_key('C:\\a')])
         self.assertEqual({h['conv'] for h in hits}, {'S1', 'agent-a1'})
         self.assertEqual({h['parent'] for h in hits}, {'', 'S1'})
         self.assertEqual(len(search(self.conn, 'ёжик')), 3)
+        # several keys (a project and its aliases): the conversations of all of them, a subagent still with its parent's
+        both = search(self.conn, 'ёжик', project=[project_key('C:\\b'), project_key('C:\\a')])
+        self.assertEqual({h['conv'] for h in both}, {'S1', 'agent-a1', 'S2'})
+        self.assertEqual({h['conv'] for h in search(self.conn, 'ёжик', project=[project_key('C:\\b'), project_key('C:\\нет')])}, {'S2'})
+        self.assertEqual(search(self.conn, 'ёжик', project=[]), [])
 
     def test_hit_carries_the_chunk_rowid(self):
         self.write('P/S.jsonl', [owner_line('первое'), owner_line('второе ёжик')])
@@ -629,6 +641,13 @@ class MemdbTest(unittest.TestCase):
         self.conn.execute(ins, (2, TS, 'owner'))
         found = [self.conn.execute('SELECT kind, text FROM chunks WHERE rowid = ?', (h['id'],)).fetchone() for h in search(self.conn, 'проба кнопки')]
         self.assertEqual(sorted(found), [('owner', 'mcp__cacheguard__recall: проба кнопки'), ('owner', 'проба кнопки'), ('tool', 'Bash: проба кнопки')])
+
+    def test_word_hits_skip_tool_chunks_of_both_names(self):
+        ins = "INSERT INTO chunks(text, conv, pos, ts, kind) VALUES(?, 'S', ?, ?, 'tool')"
+        for i, text in enumerate(('mcp__cacheguard__recall: проба кнопки', 'mcp__alethite__recall: проба кнопки', 'Bash: проба кнопки')):
+            self.conn.execute(ins, (text, i, TS))
+        self.assertEqual([self.conn.execute('SELECT text FROM chunks WHERE rowid = ?', (h['id'],)).fetchone()[0] for h in search(self.conn, 'проба кнопки')],
+                         ['Bash: проба кнопки'])
 
     def test_resumed_session_copy_is_one_hit(self):
         # Claude Code copies the history of a resumed session into the new transcript: the same message under two convs

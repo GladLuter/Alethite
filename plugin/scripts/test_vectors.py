@@ -333,7 +333,7 @@ class VectorsTest(unittest.TestCase):
         embed_pending(self.conn, embed_fn=fake)
         conv_of = lambda rowid: self.q('SELECT conv FROM chunks WHERE rowid = ?', rowid)
         qvec = pack(fake(['ёжик в тумане'])[0])
-        hits = search_vectors(self.conn, qvec, project_key('C:\\a'))
+        hits = search_vectors(self.conn, qvec, [project_key('C:\\a')])
         self.assertEqual(conv_of(hits[0][0]), 'S1')
         self.assertTrue(all(conv_of(h[0]) in ('S1', 'agent-a1') for h in hits))
         self.assertEqual(len(hits), 5)  # five records, the 4-piece reply once, not four times
@@ -345,7 +345,8 @@ class VectorsTest(unittest.TestCase):
         self.assertAlmostEqual(hits[0][1], 0.707, places=2)
         self.assertEqual({conv_of(h[0]) for h in search_vectors(self.conn, qvec, None)}, {'S1', 'S2', 'agent-a1'})
         self.assertEqual(len(search_vectors(self.conn, qvec, None, limit=2)), 2)
-        self.assertEqual(search_vectors(self.conn, qvec, project_key('C:\\нет')), [])
+        self.assertEqual(search_vectors(self.conn, qvec, [project_key('C:\\нет')]), [])
+        self.assertEqual(len(search_vectors(self.conn, qvec, [project_key('C:\\нет'), project_key('C:\\a')])), 5)  # one key that matches is enough
 
     def test_model_change_waits_for_proof(self):
         embed_pending(self.conn, embed_fn=fake)

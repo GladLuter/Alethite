@@ -58,7 +58,7 @@ class StatsTest(unittest.TestCase):
         self.assertAlmostEqual(m['rewrite_share'], 2.5 / 6.5)  # of all cost, the subagent's $2.00 included
         self.assertAlmostEqual(m['idle60_share'], 2.5 / 6.5)
 
-    def test_audit_selftest(self):  # the cost and cache-rewrite checks of the measure /cg-stats stands on
+    def test_audit_selftest(self):  # the cost and cache-rewrite checks of the measure /al-stats stands on
         with contextlib.redirect_stderr(io.StringIO()):  # its "selftest OK" is not for the output of the suite
             cc_token_audit.selftest()
 
@@ -107,6 +107,34 @@ class StatsTest(unittest.TestCase):
         self.assertIn('ultra', n)
         self.assertIn('memory_index_tokens: 950', n)
         self.assertIn('recall_share: ', n)  # the summary note reads it
+
+    def test_mod_tools_of_both_names_are_counted(self):
+        tool = lambda i, name: {'type': 'tool_use', 'id': i, 'name': name, 'input': {'query': 'кэш'}}
+        result = lambda i: dict(type='user', timestamp='2026-10-06T10:00:02.000Z', message={'role': 'user', 'content': [
+            {'type': 'tool_result', 'tool_use_id': i, 'content': 'x' * 700}]})
+        self.write('P/T.jsonl', [
+            dict(call('t1', '2026-10-06T10:00:01.000Z', IN_1M), message={'id': 't1', 'model': 'claude-sonnet-5', 'role': 'assistant', 'usage': IN_1M,
+                                                                        'content': [tool('r1', 'mcp__cacheguard__recall'), tool('r2', 'mcp__alethite__recall_more')]}),
+            result('r1'), result('r2')])
+        real = cc_token_audit.analyze
+
+        def two_servers(*a, **k):  # the audit names a category after the server: both of the mod's add up, others do not
+            R = real(*a, **k)
+            R['categories'] = [{'category': 'tool:mcp:cacheguard', 'cost_usd': 0.5, 'share': 0.1}, {'category': 'tool:mcp:alethite', 'cost_usd': 0.25, 'share': 0.05},
+                               {'category': 'tool:mcp:other', 'cost_usd': 9, 'share': 0.9}]
+            return R
+
+        with mock.patch('stats.cc_token_audit.analyze', two_servers):
+            m = metrics(self.projects, self.conn, '2026-10-01')
+        self.assertEqual((m['recall_calls'], m['recall_tokens']), (2, 400))
+        self.assertAlmostEqual(m['recall_cost'], 0.75)
+        self.assertAlmostEqual(m['recall_share'], 0.15)
+
+    def test_handoffs_of_both_names_are_counted(self):
+        old, new = '[cg-handoff]\nстарая\n[/cg-handoff]', '[al-handoff]\nновая\n[/al-handoff]'
+        self.write('P/T.jsonl', [owner_line(old, '2026-10-06T10:00:00.000Z'), owner_line('  ' + new + '\n\nчерновик', '2026-10-06T10:00:01.000Z')])
+        m = metrics(self.projects, self.conn, '2026-10-01')
+        self.assertEqual((m['handoffs'], m['handoff_tokens']), (2, round((len(old) + len(new)) / 3.5)))
 
     def test_metrics_reads_each_transcript_once(self):
         real_open, opened = open, []

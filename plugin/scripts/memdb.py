@@ -9,9 +9,8 @@ import time
 import crypto
 from redact import redact
 from texts import t
-from transcripts import lp, project_key, read_records
+from transcripts import MOD_TOOL_PREFIXES, lp, project_key, read_records
 
-DB_PATH = os.path.join(crypto.HOME_DIR, 'index.db')
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, size INTEGER, offset INTEGER);
 CREATE TABLE IF NOT EXISTS convs(conv TEXT PRIMARY KEY, parent TEXT, first_ts TEXT, last_ts TEXT);
@@ -37,15 +36,16 @@ CREATE TABLE IF NOT EXISTS peers(machine TEXT PRIMARY KEY, last_batch INTEGER NO
 CREATE TABLE IF NOT EXISTS mem_files(project TEXT, name TEXT, source TEXT NOT NULL, src_name TEXT NOT NULL, hash TEXT NOT NULL,
   PRIMARY KEY(project, name));
 """
-# a table with a `conv` column and the parameter :p (NULL = every project); a subagent belongs to its parent's project
-IN_PROJECT = """(:p IS NULL
-  OR conv IN (SELECT conv FROM conv_projects WHERE project = :p)
-  OR conv IN (SELECT c.conv FROM convs c JOIN conv_projects p ON p.conv = c.parent WHERE p.project = :p))"""
+# a table with a `conv` column and the parameter :p, json.dumps of None (every project) or of a list of project keys (a project and its
+# aliases); a subagent belongs to its parent's project
+IN_PROJECT = """(:p = 'null'
+  OR conv IN (SELECT conv FROM conv_projects WHERE project IN (SELECT value FROM json_each(:p)))
+  OR conv IN (SELECT c.conv FROM convs c JOIN conv_projects p ON p.conv = c.parent WHERE p.project IN (SELECT value FROM json_each(:p))))"""
 # the mod's own tool calls are no memory; rows of them from before transcripts.py stopped emitting them are left out here
 _SEARCH = """
 SELECT conv, pos, ts, kind, snippet(chunks, 0, '«', '»', '…', 24),
        (SELECT parent FROM convs WHERE convs.conv = chunks.conv), rowid
-FROM chunks WHERE chunks MATCH :q AND NOT (kind = 'tool' AND text GLOB 'mcp__cacheguard__*') AND """ + IN_PROJECT + """
+FROM chunks WHERE chunks MATCH :q AND NOT (kind = 'tool' AND (""" + ' OR '.join("text GLOB '%s*'" % p for p in MOD_TOOL_PREFIXES) + """)) AND """ + IN_PROJECT + """
 ORDER BY bm25(chunks) * CASE WHEN kind IN ('sub', 'tool') THEN 0.5 ELSE 1.0 END LIMIT :n
 """
 
@@ -143,7 +143,8 @@ def lock(db, name, wait):
     return conn
 
 
-def connect(path=DB_PATH, home=None):
+def connect(path=None, home=None):
+    path = path or os.path.join(crypto.HOME_DIR, 'index.db')  # at the call: crypto.move_home may have changed HOME_DIR since the import
     os.makedirs(os.path.dirname(path), exist_ok=True)
     conn = _open(path)
     conn.executescript(_SCHEMA)
@@ -317,11 +318,12 @@ def status(conn):
 
 
 def word_hits(conn, query, project=None, n=50):
-    """At most `n` hits containing all the words of the query, else any of them; best first, repeats still in."""
+    """At most `n` hits containing all the words of the query, else any of them; best first, repeats still in. `project`: None (every
+    project) or a list of project keys."""
     terms = ['"%s"' % w for w in re.findall(r'\w+', query)]
     rows = []
     for q in ((' '.join(terms), ' OR '.join(terms)) if terms else ()):
-        rows = conn.execute(_SEARCH, {'q': q, 'p': project, 'n': n}).fetchall()
+        rows = conn.execute(_SEARCH, {'q': q, 'p': json.dumps(project), 'n': n}).fetchall()
         if rows:
             break
     return [{'conv': conv, 'parent': parent or '', 'ts': ts, 'kind': kind, 'pos': pos, 'snippet': snippet, 'id': rowid}

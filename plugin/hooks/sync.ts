@@ -39,7 +39,7 @@ export const syncArgs = (syncDir: string, model: string, memoryDir: string | nul
   ...(skip.length ? ['--skip-batch', ...skip] : []),
 ]
 
-// `/cg-sync skip MTLAPTOP 12` → ['MTLAPTOP', '12']; [] for a plain run; null when skip is asked without a computer and a number.
+// `/al-sync skip MTLAPTOP 12` → ['MTLAPTOP', '12']; [] for a plain run; null when skip is asked without a computer and a number.
 export const skipArgs = (args: string): string[] | null => {
   const words = args.trim().split(/\s+/).filter(Boolean)
   if (words.length === 0) return []
@@ -48,7 +48,7 @@ export const skipArgs = (args: string): string[] | null => {
 
 const list = (pairs: [string, number][]) => pairs.map(([name, n]) => `${name} ${n}`).join(', ')
 
-// The reply of /cg-sync: what moved, how far each computer is, the short memory, and every warning and error. A run that failed as a
+// The reply of /al-sync: what moved, how far each computer is, the short memory, and every warning and error. A run that failed as a
 // whole (an unavailable folder) never reached the memory: its error says why, not a missing auto-memory folder.
 export const syncReport = (r: SyncResult) => [
   T.cgSyncDone(r),
@@ -60,7 +60,7 @@ export const syncReport = (r: SyncResult) => [
   ...r.errors.map(e => T.cgSyncError(e.error)),
 ]
 
-// The /cg-health lines of the sync: the folder, the records by computer, how far each computer is, the last run and its errors.
+// The /al-health lines of the sync: the folder, the records by computer, how far each computer is, the last run and its errors.
 export const syncHealth = (syncDir: string, s: SyncStatus | undefined) => {
   if (!syncDir) return [T.healthSyncOff]
   if (!s) return [T.healthSync(syncDir, '?')]

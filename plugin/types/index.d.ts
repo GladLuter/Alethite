@@ -10,7 +10,7 @@ export type Snap = {
 
 declare module 'claude-code' {
   interface PluginState {
-    cacheguard: {
+    alethite: {
       snap: Snap | null
       // session ids the band is hidden / force-shown for; a /clear changes the id and ends both
       hiddenId: string

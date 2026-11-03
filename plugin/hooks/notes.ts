@@ -1,11 +1,11 @@
-// Pure side of /cg-stats: where the notes live in the vault, the summary table, the outbox flush.
+// Pure side of /al-stats: where the notes live in the vault, the summary table, the outbox flush.
 // The Obsidian calls (`$.mcp.call`) live in register.tsx: the loader follows `$` only inside its own file.
 import { message } from './py'
 import { T } from './text'
 
 export type Note = { path: string; content: string }
 
-export const FOLDER = 'Claude-CacheGuard/Замеры'
+export const FOLDER = 'Alethite/Замеры'
 export const SUMMARY_PATH = `${FOLDER}/Сводка.md`
 export const notePath = (host: string, today: string) => `${FOLDER}/${today} ${host}.md`
 

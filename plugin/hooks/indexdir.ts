@@ -1,4 +1,4 @@
-// Pure side of /cg-index-dir: the cg.py command line, what the owner reads of a run, and the notes of /cg-health.
+// Pure side of /al-index-dir: the cg.py command line, what the owner reads of a run, and the notes of /al-health.
 // Everything that touches `$` (runCg, the toasts) lives in register.tsx: the loader follows `$` only inside its own file.
 import { T } from './text'
 
@@ -18,4 +18,4 @@ const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 export const indexDirReply = (r: IndexDirResult) => [...(r.here ? [] : [r.done ? T.indexDirDone(r.dir) : T.indexDirUnfinished]), ...r.notes.map(capital)].join('\n')
 
 // A refusal or a failure: cg.py words its reason as `ValueError: <text>` (a bare `Error:` or `SettingsBroken:` too), and the owner must act on the text, not on the class.
-export const indexDirRefusal = (msg: string) => `cg-index-dir: ${msg.replace(/^\w*(Error|Exception|Broken): /, '')}`
+export const indexDirRefusal = (msg: string) => `al-index-dir: ${msg.replace(/^\w*(Error|Exception|Broken): /, '')}`

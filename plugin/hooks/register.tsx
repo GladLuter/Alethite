@@ -11,7 +11,7 @@ import { encryptArgs, encryptHealth, encryptReply, isTimeout } from './encrypt'
 import type { EncryptResult, EncryptStatus } from './encrypt'
 import { indexDirArgs, indexDirRefusal, indexDirReply } from './indexdir'
 import type { IndexDirResult } from './indexdir'
-import { healthLines, indexProblemOf, message, parseCg } from './py'
+import { healthLines, homeNotesOf, indexProblemOf, message, parseCg } from './py'
 import type { LastError } from './py'
 import { jobArgs, jobHealth } from './job'
 import type { JobRun } from './job'
@@ -21,22 +21,26 @@ import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
 import { skipArgs, syncArgs, syncReport } from './sync'
 import type { SyncResult } from './sync'
-import { settingsPath, withFile } from './settings'
+import { oldSettingsPath, settingsPath, withFile } from './settings'
 import { language, setLanguage, T } from './text'
 import { launch } from './worker'
 import type { LaunchIO } from './worker'
 
-const snap = atom({ plugin: 'cacheguard', key: 'snap' } as const, null)
-const hiddenId = atom({ plugin: 'cacheguard', key: 'hiddenId' } as const, '')
-const forcedId = atom({ plugin: 'cacheguard', key: 'forcedId' } as const, '')
-const isArmed = atom({ plugin: 'cacheguard', key: 'isArmed' } as const, false)
-const isBusy = atom({ plugin: 'cacheguard', key: 'isBusy' } as const, false)
+const snap = atom({ plugin: 'alethite', key: 'snap' } as const, null)
+const hiddenId = atom({ plugin: 'alethite', key: 'hiddenId' } as const, '')
+const forcedId = atom({ plugin: 'alethite', key: 'forcedId' } as const, '')
+const isArmed = atom({ plugin: 'alethite', key: 'isArmed' } as const, false)
+const isBusy = atom({ plugin: 'alethite', key: 'isBusy' } as const, false)
 
 // The helpers below take `$` and so stay in this file: the loader follows `$` only into functions declared here, never across an import.
 
 // The notice of cg.py about where the index is (not in its folder, a merge done) that was shown last: a toast only when it changes or comes back
-// after an answer with none, /cg-health keeps saying it.
+// after an answer with none, /al-health keeps saying it.
 let lastNotice = ''
+
+// The notes of cg.py about the one-time move of the mod folder (home_notes) that were toasted: each one once per load of the mod.
+// /al-health tells the notes of its own fresh status answer instead, so a note that is no longer true does not stay on the report.
+const toastedNotes: string[] = []
 
 // Why cg.py cannot use the index, kept until an answer comes without it, and what the status line shows besides the warning about it.
 let indexProblem = ''
@@ -61,14 +65,17 @@ const runCg = async ($: EngineInterface, python: string, args: string[], timeout
   })
   const problem = indexProblemOf(r.stdout) // before parseCg throws: an error answer carries it too
   if (problem !== undefined) setProblem($, problem)
+  for (const note of homeNotesOf(r.stdout)) {
+    if (toastedNotes.includes(note)) continue
+    toastedNotes.push(note)
+    toast($, note)
+  }
   const out = parseCg(r)
   const notice = typeof out.index_notice === 'string' ? out.index_notice : ''
   if (!notice) lastNotice = ''
   else if (notice !== lastNotice) {
-    try {
-      await toast($, notice)
-      lastNotice = notice // shown only once the toast went out: a refused one is tried again with the next answer
-    } catch {}
+    toast($, notice)
+    lastNotice = notice // told once, until an answer comes without it
   }
   return out
 }
@@ -86,10 +93,10 @@ const recheck = async ($: EngineInterface, python: string) => {
   if (indexProblem) toast($, indexProblem)
 }
 
-// What /cg-health shows as the last error; every path that reports a failure leaves it here.
+// What /al-health shows as the last error; every path that reports a failure leaves it here.
 const noteError = async ($: EngineInterface, where: string, err: unknown) => $.store.set('lastError', { at: await $.clock.now(), where, msg: message(err) })
 
-// An owner-started action failed: tell them now and keep it for /cg-health.
+// An owner-started action failed: tell them now and keep it for /al-health.
 const fail = async ($: EngineInterface, where: string, err: unknown) => {
   toast($, T.failed(where, message(err)))
   await noteError($, where, err)
@@ -114,12 +121,21 @@ const served = async ($: EngineInterface, where: string, work: () => Promise<str
   }
 }
 
+// The settings file that is there now: the new one, else the old one, even if only its folder is there (cg.py moves that folder on its first run, and
+// a folder made here first would stand beside it and strand the index there), else the new one, to be written. Asked at every use: the move happens
+// under a running chat.
+const settingsFileOf = async ($: EngineInterface, home: string) => {
+  const old = oldSettingsPath(home)
+  const isOld = !(await $.fs.exists(settingsPath(home))) && ((await $.fs.exists(old)) || (await $.fs.exists(old.replace(/[\\/][^\\/]+$/, ''))))
+  return isOld ? old : settingsPath(home)
+}
+
 // The memory files loaded in this chat, as the engine counts them.
 const memoryFiles = async ($: EngineInterface) => (await $.session.usage({ breakdown: 'summary' })).context.breakdown?.memoryFiles ?? []
 
 const memoryDir = async ($: EngineInterface) => autoMemDir(await memoryFiles($))
 
-// The periodic and background paths: the error goes to the status line (a toast every 30 s would be spam) and is kept for /cg-health.
+// The periodic and background paths: the error goes to the status line (a toast every 30 s would be spam) and is kept for /al-health.
 const guarded = async ($: EngineInterface, where: string, work: () => Promise<unknown>) => {
   try {
     await work()
@@ -140,10 +156,10 @@ const runSync = async ($: EngineInterface, python: string, syncDir: string, mode
 
 // Three seconds into a session: bring the index up to date, give the records without vectors up to 2 minutes of the embedding model
 // (the rest waits for the next start), then push our new records and take in the other computers'.
-// Returns the steps that failed, if any did.
+// Returns the steps that failed, if any did. The index run carries --follow-job (as /al-health's status does): cg.py points the background job at this copy of itself.
 const catchUp = async ($: EngineInterface, python: string, model: string, syncDir: string, shareCipher: string) => {
-  const isIndexed = await guarded($, 'index', async () => indexErrors($, 'index', (await runCg($, python, ['index'], 600_000)).errors as IndexError[], false))
-  if (!isIndexed) return 'index' // the same database would fail the same way, and the first cause must stay in /cg-health
+  const isIndexed = await guarded($, 'index', async () => indexErrors($, 'index', (await runCg($, python, ['--follow-job', 'index'], 600_000)).errors as IndexError[], false))
+  if (!isIndexed) return 'index' // the same database would fail the same way, and the first cause must stay in /al-health
   const isEmbedded = await guarded($, 'embed', async () => {
     const [first] = (await runCg($, python, ['embed', '--model', model, '--max-seconds', '120'], 180_000)).errors as { error: string }[]
     if (first) throw new Error(first.error)
@@ -164,7 +180,7 @@ const lessonsOf = async ($: EngineInterface, python: string) =>
   ((await runCg($, python, ['lessons', '--cwd', await $.session.root()])).lessons as Lesson[] | undefined) ?? []
 
 // The same, quietly, for the paths nobody asked on: a failure keeps the list there was, and must not push the first cause of a failed
-// start out of /cg-health (the database that failed the index fails this too); /cg-lessons tells it when asked.
+// start out of /al-health (the database that failed the index fails this too); /al-lessons tells it when asked.
 const lessonsOr = async ($: EngineInterface, python: string, kept: Lesson[]) => {
   try {
     return await lessonsOf($, python)
@@ -173,7 +189,7 @@ const lessonsOr = async ($: EngineInterface, python: string, kept: Lesson[]) => 
   }
 }
 
-// How often the lessons came back, on this computer, for /cg-health: what they cost and whether they stop anything.
+// How often the lessons came back, on this computer, for /al-health: what they cost and whether they stop anything.
 const countLessons = async ($: EngineInterface, key: 'shown' | 'chars' | 'stopped', n: number) => {
   const all = ((await $.store.get('lessonCounts')) as Record<string, number> | undefined) ?? {}
   await $.store.set('lessonCounts', { ...all, [key]: (all[key] ?? 0) + n })
@@ -246,7 +262,7 @@ const rebuildSummary = async ($: EngineInterface) => {
   await obsidian($, 'create_vault_file', { path: SUMMARY_PATH, content: summaryNote(fronts) })
 }
 
-// One /cg-stats run: measure, queue the note, send the queue, rebuild the summary. Returns what the owner reads.
+// One /al-stats run: measure, queue the note, send the queue, rebuild the summary. Returns what the owner reads.
 const runStats = async ($: EngineInterface, python: string, days: number, compression: string) => {
   const [now, host, usage, files] = await Promise.all([$.clock.now(), $.env.get('COMPUTERNAME'), $.session.usage(), memoryFiles($)])
   if (!host) throw new Error(T.noHost)
@@ -256,7 +272,7 @@ const runStats = async ($: EngineInterface, python: string, days: number, compre
   const args = ['stats', '--since', since, '--host', host, '--today', today, '--limits', JSON.stringify(limits), '--rule-chars', String(T.memoryRule.length)]
   args.push('--memory-tokens', String(autoMemTokens(files)), '--compression', compression) // what the memory takes of every request (stage 3)
   const { note, errors } = (await runCg($, python, args, 600_000)) as { note: string; errors: IndexError[] }
-  await indexErrors($, 'cg-stats', errors, true) // an unreadable transcript lowers the figures; the note is written all the same
+  await indexErrors($, 'al-stats', errors, true) // an unreadable transcript lowers the figures; the note is written all the same
   const path = notePath(host, today)
   // one note per computer and day: a note still waiting for this day is replaced, not doubled
   const queue = [...(((await $.store.get('outbox')) as Note[] | undefined) ?? []).filter(n => n.path !== path), { path, content: note }]
@@ -265,13 +281,13 @@ const runStats = async ($: EngineInterface, python: string, days: number, compre
   await $.store.set('outbox', sent.left)
   const figures = note.replace(/^---\n[\s\S]*?\n---\n/, '').trim() + (errors.length ? `\n\n${T.cgStatsErrors(errors.length)}` : '') // the frontmatter is for the vault
   if (sent.error !== undefined) {
-    await fail($, 'cg-stats', sent.error)
+    await fail($, 'al-stats', sent.error)
     return `${figures}\n\n${T.cgStatsQueued(sent.left.length)}`
   }
   try {
     await rebuildSummary($)
   } catch (err) {
-    await fail($, 'cg-stats-summary', err)
+    await fail($, 'al-stats-summary', err)
     return `${figures}\n\n${T.cgStatsSummaryFailed}`
   }
   return `${figures}\n\n${T.cgStatsSent(sent.sent)}`
@@ -339,6 +355,7 @@ export const register: Register = (on, options) => {
     lessonsMinScore = typeof o.lessonsMinScore === 'number' ? o.lessonsMinScore : 0.45
   }
   apply(options)
+  let homeDir: string | undefined
   let settingsFile: string | undefined
   let isVectorToasted = false // the owner hears of a missing vector search once per load of the mod, not on every recall
   let isIndexToasted = false // likewise of unreadable transcripts a search came across
@@ -348,14 +365,15 @@ export const register: Register = (on, options) => {
   const shownIn = new Map<string, Set<number>>()
   const stoppedIn = new Map<string, Set<number>>()
   const setOf = (m: Map<string, Set<number>>, id: string) => m.get(id) ?? m.set(id, new Set()).get(id)!
-  let isLessonsNoted = false // a lesson search that fails on every message is kept for /cg-health once, not on each
+  let isLessonsNoted = false // a lesson search that fails on every message is kept for /al-health once, not on each
 
   on('session.start', async ($, e, next) => {
     // first, so the language and every other setting of the file hold before anything is drawn or said; a reload reads it again
-    const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
-    if (home !== undefined) {
-      settingsFile = settingsPath(home)
+    homeDir = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
+    if (homeDir !== undefined) {
+      settingsFile = settingsPath(homeDir) // the name for a failure below
       try {
+        settingsFile = await settingsFileOf($, homeDir)
         // missing, it is born with every value of the day; shortcut: a default changed later reaches it only once its key is deleted
         if (await $.fs.exists(settingsFile)) {
           const file = withFile(options, await $.fs.read(settingsFile))
@@ -387,15 +405,15 @@ export const register: Register = (on, options) => {
     // after the status line and the timers: a refusal of one schema must not leave the owner without the rest
     // two short schemas in every request cost less than the extra ToolSearch turn a deferred tool needs in each new chat
     const registrations = [
-      () => $.command.register({ name: 'cg-band', description: T.cgBandDescription, argumentHint: '[off]' }),
-      () => $.command.register({ name: 'cg-health', description: T.cgHealthDescription }),
-      () => $.command.register({ name: 'cg-index', description: T.cgIndexDescription, argumentHint: T.cgIndexHint }),
-      () => $.command.register({ name: 'cg-stats', description: T.cgStatsDescription, argumentHint: T.cgStatsHint }),
-      () => $.command.register({ name: 'cg-sync', description: T.cgSyncDescription, argumentHint: T.cgSyncHint }),
-      () => $.command.register({ name: 'cg-lessons', description: T.cgLessonsDescription, argumentHint: T.cgLessonsHint }),
-      () => $.command.register({ name: 'cg-job', description: T.cgJobDescription, argumentHint: T.cgJobHint }),
-      () => $.command.register({ name: 'cg-encrypt', description: T.cgEncryptDescription, argumentHint: T.cgEncryptHint }),
-      () => $.command.register({ name: 'cg-index-dir', description: T.cgIndexDirDescription, argumentHint: T.cgIndexDirHint }),
+      () => $.command.register({ name: 'al-band', description: T.cgBandDescription, argumentHint: '[off]' }),
+      () => $.command.register({ name: 'al-health', description: T.cgHealthDescription }),
+      () => $.command.register({ name: 'al-index', description: T.cgIndexDescription, argumentHint: T.cgIndexHint }),
+      () => $.command.register({ name: 'al-stats', description: T.cgStatsDescription, argumentHint: T.cgStatsHint }),
+      () => $.command.register({ name: 'al-sync', description: T.cgSyncDescription, argumentHint: T.cgSyncHint }),
+      () => $.command.register({ name: 'al-lessons', description: T.cgLessonsDescription, argumentHint: T.cgLessonsHint }),
+      () => $.command.register({ name: 'al-job', description: T.cgJobDescription, argumentHint: T.cgJobHint }),
+      () => $.command.register({ name: 'al-encrypt', description: T.cgEncryptDescription, argumentHint: T.cgEncryptHint }),
+      () => $.command.register({ name: 'al-index-dir', description: T.cgIndexDirDescription, argumentHint: T.cgIndexDirHint }),
       () =>
         $.tool.register({
           name: 'recall',
@@ -460,9 +478,9 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: 'cg-band' }, async ($, e) => {
+  on('command.run', { command: 'al-band' }, async ($, e) => {
     const isOff = e.args.trim() === 'off'
-    const isOk = await guarded($, 'cg-band', async () => {
+    const isOk = await guarded($, 'al-band', async () => {
       await refresh($, python)
       const id = await $.session.id()
       await update($, forcedId, () => (isOff ? '' : id))
@@ -472,7 +490,7 @@ export const register: Register = (on, options) => {
     return { text: !isOk ? T.cgBandFailed : isOff ? T.cgBandOff : T.cgBandOn }
   })
 
-  on('command.run', { command: 'cg-health' }, async $ => {
+  on('command.run', { command: 'al-health' }, async $ => {
     try {
       const mem = await memoryFiles($)
       const dir = autoMemDir(mem)
@@ -480,7 +498,7 @@ export const register: Register = (on, options) => {
       const root = await $.session.root()
       const [{ version }, index, files, lastError] = await Promise.all([
         $.session.version(),
-        runCg($, python, ['status', `--cwd=${root}`]).catch((err: Error) => err.message),
+        runCg($, python, ['--follow-job', 'status', `--cwd=${root}`]).catch((err: Error) => err.message),
         dir === null ? [] : $.fs.list(dir),
         $.store.get('lastError'),
       ])
@@ -489,27 +507,28 @@ export const register: Register = (on, options) => {
       const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" --lang ${language()} embed --model ${embedModel} --max-seconds 100000`
       const counts = ((await $.store.get('lessonCounts')) as Record<string, number> | undefined) ?? {}
       const lessons = { count: lessonList.length, shown: counts.shown ?? 0, chars: counts.chars ?? 0, stopped: counts.stopped ?? 0, on: isLessonsOn }
+      if (homeDir !== undefined) settingsFile = await settingsFileOf($, homeDir) // after the status run, which may have moved the folder
       return {
-        text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile, shareCipher, lessons }).join('\n'),
+        text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile, shareCipher, lessons, homeNotes: typeof index === 'string' ? [] : (index.home_notes as string[] | undefined) }).join('\n'),
       }
     } catch (err) {
-      await fail($, 'cg-health', err)
+      await fail($, 'al-health', err)
       return { text: T.cgHealthFailed }
     }
   })
 
-  on('command.run', { command: 'cg-index' }, async ($, e) => {
+  on('command.run', { command: 'al-index' }, async ($, e) => {
     try {
       const i = await runCg($, python, ['index', ...(e.args.trim() === 'rebuild' ? ['--rebuild'] : [])], 600_000)
-      await indexErrors($, 'cg-index', i.errors as IndexError[], true)
+      await indexErrors($, 'al-index', i.errors as IndexError[], true)
       return { text: T.cgIndexDone(i) }
     } catch (err) {
-      await fail($, 'cg-index', err)
+      await fail($, 'al-index', err)
       return { text: T.cgIndexFailed }
     }
   })
 
-  on('command.run', { command: 'cg-sync' }, async ($, e) => {
+  on('command.run', { command: 'al-sync' }, async ($, e) => {
     if (syncDir === '') return { text: T.cgSyncOff }
     const skip = skipArgs(e.args)
     if (skip === null) return { text: T.cgSyncSkipUsage }
@@ -517,13 +536,13 @@ export const register: Register = (on, options) => {
       const r = await runSync($, python, syncDir, embedModel, shareCipher, skip)
       lessonList = await lessonsOr($, python, lessonList) // the other computer's lessons, if it brought any
       if (r.errors.length) {
-        // the reply lists them all; the toast and /cg-health keep the first one for when the reply has scrolled away
+        // the reply lists them all; the toast and /al-health keep the first one for when the reply has scrolled away
         toast($, T.syncErrors(r.errors.length))
-        await noteError($, 'cg-sync', r.errors[0]!.error)
+        await noteError($, 'al-sync', r.errors[0]!.error)
       }
       return { text: syncReport(r).join('\n') }
     } catch (err) {
-      await fail($, 'cg-sync', err)
+      await fail($, 'al-sync', err)
       return { text: T.cgSyncFailed }
     }
   })
@@ -531,9 +550,10 @@ export const register: Register = (on, options) => {
   // on, join and off open windows in the Python process (the recovery code, the questions), and the owner's time in them counts. The host
   // cuts a process.run at 10 minutes (1_800_000 is refused outright), so cg.py keeps its own waits near 190 s of locks and 120 s of push
   // (ENCRYPT_WAITS, ENCRYPT_PUSH_SECONDS); a run cut all the same is safe to repeat. The state asks nothing.
-  on('command.run', { command: 'cg-encrypt' }, async ($, e) => {
+  on('command.run', { command: 'al-encrypt' }, async ($, e) => {
     try {
       // a chat that was not reloaded after the settings were edited holds the old ciphers, and the flags below would turn the index back: the file as it is now decides
+      if (homeDir !== undefined) settingsFile = await settingsFileOf($, homeDir) // cg.py may have moved the folder since the start
       if (settingsFile && (await $.fs.exists(settingsFile))) apply(withFile(options, await $.fs.read(settingsFile)).options)
     } catch (err) {
       await fail($, 'settings', `${settingsFile}: ${message(err)}`)
@@ -548,36 +568,36 @@ export const register: Register = (on, options) => {
     } catch (err) {
       // cut at the time limit: not "Python did not start" (what runCg says of any failure of the process), but what to do
       const cut = !isState && isTimeout(message(err)) ? T.encryptTimeout(args[1]!) : undefined
-      await fail($, 'cg-encrypt', cut ?? err)
-      return { text: cut === undefined ? T.cgEncryptFailed : `cg-encrypt ${args[1]}: ${cut}` }
+      await fail($, 'al-encrypt', cut ?? err)
+      return { text: cut === undefined ? T.cgEncryptFailed : `al-encrypt ${args[1]}: ${cut}` }
     }
   })
 
   // Without a path a window asks for the folder (and a Yes/No box about the old copy), so the owner's time counts: the same 10 minutes as encrypt.
   // A refusal (not a local disk, no space, a merge not done yet, busy) is what the owner must act on, so it is in the reply, not in a toast alone.
-  on('command.run', { command: 'cg-index-dir' }, async ($, e) => {
+  on('command.run', { command: 'al-index-dir' }, async ($, e) => {
     try {
       if (indexDirArgs(e.args).length === 1) toast($, T.indexDirWindow) // only the run without a path opens the window
       return { text: indexDirReply((await runCg($, python, indexDirArgs(e.args), 600_000)) as unknown as IndexDirResult) }
     } catch (err) {
       const cut = isTimeout(message(err)) ? T.indexDirTimeout : undefined
-      await fail($, 'cg-index-dir', cut ?? err)
+      await fail($, 'al-index-dir', cut ?? err)
       return { text: indexDirRefusal(cut ?? message(err)) }
     }
   })
 
-  on('command.run', { command: 'cg-stats' }, async ($, e) => {
+  on('command.run', { command: 'al-stats' }, async ($, e) => {
     const days = Number(e.args.trim() || 7)
     if (!Number.isInteger(days) || days < 1) return { text: T.cgStatsDays }
     try {
       return { text: await runStats($, python, days, compression) }
     } catch (err) {
-      await fail($, 'cg-stats', err)
+      await fail($, 'al-stats', err)
       return { text: T.cgStatsFailed }
     }
   })
 
-  on('tool.call', { tool: 'mcp__cacheguard__recall' }, ($, e) =>
+  on('tool.call', { tool: 'mcp__alethite__recall' }, ($, e) =>
     served($, 'recall', async () => {
       const input = e as unknown as { query: string; also?: unknown; scope?: string; limit?: number }
       if (typeof input.query !== 'string' || !input.query.trim()) throw new Error(T.noQuery) // the schema asks for it, but nothing makes the model obey
@@ -590,7 +610,7 @@ export const register: Register = (on, options) => {
       }
       const hits = formatHits(r.hits as Hit[], input.query, input.scope ?? 'project')
       if (r.vector === 'ok') return hits
-      // only the words were searched: the model reads why every time; the owner gets a toast once per load, and /cg-health keeps
+      // only the words were searched: the model reads why every time; the owner gets a toast once per load, and /al-health keeps
       // that cause without it pushing out every later error
       const off = T.vectorOff(String(r.vector))
       if (!isVectorToasted) {
@@ -602,11 +622,11 @@ export const register: Register = (on, options) => {
     }),
   )
 
-  on('tool.call', { tool: 'mcp__cacheguard__recall_more' }, ($, e) =>
+  on('tool.call', { tool: 'mcp__alethite__recall_more' }, ($, e) =>
     served($, 'recall_more', async () => formatRows((await runCg($, python, ['expand', `--conv=${e.conv}`, `--pos=${e.pos}`, '--compress', compression])).rows as Row[])),
   )
 
-  on('tool.call', { tool: 'mcp__cacheguard__lesson_save' }, ($, e) =>
+  on('tool.call', { tool: 'mcp__alethite__lesson_save' }, ($, e) =>
     served($, 'lesson_save', async () => {
       const input = e as unknown as Record<string, unknown>
       const r = await runCg($, python, lessonSaveArgs(input, await $.session.root(), embedModel))
@@ -617,7 +637,7 @@ export const register: Register = (on, options) => {
     }, T.lessonSaveFailed),
   )
 
-  on('command.run', { command: 'cg-job' }, async ($, e) => {
+  on('command.run', { command: 'al-job' }, async ($, e) => {
     const args = jobArgs(e.args)
     if (args === null) return { text: T.cgJobUsage }
     try {
@@ -626,12 +646,12 @@ export const register: Register = (on, options) => {
       if (args[1] === 'remove') return { text: T.cgJobOff }
       return { text: [T.cgJobState(r.minutes as number | null), ...jobHealth(r.last as JobRun | null)].join('\n') }
     } catch (err) {
-      await fail($, 'cg-job', err)
+      await fail($, 'al-job', err)
       return { text: T.cgJobFailed }
     }
   })
 
-  on('command.run', { command: 'cg-lessons' }, async ($, e) => {
+  on('command.run', { command: 'al-lessons' }, async ($, e) => {
     const pos = forgetArg(e.args)
     if (pos === undefined) return { text: T.cgLessonsUsage }
     try {
@@ -642,14 +662,14 @@ export const register: Register = (on, options) => {
       lessonList = await lessonsOf($, python)
       return { text: T.cgLessonsForgotten(n) }
     } catch (err) {
-      await fail($, 'cg-lessons', err)
+      await fail($, 'al-lessons', err)
       return { text: T.cgLessonsFailed }
     }
   })
 
   // The lessons that fit the owner's message go to the model beside it, in the hidden context, not the system prompt: the prompt cache
   // stays whole. Only the owner's own words; nothing when the project has no lessons (no Python then), when none is close enough, or
-  // when the chat was shown it already. A failure costs the owner nothing but a line in /cg-health.
+  // when the chat was shown it already. A failure costs the owner nothing but a line in /al-health.
   on('prompt.submit', async ($, e, next) => {
     // an engine older than the origin (2.1.29x) stamps none: there a prompt is the owner's; in the desktop Code tab (an SDK host) it is `sdk`, or `unclassified` from a channel the engine cannot attest
     const kind = (e.origin as { kind?: string } | undefined)?.kind
@@ -713,7 +733,7 @@ export const register: Register = (on, options) => {
   })
 
   // last and on the session side: every shared section must precede it, and the text never varies, so the prompt cache is not spent
-  on('prompt.compose', async (_, e, next) => ({ sections: [...(await next(e)).sections, { id: 'cacheguard:memory-rule', text: T.memoryRule, scope: 'session' }] }))
+  on('prompt.compose', async (_, e, next) => ({ sections: [...(await next(e)).sections, { id: 'alethite:memory-rule', text: T.memoryRule, scope: 'session' }] }))
 
   // The worker's or a subagent's write into the auto-memory folder; the owner's Write/Edit result always comes back as it was.
   on('tool.call', { tool: ['Write', 'Edit'] }, async ($, e, next) => {

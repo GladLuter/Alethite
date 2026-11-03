@@ -19,11 +19,13 @@ import crypto
 import dialogs
 import encrypt
 import indexdir
+import job
 import lessons
 import memdb
 import texts
 import vectors
 from test_encrypt import FakeUI
+from test_job import Scheduler
 from test_texts import use_lang
 from texts import t
 from transcripts import project_key
@@ -40,6 +42,19 @@ def owner_line(text, cwd='C:\\a'):
 def claude_line(text, cwd='C:\\a'):
     m = {'id': 'm1', 'model': 'claude-opus-5-5', 'role': 'assistant', 'usage': USAGE, 'content': [{'type': 'text', 'text': text}]}
     return dict(type='assistant', timestamp=TS, cwd=cwd, message=m)
+
+
+def setUpModule():
+    # cg.main without --db moves the old mod folder: no test of this module may reach the real ~/.claude/cacheguard or ~/.claude/alethite
+    d = tempfile.TemporaryDirectory()
+    unittest.addModuleCleanup(d.cleanup)
+    for name in ('HOME_DIR', 'OLD_HOME_DIR'):
+        patch = mock.patch.object(crypto, name, os.path.join(d.name, name))
+        patch.start()
+        unittest.addModuleCleanup(patch.stop)
+    patch = Scheduler().patched()  # and the real Task Scheduler is not asked: this one has no tasks
+    patch.start()
+    unittest.addModuleCleanup(patch.stop)
 
 
 class CgTest(unittest.TestCase):
@@ -120,7 +135,7 @@ class CgTest(unittest.TestCase):
         code, out = self.run_cg('expand', '--conv', hit['conv'], '--pos', str(hit['pos']))
         self.assertEqual((code, [r['kind'] for r in out['rows']]), (0, ['owner', 'claude']))
 
-    def test_status_project(self):  # /cg-health shows which project «в этом проекте» means and how many conversations it finds
+    def test_status_project(self):  # /al-health shows which project «в этом проекте» means and how many conversations it finds
         self.write('A/S1.jsonl', [owner_line('здесь', cwd='C:\a')])
         self.write('A/S1/subagents/agent-a1.jsonl', [owner_line('суб', cwd='')])  # no cwd of its own: the parent's project
         self.write('B/S2.jsonl', [owner_line('там', cwd='C:\b')])
@@ -188,6 +203,77 @@ class CgTest(unittest.TestCase):
         self.assertIn('git add . && git commit -m "fix the bug in «Parser»"', hit['snippet'])
         rows = self.run_cg('expand', '--conv', hit['conv'], '--pos', str(hit['pos']), '--compress', 'ultra')[1]['rows']
         self.assertIn('Bash: ' + command, [r['text'] for r in rows])
+
+    def aliases(self, value):  # the mod's settings lie beside the index
+        os.makedirs(os.path.dirname(self.db), exist_ok=True)
+        with open(os.path.join(os.path.dirname(self.db), 'settings.json'), 'w', encoding='utf-8') as f:
+            json.dump({'projectAliases': value}, f)
+
+    def test_recall_from_new_folder_sees_old_project_with_alias(self):  # the folder was renamed: its conversations are keyed to the old path
+        self.write('A/S1.jsonl', [owner_line('ёжик в старой папке', cwd='C:\\old\\proj')])
+        self.write('B/S2.jsonl', [owner_line('ёжик в новой папке', cwd='C:\\new\\proj')])
+        self.write('C/S3.jsonl', [owner_line('ёжик в чужой папке', cwd='C:\\other')])
+        self.aliases({'C:\\new\\proj': ['C:\\old\\proj']})
+        hits = lambda cwd: sorted(h['conv'] for h in self.run_cg('recall', '--query', 'ёжик', '--cwd', cwd)[1]['hits'])
+        self.assertEqual(hits('C:\\new\\proj'), ['S1', 'S2'])
+        self.assertEqual(hits('C:\\New\\Proj\\.claude\\worktrees\\w1'), ['S1', 'S2'])  # a worktree is the same project
+        self.assertEqual(hits('C:\\old\\proj'), ['S1'])  # the alias goes one way: from the new folder to the old
+
+    def test_recall_without_alias_does_not_see_old_project(self):
+        self.write('A/S1.jsonl', [owner_line('ёжик в старой папке', cwd='C:\\old\\proj')])
+        self.assertEqual(self.run_cg('recall', '--query', 'ёжик', '--cwd', 'C:\\new\\proj')[1]['hits'], [])
+        self.aliases({'C:\\elsewhere': ['C:\\old\\proj']})  # an alias of another folder is no alias of this one
+        self.assertEqual(self.run_cg('recall', '--query', 'ёжик', '--cwd', 'C:\\new\\proj')[1]['hits'], [])
+
+    def test_lessons_listing_and_match_see_alias(self):
+        conn = memdb.connect(self.db)
+        lessons.save(conn, project_key('C:\\old\\proj'), {'action': 'запустил сборку', 'symptom': 'HTTP 429 от GitHub', 'cause': 'частые вызовы API'})
+        conn.close()
+        listed = lambda: [l['text'] for l in self.run_cg('lessons', '--cwd', 'C:\\new\\proj')[1]['lessons']]
+        # lessons-match asks no model when the project has no lessons ('ok'); with one it goes on and says there are no vectors of this model
+        matched = lambda: self.run_cg('lessons-match', '--cwd', 'C:\\new\\proj', '--text', '429', '--model', 'nosuch')[1]['vector']
+        self.assertEqual((listed(), matched()), ([], 'ok'))
+        self.aliases({'C:\\new\\proj': ['C:\\old\\proj']})
+        self.assertIn('Action: запустил сборку', listed()[0])
+        self.assertIn('nosuch', matched())
+
+    def test_lesson_saved_under_new_key(self):  # a write keeps one key: the folder's own
+        self.aliases({'C:\\new\\proj': ['C:\\old\\proj']})
+        out = self.run_cg('lesson-save', '--cwd', 'C:\\new\\proj', '--action', 'a', '--symptom', 's', '--cause', 'c', '--model', 'nosuch')[1]
+        conn = memdb.connect(self.db)
+        self.addCleanup(conn.close)
+        self.assertEqual(conn.execute('SELECT project FROM conv_projects WHERE conv = ?', (out['conv'],)).fetchall(), [(project_key('C:\\new\\proj'),)])
+
+    def test_malformed_aliases_are_ignored(self):
+        self.write('A/S1.jsonl', [owner_line('ёжик в старой папке', cwd='C:\\old\\proj')])
+        for bad in (['x'], {'C:\\new': 'C:\\old'}, {'C:\\new\\proj': ['C:\\old\\proj', 5]}, {'C:\\new\\proj': ['C:\\old\\proj'], 'C:\\x': 'C:\\y'}, 'C:\\old\\proj', None):
+            self.aliases(bad)
+            code, out = self.run_cg('recall', '--query', 'ёжик', '--cwd', 'C:\\new\\proj')
+            self.assertEqual((code, out['hits']), (0, []), bad)  # the good pair beside the bad item goes too: the value is taken whole or not at all
+        self.write('B/S2.jsonl', [owner_line('ёжик в новой папке', cwd='C:\\new\\proj')])
+        with open(os.path.join(os.path.dirname(self.db), 'settings.json'), 'w', encoding='utf-8') as f:
+            f.write('[1]')  # not an object at all
+        code, out = self.run_cg('recall', '--query', 'ёжик', '--cwd', 'C:\\new\\proj')
+        self.assertEqual((code, [h['conv'] for h in out['hits']]), (0, ['S2']))  # the search still answers, from the project's own memory
+
+    def test_blank_aliases_are_skipped(self):  # project_key('') is the folder the process runs in: a blank path would widen the scope to it
+        here = os.getcwd()
+        self.write('A/S1.jsonl', [owner_line('ёжик там, где запущен процесс', cwd=here)])
+        self.write('B/S2.jsonl', [owner_line('ёжик в старой папке', cwd='C:\\old\\proj')])
+        self.aliases({'C:\\new\\proj': ['', '  ', 'C:\\old\\proj'], '': ['C:\\old\\proj'], ' ': ['C:\\x']})
+        hits = lambda cwd: sorted(h['conv'] for h in self.run_cg('recall', '--query', 'ёжик', '--cwd', cwd)[1]['hits'])
+        self.assertEqual(hits('C:\\new\\proj'), ['S2'])  # the good entry stays, the blank ones add nothing
+        self.assertEqual(hits(here), ['S1'])  # the blank key does not make the process folder a new name for the old project
+
+    def test_status_project_counts_alias(self):
+        self.write('A/S1.jsonl', [owner_line('там', cwd='C:\\old\\proj')])
+        self.write('A/S1/subagents/agent-a1.jsonl', [owner_line('суб', cwd='')])
+        self.write('B/S2.jsonl', [owner_line('здесь', cwd='C:\\new\\proj')])
+        self.run_cg('index')
+        status = lambda: self.run_cg('status', '--cwd', 'C:\\new\\proj')[1]['project']
+        self.assertEqual(status(), {'key': project_key('C:\\new\\proj'), 'convs': 1})
+        self.aliases({'C:\\new\\proj': ['C:\\old\\proj']})
+        self.assertEqual(status(), {'key': project_key('C:\\new\\proj'), 'convs': 3})
 
     def test_recall_takes_other_wordings_and_reads_an_error_as_it_is(self):  # stage 4
         err = {'type': 'tool_result', 'tool_use_id': 't1', 'content': 'HTTP 429: the limit of 120 requests per hour', 'is_error': True}
@@ -465,7 +551,7 @@ class CgTest(unittest.TestCase):
         self.encrypted_index(syncDir=self.share_dir())
         crypto.save_key(crypto.settings_path(self.db), None)
         out = self.maintain()
-        self.assertEqual(list(out), ['errors'])  # the index cannot be opened to keep the run in: /cg-health shows the same words from `status`
+        self.assertEqual(list(out), ['errors'])  # the index cannot be opened to keep the run in: /al-health shows the same words from `status`
         self.assertIn(t('key_missing'), out['errors'][0]['error'])
         code, status = self.run_cg('--lang', 'ru', 'status')
         self.assertEqual(code, 1)
@@ -549,19 +635,210 @@ class CgTest(unittest.TestCase):
     # the index folder: where cg.py finds the index when no --db is given
 
     def home_dir(self, **settings):
-        """A stand-in for ~/.claude/cacheguard with these settings; the real one is never read."""
+        """A stand-in for ~/.claude/alethite with these settings; the real one is never read."""
         home = os.path.join(self.tmp, 'home')
         os.makedirs(home, exist_ok=True)
         with open(os.path.join(home, 'settings.json'), 'w', encoding='utf-8') as f:
             json.dump(settings, f)
-        for patch in (mock.patch.object(crypto, 'HOME_DIR', home), mock.patch.object(crypto, 'INDEX_DIRS', set())):  # main registers the folder in it
+        self.patch_home(home, os.path.join(self.tmp, 'old-home'))
+        return home
+
+    def patch_home(self, home, old):
+        for patch in (mock.patch.object(crypto, 'HOME_DIR', home), mock.patch.object(crypto, 'OLD_HOME_DIR', old), mock.patch.object(crypto, 'INDEX_DIRS', set())):  # main registers the folder in it
             patch.start()
             self.addCleanup(patch.stop)
         self.addCleanup(gc.collect)  # cg never closes its connection; the temp folder cleanup needs the file released
-        return home
 
     def main_home(self, *args):
         return self.capture(['--lang', 'ru', '--projects', self.projects, *args])
+
+    def old_home(self):
+        """A stand-in for ~/.claude/cacheguard with a settings file, and for ~/.claude/alethite that is not there yet: (old, new)."""
+        old, new = (os.path.join(self.tmp, n) for n in ('old', 'new'))
+        os.makedirs(old)
+        with open(os.path.join(old, 'settings.json'), 'w', encoding='utf-8') as f:
+            f.write('{}')
+        self.patch_home(new, old)
+        return old, new
+
+    def test_main_with_db_never_moves(self):
+        old, new = self.old_home()
+        s = self.scheduler({'CacheGuard': 30})
+        for cmd in (('status',), ('last-turn', '--session', 'S1'), ('lessons', '--all')):
+            code, out, _ = self.main_json(*cmd)
+            self.assertEqual(code, 0, out)
+            self.assertNotIn('home_notes', out)
+        self.assertEqual((os.path.isfile(os.path.join(old, 'settings.json')), os.path.exists(new)), (True, False))
+        self.assertEqual((s.calls, list(s.tasks)), ([], ['CacheGuard']))  # and the old task is not asked about, let alone taken off
+
+    def test_main_without_db_moves_the_old_folder_first(self):
+        old, new = self.old_home()
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, out['db'], os.path.exists(old), os.path.isfile(os.path.join(new, 'settings.json'))), (0, os.path.join(new, 'index.db'), False, True))
+        self.assertNotIn('home_notes', out)
+
+    def test_main_reports_home_notes(self):
+        old, new = self.old_home()
+        busy = PermissionError(13, 'in use', None, 32)
+        # an index answer, the short ones (the mod kills them after 8 s: one try, no wait) and an error answer
+        for cmd, tries in ((('status',), 100), (('last-turn', '--session', 'S1'), 1), (('lessons-match', '--text', '429', '--model', 'nosuch'), 1),
+                           (('last-turn', '--session', '..\\x'), 1)):
+            with mock.patch.object(crypto, 'HOME_DIR', new), mock.patch('os.rename', side_effect=busy) as rename, mock.patch('time.sleep') as sleep:  # one process per run, as in life
+                code, out, _ = self.main_home(*cmd)
+            self.assertEqual(out['home_notes'], [t('home_move_failed', old=old, new=new, e=busy)], cmd)
+            self.assertEqual(code, int('error' in out), cmd)
+            self.assertEqual((rename.call_count, sleep.call_count), (tries, tries - 1), cmd)
+        self.assertEqual(out['error'], 'ValueError: ' + t('bad_session', id='..\\x'))
+
+    # the background job follows the rename: the old task goes with the old folder, the new one comes back with its interval
+
+    def scheduler(self, tasks=None, deny=(), running=()):
+        """The Task Scheduler of this test, with these tasks: cg.main asks it about the old task and about the new one."""
+        s = Scheduler(tasks, deny, running)
+        patch = s.patched()
+        patch.start()
+        self.addCleanup(patch.stop)
+        return s
+
+    def test_move_removes_old_task_and_installs_new_with_its_interval(self):
+        old, new = self.old_home()
+        s = self.scheduler({'CacheGuard': 45})
+        code, out, _ = self.main_home('status')
+        self.assertEqual(code, 0, out)
+        self.assertEqual([(c[0], c[2]) for c in s.calls], [('/Query', 'CacheGuard'), ('/End', 'CacheGuard'), ('/Delete', 'CacheGuard'), ('/Query', 'Alethite'), ('/Create', 'Alethite')])
+        self.assertEqual(list(s.tasks), ['Alethite'])
+        self.assertIn('<Interval>PT45M</Interval>', s.tasks['Alethite'])
+        self.assertTrue(os.path.isfile(os.path.join(new, 'job.xml')))  # beside the index
+        self.assertNotIn('home_notes', out)  # /End found nothing running and said so: no note for that
+
+    def test_old_task_goes_before_the_folder_moves_and_the_new_one_comes_after_the_index_is_found(self):
+        old, new = self.old_home()
+        far = os.path.join(self.tmp, 'far')  # the index lives elsewhere: the task file lies beside it, not in the mod folder
+        with open(os.path.join(old, 'settings.json'), 'w', encoding='utf-8') as f:
+            json.dump({'indexDir': far}, f)
+        memdb.connect(os.path.join(far, 'index.db')).close()
+        s = self.scheduler({'CacheGuard': 45})
+        seen = []
+        s.probe = lambda args: seen.append((args[0], args[2], os.path.isdir(old)))  # was the old folder still there when the scheduler was asked?
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, out['db']), (0, os.path.join(far, 'index.db')), out)
+        self.assertEqual(seen, [('/Query', 'CacheGuard', True), ('/End', 'CacheGuard', True), ('/Delete', 'CacheGuard', True), ('/Query', 'Alethite', False),
+                                ('/Create', 'Alethite', False)])
+        self.assertEqual((os.path.isfile(os.path.join(far, 'job.xml')), os.path.exists(os.path.join(new, 'job.xml'))), (True, False))
+
+    def test_a_new_task_that_is_there_keeps_its_interval(self):
+        old, new = self.old_home()
+        s = self.scheduler({'CacheGuard': 45, 'Alethite': 20})
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, 'home_notes' in out, list(s.tasks)), (0, False, ['Alethite']), out)
+        self.assertIn('<Interval>PT20M</Interval>', s.tasks['Alethite'])
+        self.assertNotIn('/Create', [c[0] for c in s.calls])
+
+    def test_running_old_task_is_ended_before_it_is_deleted(self):  # its instance would hold the old index open and the folder could not move
+        old, new = self.old_home()
+        s = self.scheduler({'CacheGuard': 45}, running=('CacheGuard',))
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, 'home_notes' in out, os.path.exists(old), os.path.isdir(new), s.running), (0, False, False, True, set()), out)
+        self.assertEqual([c[0] for c in s.calls if c[2] == 'CacheGuard'], ['/Query', '/End', '/Delete'])
+
+    def test_old_task_removed_when_both_folders_exist(self):  # the old code would make the old folder again
+        old, new = self.old_home()
+        os.makedirs(new)
+        s = self.scheduler({'CacheGuard': 30})
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, list(s.tasks), os.path.isdir(old)), (0, ['Alethite'], True))
+        self.assertEqual(out['home_notes'], [t('home_move_both', old=old, new=new)])
+
+    def test_no_old_folder_no_schtasks_call(self):
+        self.home_dir()  # no old folder
+        s = self.scheduler({'CacheGuard': 30})
+        for cmd in (('status',), ('last-turn', '--session', 'S1')):
+            self.assertEqual(self.main_home(*cmd)[0], 0, cmd)
+        self.assertEqual((s.calls, list(s.tasks)), ([], ['CacheGuard']))
+
+    def test_follow_job_flag_only(self):
+        home = self.home_dir()
+        s = self.scheduler({'Alethite': (45, 'C:\\clone\\plugin\\scripts\\cg.py')})
+        self.assertEqual(self.main_home('status')[0], 0)
+        self.assertEqual(s.calls, [])  # a run without the flag leaves the task alone
+        code, out, _ = self.main_home('--follow-job', 'status')  # before the command, like --lang
+        self.assertEqual((code, 'home_notes' in out), (0, False), out)
+        self.assertEqual([c[0] for c in s.calls], ['/Query', '/Query', '/Query', '/Create'])  # the old task, where it points, its interval, the new task
+        self.assertEqual(job.target(s, lambda: True), job.CG)
+        self.assertIn('<Interval>PT45M</Interval>', s.tasks['Alethite'])
+        self.assertTrue(os.path.isfile(os.path.join(home, 'job.xml')))
+
+    def test_follow_job_takes_off_an_old_task_that_outlived_the_move(self):  # removal was refused, or an old chat made it again: no old folder to show it
+        home = self.home_dir()
+        s = self.scheduler({'CacheGuard': 45})
+        code, out, _ = self.main_home('--follow-job', 'status')
+        self.assertEqual((code, 'home_notes' in out, list(s.tasks)), (0, False, ['Alethite']), out)
+        self.assertEqual([(c[0], c[2]) for c in s.calls], [('/Query', 'CacheGuard'), ('/End', 'CacheGuard'), ('/Delete', 'CacheGuard'), ('/Query', 'Alethite'),
+                                                           ('/Create', 'Alethite'), ('/Query', 'Alethite')])  # the last: follow finds the task already pointing here
+        self.assertIn('<Interval>PT45M</Interval>', s.tasks['Alethite'])
+        self.assertTrue(os.path.isfile(os.path.join(home, 'job.xml')))
+
+    def job_error(self, deny, moved, key, waits=False):
+        old, new = self.old_home()
+        s = self.scheduler({'CacheGuard': 45}, deny)
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, 'error' in out, os.path.exists(old), os.path.isdir(new)), (0, False, not moved, moved), out)  # the index answered, from the folder that holds it
+        self.assertEqual(out['db'], os.path.join(new if moved else old, 'index.db'))
+        self.assertEqual(out['home_notes'], [t(key, e=t('job_schtasks', e='ERROR: Access is denied.')), *([t('home_move_waits', old=old, new=new)] if waits else [])])
+        return s
+
+    def test_job_error_during_move_does_not_stop_command(self):
+        # the old task could not be removed: it stays, the note names it, and the folder stays too, so that it and the mod share one index
+        self.assertEqual(list(self.job_error('/Delete', False, 'home_old_task_failed', waits=True).tasks), ['CacheGuard'])  # waits: only here does a folder wait for the task
+
+    def test_the_next_run_retries_the_old_task_and_then_moves(self):
+        old, new = self.old_home()
+        s = self.scheduler({'CacheGuard': 45}, '/Delete')
+        self.assertEqual(self.main_home('status')[1]['home_notes'], [t('home_old_task_failed', e=t('job_schtasks', e='ERROR: Access is denied.')), t('home_move_waits', old=old, new=new)])
+        s.deny = ()
+        with mock.patch.object(crypto, 'HOME_DIR', new):  # one process per run, as in life
+            code, out, _ = self.main_home('status')
+        self.assertEqual((code, 'home_notes' in out, os.path.exists(old), os.path.isdir(new), list(s.tasks)), (0, False, False, True, ['Alethite']), out)
+        self.assertIn('<Interval>PT45M</Interval>', s.tasks['Alethite'])
+
+    def test_a_refused_removal_leaves_a_new_folder_that_is_there_alone(self):  # an old chat made the old folder again: the new one is the real one
+        old, new = self.old_home()
+        os.makedirs(new)
+        self.scheduler({'CacheGuard': 45}, '/Delete')
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, out['db']), (0, os.path.join(new, 'index.db')), out)
+        self.assertEqual(out['home_notes'], [t('home_old_task_failed', e=t('job_schtasks', e='ERROR: Access is denied.')), t('home_move_both', old=old, new=new)])  # nothing moves later: no waits note
+
+    def test_a_refused_removal_with_no_old_folder_says_nothing_of_a_move(self):  # --follow-job found an old task that outlived the move
+        self.home_dir()
+        self.scheduler({'CacheGuard': 45}, '/Delete')
+        code, out, _ = self.main_home('--follow-job', 'status')
+        self.assertEqual((code, out['home_notes']), (0, [t('home_old_task_failed', e=t('job_schtasks', e='ERROR: Access is denied.'))]), out)
+
+    def test_new_task_error_during_move_is_said_too(self):
+        self.assertEqual(list(self.job_error('/Create', True, 'home_job_failed').tasks), [])
+
+    def test_the_job_comes_back_even_when_the_index_cannot_be_found(self):  # the old task is gone and the old folder is not there to bring it up next time
+        old, new = self.old_home()
+        with open(os.path.join(old, 'settings.json'), 'w', encoding='utf-8') as f:
+            f.write('{ "indexDir": ')
+        s = self.scheduler({'CacheGuard': 45})
+        code, out, _ = self.main_home('status')
+        self.assertEqual((code, 'error' in out, list(s.tasks)), (1, True, ['Alethite']))
+        self.assertTrue(os.path.isfile(os.path.join(new, 'job.xml')))
+
+    def test_short_command_moves_before_opening_index(self):
+        old, new = self.old_home()
+        conn = memdb.connect(os.path.join(old, 'index.db'))
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('marker', 'old')")
+        conn.commit()
+        conn.close()
+        self.scheduler()
+        code, out, _ = self.main_home('lessons-match', '--text', '429', '--model', 'nosuch')
+        self.assertEqual((code, 'error' in out, 'home_notes' in out, os.path.exists(old)), (0, False, False, False), out)
+        conn = memdb.connect(os.path.join(new, 'index.db'))
+        self.addCleanup(conn.close)
+        self.assertEqual(memdb.meta(conn, 'marker'), 'old')  # the index that moved, not a second one made in the new folder
 
     def test_with_db_the_home_settings_are_not_read_at_all(self):
         home = self.home_dir()

@@ -142,7 +142,7 @@ def search_vectors(conn, qvec, project, limit=50):
     # shortcut: brute force over all vectors in numpy; switch to sqlite-vec past ~500k vectors (the BLOBs move as they are)
     np = _np()
     # a BLOB of another length (a broken write, another model) would break the matrix: such rows are left out
-    rows = conn.execute('SELECT chunk, vec FROM vecs WHERE length(vec) = :n AND ' + memdb.IN_PROJECT, {'p': project, 'n': 4 * DIMS}).fetchall()
+    rows = conn.execute('SELECT chunk, vec FROM vecs WHERE length(vec) = :n AND ' + memdb.IN_PROJECT, {'p': json.dumps(project), 'n': 4 * DIMS}).fetchall()
     if not rows:
         return []
     sims = np.frombuffer(b''.join(r[1] for r in rows), dtype='float32').reshape(len(rows), DIMS) @ np.frombuffer(qvec, dtype='float32')

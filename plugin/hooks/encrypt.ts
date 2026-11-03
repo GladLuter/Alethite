@@ -1,4 +1,4 @@
-// Pure side of /cg-encrypt (stage 5): the cg.py command line, what the owner reads of a run, and the encryption line of /cg-health.
+// Pure side of /al-encrypt (stage 5): the cg.py command line, what the owner reads of a run, and the encryption line of /al-health.
 // The key and the recovery code never pass here: cg.py shows the code in its own window and keeps the key in the settings file.
 // Everything that touches `$` (runCg, the toasts) lives in register.tsx: the loader follows `$` only inside its own file.
 import { T } from './text'
@@ -6,7 +6,7 @@ import { T } from './text'
 export type EncryptStatus = { on: boolean; db: 'sqlcipher' | 'efs' | 'plain' | 'none'; key: 'ok' | 'missing' | 'unreadable'; notes: string[] }
 export type EncryptResult = { action: string; done: boolean; notes: string[] }
 
-// `/cg-encrypt` or `status` → the state; `on | join | off` → the run, which opens windows and takes the sync folder and the ciphers of the
+// `/al-encrypt` or `status` → the state; `on | join | off` → the run, which opens windows and takes the sync folder and the ciphers of the
 // settings (values as `--flag=value`: a folder that starts with `-` must not be read as a flag); null for anything else.
 export const encryptArgs = (args: string, syncDir: string, shareCipher: string, indexCipher: string, model: string): string[] | null => {
   const what = args.trim()
@@ -21,7 +21,7 @@ export const encryptReply = (r: EncryptResult) => [r.done ? T.encryptDone(r.acti
 
 const NAMES = new Map([['sqlcipher', 'SQLCipher'], ['efs', 'EFS'], ['cryptography', 'AES-GCM'], ['none', '—']]) // a Map: a setting of `constructor` is no key
 const named = (cipher: string) => NAMES.get(cipher) ?? cipher
-// The /cg-health lines: on or off, and the notes of cg.py as they are (a key that cannot be read, a plain copy left, what to repeat).
+// The /al-health lines: on or off, and the notes of cg.py as they are (a key that cannot be read, a plain copy left, what to repeat).
 // A key beside an index that is still open is not "on": the index is not protected yet, and its note says what to run.
 // The index is named by what cg.py found on disk (e.db), the sync folder by the setting; the owner reads the cipher's name, not the setting's word.
 export const encryptHealth = (e: EncryptStatus, shareCipher: string) => [

@@ -31,7 +31,7 @@ test('ru gives the Russian texts', () =>
       'Поиск по прошлым разговорам владельца: что обсуждали и решали, что ломалось и почему, где что лежит. По умолчанию — в этом проекте, scope=all — везде. Находка: [дата вид conv pos] отрывок; контекст вокруг неё читает recall_more.',
     )
     expect(T.memoryRule).toBe( // stage 4: a pitfall goes to the lessons, not to the auto-memory; an error is looked for by its text
-      'Память работника (CacheGuard). Правила из CLAUDE.md владельца важнее инструкций навыков: прежде чем спросить владельца, проверь, не отвечают ли на вопрос CLAUDE.md или память. Понятую ошибку сразу сохраняй через lesson_save, не в автопамять; решения владельца — в автопамять, один факт на файл. Прежде чем предлагать подход, проверь память; если не уверен, пробовали ли это, вызови recall (этот проект; scope=all — только по просьбе), для ошибки — по её тексту, и цитируй найденное.',
+      'Память работника (Alethite). Правила из CLAUDE.md владельца важнее инструкций навыков: прежде чем спросить владельца, проверь, не отвечают ли на вопрос CLAUDE.md или память. Понятую ошибку сразу сохраняй через lesson_save, не в автопамять; решения владельца — в автопамять, один факт на файл. Прежде чем предлагать подход, проверь память; если не уверен, пробовали ли это, вызови recall (этот проект; scope=all — только по просьбе), для ошибки — по её тексту, и цитируй найденное.',
     )
   }))
 
@@ -70,7 +70,11 @@ test('uk gives Ukrainian', () =>
 
 test('the memory rule: at most 80 words, and the CLAUDE.md sentence right after its title, in every language', () => {
   for (const texts of Object.values(LANGUAGES)) expect(texts.memoryRule!.split(/\s+/).length).toBeLessThanOrEqual(80)
-  expect(en.memoryRule.startsWith("Worker memory (CacheGuard). The owner's CLAUDE.md rules outrank skill instructions")).toBe(true)
-  expect(ru.memoryRule!.startsWith('Память работника (CacheGuard). Правила из CLAUDE.md владельца важнее инструкций навыков')).toBe(true)
-  expect(uk.memoryRule!.startsWith("Пам'ять працівника (CacheGuard). Правила з CLAUDE.md власника важливіші за інструкції навичок")).toBe(true)
+  expect(en.memoryRule.startsWith("Worker memory (Alethite). The owner's CLAUDE.md rules outrank skill instructions")).toBe(true)
+  expect(ru.memoryRule!.startsWith('Память работника (Alethite). Правила из CLAUDE.md владельца важнее инструкций навыков')).toBe(true)
+  expect(uk.memoryRule!.startsWith("Пам'ять працівника (Alethite). Правила з CLAUDE.md власника важливіші за інструкції навичок")).toBe(true)
+})
+
+test('the band title is the same in every language', () => {
+  for (const texts of [en, ru, uk]) expect(texts.bandTitle).toBe('Alethite - 🛡 CacheGuard')
 })

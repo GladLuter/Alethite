@@ -1,8 +1,10 @@
 **English** · [Русский](README.ru.md) · [Українська](README.uk.md)
 
-# Claude-CacheGuard
+# Alethite
 
 A mod for Claude Code that makes long-lived "worker" chats cheaper without taking their memory away.
+
+If you have the old mod, it used to be called CacheGuard. How to move is in the section [Moving from CacheGuard](INSTALL.md#moving-from-cacheguard).
 
 ## Why
 
@@ -33,25 +35,25 @@ So the expensive part is not what is typed, but coming back to a big, idle chat.
 - Without the folder everything works locally.
 
 **Memory compression** (stage 3). What the mod gives the model (search results, handoff quotes) is squeezed mechanically. Four levels, `ultra` by default; code, paths and negations are never touched.
-- `/cg-stats` measures how much memory sits in the context.
+- `/al-stats` measures how much memory sits in the context.
 
 **Lessons** (stage 4). An understood error is saved as a lesson in the index, not in the auto-memory that goes into every request.
 - The mod brings a lesson back mechanically and only where it fits: beside an owner's message close in meaning (hidden context, at most 2, each once a chat), and as one stop before a command that holds its trigger.
-- No lessons, or none fits — zero tokens. `/cg-health` shows what they cost.
+- No lessons, or none fits — zero tokens. `/al-health` shows what they cost.
 
 **Searching by an error's traces** (stage 4). Tool errors go into the index; `recall` searches several wordings at once (the error text, the action, the cause).
 
 **A background job** (stage 4, Windows). A Task Scheduler task keeps the index, the vectors (on mains power) and the sync up to date with no chat open.
 
 **Encryption** (stage 5, Windows, optional). The index on disk and everything a computer puts in the sync folder are encrypted. The key sits in `settings.json`, protected by Windows.
-- `/cg-encrypt on` turns it on. The recovery code is shown once, in a window, and belongs in a password manager. A second computer joins with `join`.
+- `/al-encrypt on` turns it on. The recovery code is shown once, in a window, and belongs in a password manager. A second computer joins with `join`.
 - The ciphers are chosen in `settings.json`, one for the index (`indexCipher`) and one for the sync folder (`shareCipher`). Left alone, both stay SQLCipher.
   - Index: SQLCipher (needs the `sqlcipher3` package) or EFS, the file encryption of Windows itself (needs Windows Pro and an NTFS drive, no packages).
   - Sync folder: SQLCipher or AES-GCM, which is built into Windows, no packages.
 - Smart App Control may refuse to load `sqlcipher3`, so under it only EFS and AES-GCM work. The `cryptography` package is no longer needed.
 - With EFS, a copy of the index on a FAT or exFAT stick or over the network comes out unencrypted, and the files open only under the same Windows account.
 - Claude Code's own transcripts, each project's auto-memory files and the text of a handoff that goes into the chat stay plain (with EFS the handoff files on disk are encrypted).
-- Until you run `/cg-encrypt on`, nothing changes for you.
+- Until you run `/al-encrypt on`, nothing changes for you.
 
 **Languages.** English (default), Russian, Ukrainian: the interface, the texts for the model and the handoff.
 
@@ -59,19 +61,19 @@ So the expensive part is not what is typed, but coming back to a big, idle chat.
 
 | command | what it does |
 |---|---|
-| `/cg-health` | checks the mod, the index, the vectors, the memory, the sync and the compression |
-| `/cg-band [off]` | shows the band now, or back to the thresholds |
-| `/cg-index [rebuild]` | updates the index (rebuild: re-read everything, add what is missing) |
-| `/cg-sync [skip <computer> <N>]` | syncs with the other computers now |
-| `/cg-stats [days]` | cost measurement, written to Obsidian |
-| `/cg-lessons [forget <pos>]` | the lessons of this project; delete one |
-| `/cg-job [on [minutes] \| off]` | the background job (Windows): on, off, its state |
-| `/cg-encrypt [on \| join \| off \| status]` | encryption of the index and the sync folder (Windows): on, join a second computer, off, its state |
-| `/cg-index-dir [folder]` | moves the index to another folder on a local disk (Windows), without a folder a window asks for one |
+| `/al-health` | checks the mod, the index, the vectors, the memory, the sync and the compression |
+| `/al-band [off]` | shows the band now, or back to the thresholds |
+| `/al-index [rebuild]` | updates the index (rebuild: re-read everything, add what is missing) |
+| `/al-sync [skip <computer> <N>]` | syncs with the other computers now |
+| `/al-stats [days]` | cost measurement, written to Obsidian |
+| `/al-lessons [forget <pos>]` | the lessons of this project; delete one |
+| `/al-job [on [minutes] \| off]` | the background job (Windows): on, off, its state |
+| `/al-encrypt [on \| join \| off \| status]` | encryption of the index and the sync folder (Windows): on, join a second computer, off, its state |
+| `/al-index-dir [folder]` | moves the index to another folder on a local disk (Windows), without a folder a window asks for one |
 
 ## Settings (the `settings.json` file)
 
-The file `%USERPROFILE%\.claude\cacheguard\settings.json` is one per computer and stays in this folder even when the index has moved. The mod creates it at the first start with all the current values, so you only open it and edit. The mod reads the file at every load, and its values win over `/config`. After an edit, type `/reload-plugins`. Backslashes in JSON are doubled.
+The file `%USERPROFILE%\.claude\alethite\settings.json` is one per computer and stays in this folder even when the index has moved. The mod creates it at the first start with all the current values, so you only open it and edit. The mod reads the file at every load, and its values win over `/config`. After an edit, type `/reload-plugins`. Backslashes in JSON are doubled.
 
 | key | what it sets | default |
 |---|---|---|
@@ -85,16 +87,17 @@ The file `%USERPROFILE%\.claude\cacheguard\settings.json` is one per computer an
 | `embedModel` | Ollama embedding model | `"embeddinggemma"` |
 | `lessons` | bring lessons back to messages and commands | `true` |
 | `lessonsMinScore` | how close a message must be (0–1) | `0.45` |
-| `indexCipher` | how the index is encrypted (`/cg-encrypt on` writes it itself) | `"sqlcipher"` (also `"efs"`) |
-| `shareCipher` | how the sync folder is encrypted (`/cg-encrypt on` writes it itself). `"cryptography"` means the AES-GCM of Windows, no package needed | `"sqlcipher"` (also `"cryptography"`) |
-| `indexDir` | the index folder (written by `/cg-index-dir`, do not edit by hand) | no key (the index is in the standard folder) |
+| `indexCipher` | how the index is encrypted (`/al-encrypt on` writes it itself) | `"sqlcipher"` (also `"efs"`) |
+| `shareCipher` | how the sync folder is encrypted (`/al-encrypt on` writes it itself). `"cryptography"` means the AES-GCM of Windows, no package needed | `"sqlcipher"` (also `"cryptography"`) |
+| `indexDir` | the index folder (written by `/al-index-dir`, do not edit by hand) | no key (the index is in the standard folder) |
+| `projectAliases` | old folders whose memory a project folder also sees, written by hand: `{"C:\\work\\new": ["C:\\work\\old"]}` | no key |
 
 The file may hold only the keys you change. For example:
 
 ```json
 {
   "language": "ru",
-  "syncDir": "Z:\\cacheguard"
+  "syncDir": "Z:\\alethite"
 }
 ```
 
