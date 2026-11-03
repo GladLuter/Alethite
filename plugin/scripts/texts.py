@@ -161,7 +161,8 @@ EN = {
     'home_move_failed': 'the mod folder {old} could not be moved to {new}: {e}. The mod works in {old} for now and tries again on the next run',
     'home_move_both': 'the old mod folder {old} is still there next to {new}. A chat with the old mod that was not reloaded made it again, or the old background task «CacheGuard» did. Nothing was moved and the mod works in {new}. Check {old} and delete it',
     'home_job_failed': 'the background job could not be updated: {e}. Check it with /al-health. If it is off, run /al-job on',
-    'home_old_task_failed': 'the old background task «CacheGuard» could not be removed: {e}. Delete it in Task Scheduler. The mod does not move its folder while that task is there. The first run after it is gone moves the folder',
+    'home_old_task_failed': 'the old background task «CacheGuard» could not be removed: {e}. Delete it in Task Scheduler, then run /al-job on',
+    'home_move_waits': 'the mod does not move {old} to {new} while that task is there. The first run after it is gone moves it',
 }
 
 RU = {
@@ -315,7 +316,8 @@ RU = {
     'home_move_failed': 'папку мода {old} не удалось перенести в {new}: {e}. Пока мод работает в {old}, перенос повторится при следующем запуске',
     'home_move_both': 'старая папка мода {old} осталась рядом с {new}. Её снова создал чат со старым модом, который не перезагружали, или старая фоновая задача «CacheGuard». Ничего не перенесено, мод работает в {new}. Проверьте {old} и удалите её',
     'home_job_failed': 'фоновую задачу не удалось обновить: {e}. Проверьте её в /al-health. Если она выключена, выполните /al-job on',
-    'home_old_task_failed': 'старую фоновую задачу «CacheGuard» не удалось снять: {e}. Удалите её в Планировщике заданий. Пока она есть, мод папку не переносит. Первый запуск после её удаления перенесёт папку',
+    'home_old_task_failed': 'старую фоновую задачу «CacheGuard» не удалось снять: {e}. Удалите её в Планировщике заданий, потом выполните /al-job on',
+    'home_move_waits': 'пока эта задача есть, мод не переносит папку {old} в {new}. Первый запуск после её удаления перенесёт папку',
 }
 
 UK = {
@@ -469,7 +471,8 @@ UK = {
     'home_move_failed': 'теку мода {old} не вдалося перенести в {new}: {e}. Поки що мод працює в {old}, перенесення повториться під час наступного запуску',
     'home_move_both': 'стара тека мода {old} лишилась поруч із {new}. Її знову створив чат зі старим модом, який не перезавантажували, або старе фонове завдання «CacheGuard». Нічого не перенесено, мод працює в {new}. Перевірте {old} і видаліть її',
     'home_job_failed': 'фонове завдання не вдалося оновити: {e}. Перевірте його в /al-health. Якщо воно вимкнене, виконайте /al-job on',
-    'home_old_task_failed': 'старе фонове завдання «CacheGuard» не вдалося зняти: {e}. Видаліть його в Планувальнику завдань. Поки воно є, мод теку не переносить. Перший запуск після його видалення перенесе теку',
+    'home_old_task_failed': 'старе фонове завдання «CacheGuard» не вдалося зняти: {e}. Видаліть його в Планувальнику завдань, потім виконайте /al-job on',
+    'home_move_waits': 'поки це завдання є, мод не переносить теку {old} у {new}. Перший запуск після його видалення перенесе теку',
 }
 
 TABLES = {'en': EN, 'ru': RU, 'uk': UK}

@@ -67,19 +67,15 @@ const runCg = async ($: EngineInterface, python: string, args: string[], timeout
   if (problem !== undefined) setProblem($, problem)
   for (const note of homeNotesOf(r.stdout)) {
     if (toastedNotes.includes(note)) continue
-    toastedNotes.push(note) // before the await: two answers at once must not both toast it
-    try {
-      await toast($, note)
-    } catch {}
+    toastedNotes.push(note)
+    toast($, note)
   }
   const out = parseCg(r)
   const notice = typeof out.index_notice === 'string' ? out.index_notice : ''
   if (!notice) lastNotice = ''
   else if (notice !== lastNotice) {
-    try {
-      await toast($, notice)
-      lastNotice = notice // shown only once the toast went out: a refused one is tried again with the next answer
-    } catch {}
+    toast($, notice)
+    lastNotice = notice // told once, until an answer comes without it
   }
   return out
 }

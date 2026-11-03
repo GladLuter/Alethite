@@ -778,23 +778,23 @@ class CgTest(unittest.TestCase):
         self.assertIn('<Interval>PT45M</Interval>', s.tasks['Alethite'])
         self.assertTrue(os.path.isfile(os.path.join(home, 'job.xml')))
 
-    def job_error(self, deny, moved, key):
+    def job_error(self, deny, moved, key, waits=False):
         old, new = self.old_home()
         s = self.scheduler({'CacheGuard': 45}, deny)
         code, out, _ = self.main_home('status')
         self.assertEqual((code, 'error' in out, os.path.exists(old), os.path.isdir(new)), (0, False, not moved, moved), out)  # the index answered, from the folder that holds it
         self.assertEqual(out['db'], os.path.join(new if moved else old, 'index.db'))
-        self.assertEqual(out['home_notes'], [t(key, e=t('job_schtasks', e='ERROR: Access is denied.'))])
+        self.assertEqual(out['home_notes'], [t(key, e=t('job_schtasks', e='ERROR: Access is denied.')), *([t('home_move_waits', old=old, new=new)] if waits else [])])
         return s
 
     def test_job_error_during_move_does_not_stop_command(self):
         # the old task could not be removed: it stays, the note names it, and the folder stays too, so that it and the mod share one index
-        self.assertEqual(list(self.job_error('/Delete', False, 'home_old_task_failed').tasks), ['CacheGuard'])
+        self.assertEqual(list(self.job_error('/Delete', False, 'home_old_task_failed', waits=True).tasks), ['CacheGuard'])  # waits: only here does a folder wait for the task
 
     def test_the_next_run_retries_the_old_task_and_then_moves(self):
         old, new = self.old_home()
         s = self.scheduler({'CacheGuard': 45}, '/Delete')
-        self.assertEqual(self.main_home('status')[1]['home_notes'], [t('home_old_task_failed', e=t('job_schtasks', e='ERROR: Access is denied.'))])
+        self.assertEqual(self.main_home('status')[1]['home_notes'], [t('home_old_task_failed', e=t('job_schtasks', e='ERROR: Access is denied.')), t('home_move_waits', old=old, new=new)])
         s.deny = ()
         with mock.patch.object(crypto, 'HOME_DIR', new):  # one process per run, as in life
             code, out, _ = self.main_home('status')
@@ -807,7 +807,13 @@ class CgTest(unittest.TestCase):
         self.scheduler({'CacheGuard': 45}, '/Delete')
         code, out, _ = self.main_home('status')
         self.assertEqual((code, out['db']), (0, os.path.join(new, 'index.db')), out)
-        self.assertEqual(out['home_notes'], [t('home_old_task_failed', e=t('job_schtasks', e='ERROR: Access is denied.')), t('home_move_both', old=old, new=new)])
+        self.assertEqual(out['home_notes'], [t('home_old_task_failed', e=t('job_schtasks', e='ERROR: Access is denied.')), t('home_move_both', old=old, new=new)])  # nothing moves later: no waits note
+
+    def test_a_refused_removal_with_no_old_folder_says_nothing_of_a_move(self):  # --follow-job found an old task that outlived the move
+        self.home_dir()
+        self.scheduler({'CacheGuard': 45}, '/Delete')
+        code, out, _ = self.main_home('--follow-job', 'status')
+        self.assertEqual((code, out['home_notes']), (0, [t('home_old_task_failed', e=t('job_schtasks', e='ERROR: Access is denied.'))]), out)
 
     def test_new_task_error_during_move_is_said_too(self):
         self.assertEqual(list(self.job_error('/Create', True, 'home_job_failed').tasks), [])

@@ -528,6 +528,7 @@ def main(argv):
             # job is imported (it costs time) only when the old folder or --follow-job asks for it; the flag finds an old task that outlived the move
             minutes = (os.path.isdir(crypto.OLD_HOME_DIR) or a.follow_job) and _job_step(home_notes, 'home_old_task_failed', _old_task_off)
             if minutes is None and os.path.isdir(crypto.OLD_HOME_DIR) and not os.path.exists(crypto.HOME_DIR):  # None: the old task stays
+                home_notes.append(texts.t('home_move_waits', old=crypto.OLD_HOME_DIR, new=crypto.HOME_DIR))  # only here does a move wait for the task
                 crypto.HOME_DIR = crypto.OLD_HOME_DIR  # it and the mod share one index (its next run would build a second in a folder made again); a later run removes it and moves
             else:
                 home_notes += crypto.move_home(wait=a.cmd not in SHORT)  # the settings and the index are read from the new folder, a run with --db leaves the old one alone
