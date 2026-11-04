@@ -15,7 +15,7 @@ class ManifestTest(unittest.TestCase):
         plugin, market = manifest('plugin', '.claude-plugin', 'plugin.json'), manifest('.claude-plugin', 'marketplace.json')
         self.assertEqual((plugin['name'], plugin['version']), ('alethite', '0.3.0'))
         self.assertTrue(plugin['description'].startswith('Alethite'))
-        self.assertEqual((market['name'], market['plugins'][0]['name']), ('alethite-local', 'alethite'))
+        self.assertEqual((market['name'], market['plugins'][0]['name']), ('alethite', 'alethite'))
         self.assertTrue(market['description'].startswith('Alethite'))
 
 
