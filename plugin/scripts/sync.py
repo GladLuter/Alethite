@@ -697,10 +697,8 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
     report['peers'] = {m: last for m, last in conn.execute('SELECT machine, last_batch FROM peers WHERE machine != ? ORDER BY machine', (machine,))}
     report['own_batch'] = (conn.execute('SELECT last_batch FROM peers WHERE machine = ?', (machine,)).fetchone() or (None,))[0]
     report['seconds'] = round(now() - start, 2)
-    # stopped: the run failed as a whole (an unavailable folder) and never reached the memory step; /al-health tells only its error then
     last = {'at': _now(), 'dir': sync_dir, 'pushed': report['pushed'], 'pulled': report['pulled'], 'memory': report['memory'],
-            'errors': len(report['errors']), 'error': report['errors'][0]['error'] if report['errors'] else None,
-            'stopped': any(e['where'] == 'sync' for e in report['errors'])}
+            'errors': len(report['errors']), 'error': report['errors'][0]['error'] if report['errors'] else None}
     conn.execute("INSERT OR REPLACE INTO meta VALUES('sync_last', ?)", (json.dumps(last, ensure_ascii=False),))
     return report
 

@@ -146,6 +146,8 @@ export const en = {
   cgStatsSummaryFailed: 'The note is written, but the summary is not rebuilt (the reason is in the toast); the next /al-stats tries again.',
   summaryTruncated: 'The measurements folder holds over 1000 files: the summary would be incomplete; move old notes into subfolders',
   cgStatsFailed: 'al-stats: did not work, the reason is in the toast.',
+  statsFolder: 'Alethite/Measurements',
+  statsSummary: 'Summary',
   summaryTitle: '# Measurement summary',
   summaryHint: 'Built by /al-stats from the notes of each computer; do not edit by hand.',
   summaryColumns: ['date', 'computer', '$ per owner message', 'cache rewrites', 'of them after a pause ≥ 60 min', 'median context', 'owner messages', 'recall results'],

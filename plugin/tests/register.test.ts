@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { ru } from '../hooks/lang/ru'
 import { uk } from '../hooks/lang/uk'
-import { FOLDER, notePath, SUMMARY_PATH } from '../hooks/notes'
+import { notePath, summaryPath } from '../hooks/notes'
 import { T } from '../hooks/text'
 
 const usage = { context: { tokens: 512_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 7 }] }
@@ -634,10 +634,10 @@ test('/al-stats: no sense in the days: say so, run nothing', async ($, on) => {
 
 test('/al-stats: Obsidian up: the note and the summary are written, the outbox is empty', async ($, on) => {
   const { vault, m, stats, today } = await statsRig($, on)
-  vault.files.set(`${FOLDER}/2026-10-01 PC-2.md`, OTHER)
+  vault.files.set(`${T.statsFolder}/2026-10-01 PC-2.md`, OTHER)
   const { text } = await stats()
   expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
-  const summary = vault.files.get(SUMMARY_PATH)!
+  const summary = vault.files.get(summaryPath())!
   expect(summary).toContain('PC-1')
   expect(summary).toContain('PC-2')
   expect(summary.split('\n').filter(l => /^\| 2026/.test(l))).toHaveLength(2) // the summary does not list itself
@@ -712,11 +712,11 @@ test('/al-stats: the summary cannot be built: the note is safe, the owner is tol
 
 test('/al-stats: the folder listing is truncated: the note is written, the summary is not rebuilt, the owner is told', async ($, on) => {
   const { vault, m, stats, today } = await statsRig($, on)
-  for (let i = 0; i < 1001; i++) vault.files.set(`${FOLDER}/old-${i}.md`, OTHER)
+  for (let i = 0; i < 1001; i++) vault.files.set(`${T.statsFolder}/old-${i}.md`, OTHER)
   const { text } = await stats()
   expect(vault.listLimit).toBe(1000)
   expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
-  expect(vault.files.has(SUMMARY_PATH)).toBe(false)
+  expect(vault.files.has(summaryPath())).toBe(false)
   expect(m.toasts[0]).toContain(T.summaryTruncated)
   expect(m.store.get('lastError')).toMatchObject({ where: 'al-stats-summary' })
   expect(text).toContain(T.cgStatsSummaryFailed)
@@ -724,14 +724,14 @@ test('/al-stats: the folder listing is truncated: the note is written, the summa
 
 test('/al-stats: the summary rebuild skips the summary itself, a non-.md file and a note in a subfolder', async ($, on) => {
   const { vault, stats, today } = await statsRig($, on)
-  vault.files.set(SUMMARY_PATH, 'old summary')
-  vault.files.set(`${FOLDER}/2026-10-01 PC-2.md`, OTHER)
-  vault.files.set(`${FOLDER}/chart.png`, 'x')
-  vault.files.set(`${FOLDER}/old/2026-01-01 PC-3.md`, OTHER)
+  vault.files.set(summaryPath(), 'old summary')
+  vault.files.set(`${T.statsFolder}/2026-10-01 PC-2.md`, OTHER)
+  vault.files.set(`${T.statsFolder}/chart.png`, 'x')
+  vault.files.set(`${T.statsFolder}/old/2026-01-01 PC-3.md`, OTHER)
   await stats()
   const read = vault.calls.filter(c => c.startsWith('obsidian get_note_properties')).sort()
-  expect(read).toEqual([`obsidian get_note_properties ${FOLDER}/2026-10-01 PC-2.md`, `obsidian get_note_properties ${notePath('PC-1', today())}`].sort())
-  expect(vault.files.get(SUMMARY_PATH)).toContain('PC-2')
+  expect(read).toEqual([`obsidian get_note_properties ${T.statsFolder}/2026-10-01 PC-2.md`, `obsidian get_note_properties ${notePath('PC-1', today())}`].sort())
+  expect(vault.files.get(summaryPath())).toContain('PC-2')
 })
 
 test('/al-stats: cg.py reports what made the figures wrong: a toast, /al-health, a word in the reply; the note is written all the same', async ($, on) => {
@@ -1036,7 +1036,6 @@ test('/al-health: the folder, the computers, their last batches, the errors', { 
     T.healthPeerSkipped('NOTEBOOK', '4'),
     T.healthPeerError('NOTEBOOK', 'batch 8 is broken'),
     T.healthSyncError('batch 8 is broken'),
-    T.syncMemoryOff,
   ])
     expect(text).toContain(line)
 })

@@ -5,7 +5,7 @@ import type { Snap } from '../types'
 import { bandLines, isStale, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
-import { FOLDER, flush, notePath, SUMMARY_PATH, summaryNote } from './notes'
+import { flush, notePath, summaryNote, summaryPath } from './notes'
 import type { Note } from './notes'
 import { encryptArgs, encryptHealth, encryptReply, isTimeout } from './encrypt'
 import type { EncryptResult, EncryptStatus } from './encrypt'
@@ -254,12 +254,13 @@ const obsidian = async ($: EngineInterface, tool: string, args: Record<string, u
 
 // The summary note: the frontmatter of every .md note directly in the folder, as one table (not the summary itself).
 const rebuildSummary = async ($: EngineInterface) => {
+  const [folder, summary] = [T.statsFolder, summaryPath()]
   // 1000 is the server's maximum: past it the summary would silently miss notes
-  const { files, truncated } = JSON.parse(await obsidian($, 'list_vault_files', { directory: FOLDER, limit: 1000 })) as { files: string[]; truncated: boolean }
+  const { files, truncated } = JSON.parse(await obsidian($, 'list_vault_files', { directory: folder, limit: 1000 })) as { files: string[]; truncated: boolean }
   if (truncated === true) throw new Error(T.summaryTruncated)
-  const notes = files.filter(p => p.endsWith('.md') && p !== SUMMARY_PATH && p.startsWith(`${FOLDER}/`) && !p.includes('/', FOLDER.length + 1))
+  const notes = files.filter(p => p.endsWith('.md') && p !== summary && p.startsWith(`${folder}/`) && !p.includes('/', folder.length + 1))
   const fronts = await Promise.all(notes.map(async path => JSON.parse(await obsidian($, 'get_note_properties', { path })).frontmatter ?? {}))
-  await obsidian($, 'create_vault_file', { path: SUMMARY_PATH, content: summaryNote(fronts) })
+  await obsidian($, 'create_vault_file', { path: summary, content: summaryNote(fronts) })
 }
 
 // One /al-stats run: measure, queue the note, send the queue, rebuild the summary. Returns what the owner reads.

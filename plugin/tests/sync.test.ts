@@ -90,8 +90,8 @@ test('health: the folder, the records by computer, the last batches, the skips, 
   ])
 })
 
-test('health: a last run that failed as a whole tells its error, not a missing auto-memory folder', () => {
-  const failed: SyncStatus = { ...status, last: { ...status.last!, memory: null, errors: 1, error: 'the sync folder is unavailable', stopped: true } }
+test('health: a last run without the memory step tells its error, not a missing auto-memory folder', () => {
+  const failed: SyncStatus = { ...status, last: { ...status.last!, memory: null, errors: 1, error: 'the sync folder is unavailable' } }
   const lines = syncHealth('\\\\NAS\\cg', failed)
   expect(lines).toContain(T.healthSyncError('the sync folder is unavailable'))
   expect(lines).not.toContain(T.syncMemoryOff)

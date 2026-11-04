@@ -18,8 +18,7 @@ export type SyncResult = {
 }
 export type SyncStatus = {
   machine: string
-  // stopped: the run failed as a whole and never reached the memory step (absent in the runs of before)
-  last: { at: string; dir: string; pushed: number; pulled: number; memory: SyncMemory | null; errors: number; error: string | null; stopped?: boolean } | null
+  last: { at: string; dir: string; pushed: number; pulled: number; memory: SyncMemory | null; errors: number; error: string | null } | null
   peers: { machine: string; last_batch: number; skipped: number[]; model: string | null; error: string | null }[]
   origins: Record<string, number>
 }
@@ -80,8 +79,8 @@ export const syncHealth = (syncDir: string, s: SyncStatus | undefined) => {
       ? [
           T.healthSyncLast(new Date(s.last.at).toLocaleString(T.locale), s.last.pushed, s.last.pulled, s.last.errors),
           ...(s.last.error ? [T.healthSyncError(s.last.error)] : []),
-          // a run that failed as a whole never reached the memory: only its error is told then
-          ...(s.last.memory ? [T.syncMemory(s.last.memory)] : s.last.stopped ? [] : [T.syncMemoryOff]),
+          // the last run may come from another chat or /al-encrypt: without its memory step there is nothing to tell of the memory
+          ...(s.last.memory ? [T.syncMemory(s.last.memory)] : []),
         ]
       : [T.healthSyncNever]),
   ]

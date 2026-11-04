@@ -5,9 +5,9 @@ import { T } from './text'
 
 export type Note = { path: string; content: string }
 
-export const FOLDER = 'Alethite/Замеры'
-export const SUMMARY_PATH = `${FOLDER}/Сводка.md`
-export const notePath = (host: string, today: string) => `${FOLDER}/${today} ${host}.md`
+// functions, not constants: T holds the chosen language only after register() ran
+export const summaryPath = () => `${T.statsFolder}/${T.statsSummary}.md`
+export const notePath = (host: string, today: string) => `${T.statsFolder}/${today} ${host}.md`
 
 // Sends in order and stops at the first failure; what was not sent is `left`, for the next run.
 export const flush = async (queue: Note[], send: (n: Note) => Promise<void>): Promise<{ sent: number; left: Note[]; error?: string }> => {

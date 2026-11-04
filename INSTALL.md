@@ -120,7 +120,7 @@ The plugin is read straight from the clone folder, so an update is a `git pull`.
   - A broken file (invalid JSON) gives a toast naming the file, and the plugin keeps the `/config` values. An unknown key or a value of the wrong type gives the same toast, and that key is skipped.
 - **The band above the prompt** is one area shared by all plugins. The Alethite band is drawn in a frame of its own, with its title, and the bands of other plugins stay under it.
 - **`/al-stats` needs Obsidian.** Skip this command if you do not use Obsidian. It writes through an MCP server named `obsidian` that offers the tools `list_vault_files`, `get_note_properties` and `create_vault_file`, and the server must be connected on this computer.
-  - The notes go into the vault folder `Alethite/Замеры`, and the summary is `Сводка.md`. These folder and file names are in Russian and fixed in the code.
+  - The notes go into a vault folder named in the mod's language. In English it is `Alethite/Measurements` with the summary `Summary.md`, in Russian `Alethite/Замеры` and `Сводка.md`, in Ukrainian `Alethite/Заміри` and `Зведення.md`. After a language change new notes go to the new folder and the old ones stay put.
   - If Obsidian is unavailable, the measurement waits in a queue and goes out at the next run.
   - Everything else in the plugin works without Obsidian.
 - **Faster vectors on built-in Intel graphics (Iris Xe).** The one-off run (Installing, step 7) is about twice as fast on it, and the vectors are the same (measured 2026-10-19 on a laptop: 2.44 long pieces per second against 1.15 on the processor). Ollama sees such a card only when started with `OLLAMA_IGPU_ENABLE=1`. Stop the usual Ollama in the tray, then in a PowerShell window:

@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { flush, notePath, SUMMARY_PATH, summaryNote } from '../hooks/notes'
+import { flush, notePath, summaryNote, summaryPath } from '../hooks/notes'
+import { setLanguage } from '../hooks/text'
 
 test('flush stops at the first failure and keeps the rest', async () => {
   const q = [{ path: 'a', content: '1' }, { path: 'b', content: '2' }]
@@ -17,8 +18,16 @@ test('flush sends in order and leaves nothing', async () => {
 })
 test('flush of an empty queue sends nothing', async () => expect(await flush([], async () => {})).toEqual({ sent: 0, left: [] }))
 
-test('note path', () => expect(notePath('PC-1', '2026-11-13')).toBe('Alethite/Замеры/2026-11-13 PC-1.md'))
-test('the summary sits in the same folder as the notes', () => expect(SUMMARY_PATH).toBe('Alethite/Замеры/Сводка.md'))
+test('note path', () => expect(notePath('PC-1', '2026-11-13')).toBe('Alethite/Measurements/2026-11-13 PC-1.md'))
+test('the summary sits in the same folder as the notes', () => expect(summaryPath()).toBe('Alethite/Measurements/Summary.md'))
+test('the folder follows the language; Russian keeps the folder of before', () => {
+  setLanguage('ru')
+  try {
+    expect([notePath('PC-1', '2026-11-13'), summaryPath()]).toEqual(['Alethite/Замеры/2026-11-13 PC-1.md', 'Alethite/Замеры/Сводка.md'])
+  } finally {
+    setLanguage('en')
+  }
+})
 
 const front = (host: string, date: string, usd: number | null) => ({
   host,
