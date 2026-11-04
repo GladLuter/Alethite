@@ -557,9 +557,12 @@ def main(argv):
         merged = pending and indexdir.merge_back(a.where, crypto.load_key(crypto.settings_path(a.db)) if enc else None)
         if pending and not os.path.exists(pending):  # merged and deleted just now: the command is not to see it as still to merge
             a.where = a.where._replace(merge_from=None)
-        # before anything is read from a transcript; an index in its folder too: it may lack forgets made on C: while the settings were unreadable
-        if a.where and (a.where.configured or a.where.fallback or a.where.settings_error) and a.cmd not in INDEX_FREE:
+        if a.where and (a.where.fallback or a.where.settings_error) and a.cmd not in INDEX_FREE:  # before anything is read from a transcript
             indexdir.apply_forgets(a.db)
+        elif a.where and a.where.configured and a.cmd not in SHORT:
+            # forgets made on C: while the settings were unreadable; never on the per-prompt path, and a busy index takes them on the next run
+            with contextlib.suppress(Exception):
+                indexdir.apply_forgets(a.db)
         try:
             out, code = a.fn(a), 0
         finally:

@@ -1128,6 +1128,12 @@ class CgTest(unittest.TestCase):
         self.break_settings(home)
         self.assertEqual(self.main_home('forget', '--conv', 'S1', '--pos', str(pos))[1]['forgotten'], 1)
         self.home_dir(indexDir=far)  # the file is mended
+        with mock.patch.object(cg.indexdir, 'apply_forgets') as apply:  # the per-prompt path never waits on a busy index for it
+            self.assertEqual(self.main_home('lessons-match', '--text', '429', '--model', 'nosuch')[0], 0)
+        apply.assert_not_called()
+        with mock.patch.object(cg.indexdir, 'apply_forgets', side_effect=sqlite3.OperationalError('database is locked')):
+            self.assertEqual(self.main_home('lessons', '--all')[0], 0)  # a busy index: the command works, the forget waits
+        self.assertEqual(self.secret_in(os.path.join(far, 'index.db')), (1, 0, 0))
         self.assertEqual(self.main_home('lessons', '--all')[0], 0)
         self.assertEqual(self.secret_in(os.path.join(far, 'index.db')), (0, 1, 0))
 
