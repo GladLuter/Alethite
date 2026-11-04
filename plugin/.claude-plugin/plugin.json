@@ -1,7 +1,8 @@
 {
   "name": "alethite",
   "version": "0.3.0",
-  "author": { "name": "Evgenii S" },
+  "author": { "name": "Yevgenii Slieptsov (GladLuter)" },
+  "license": "MIT",
   "description": "Alethite: price a send into a big idle chat, offer a clean new worker, remember what was learned, share the memory between computers.",
   "types": "./types/index.d.ts",
   "userConfig": {

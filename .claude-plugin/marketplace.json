@@ -1,6 +1,6 @@
 {
   "name": "alethite-local",
   "description": "Alethite: local marketplace for this repo",
-  "owner": { "name": "Evgenii S" },
+  "owner": { "name": "Yevgenii Slieptsov (GladLuter)" },
   "plugins": [{ "name": "alethite", "source": "./plugin" }]
 }
