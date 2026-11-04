@@ -101,12 +101,13 @@ def _window_show_code(tkinter, root, code):
     status.pack()
     seq = []
 
-    def copy():
+    def copy(_=None):
         try:
             seq[:] = [_clipboard_set(code)]
             status.config(text='')
         except OSError as e:  # the message holds the failed call and its error number only
             status.config(text=str(e))
+        return 'break'  # Ctrl+C in the field comes here too: Tk's own copy would skip the history marks and the clearing
 
     def close(_=None):
         try:
@@ -122,6 +123,7 @@ def _window_show_code(tkinter, root, code):
     root.protocol('WM_DELETE_WINDOW', close)
     root.bind('<Return>', close)
     root.bind('<Escape>', close)
+    entry.bind('<<Copy>>', copy)
     entry.focus_force()
     root.mainloop()
 

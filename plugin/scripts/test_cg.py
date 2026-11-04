@@ -1444,6 +1444,15 @@ class DialogsTest(unittest.TestCase):
         tk.Entry.return_value.insert.assert_called_with(0, 'CG1-AAAA')
         tk.Entry.return_value.config.assert_called_with(state='readonly')
 
+    def test_ctrl_c_in_the_field_copies_the_same_way_as_the_button(self):
+        fake = FakeClipboard()
+        tk, _ = self.code_window(fake, lambda copy, ok, root, status: None)
+        handler = next(c[0][1] for c in tk.Entry.return_value.bind.call_args_list if c[0][0] == '<<Copy>>')
+        with mock.patch('ctypes.WinDLL', return_value=fake), mock.patch('ctypes.memmove', fake.memmove):
+            self.assertEqual(handler(None), 'break')  # Tk's own copy, without the history marks, does not run
+        self.assertEqual(fake.formats[13], 'CG1-AAAA\0'.encode('utf-16-le'))
+        self.assertEqual(fake.formats[fake.ids['CanIncludeInClipboardHistory']], b'\0\0\0\0')
+
     def test_closing_clears_the_clipboard_only_while_it_still_holds_our_code(self):
         for change, cleared in ((False, True), (True, False)):
             fake = FakeClipboard()
