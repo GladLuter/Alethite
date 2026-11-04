@@ -1115,6 +1115,22 @@ class CgTest(unittest.TestCase):
         self.assertEqual(self.main_home('lessons', '--all')[0], 0)
         self.assertEqual(self.secret_in(db), (0, 1, 0))  # the forget made in the folder is applied here too
 
+    def test_a_forget_made_while_the_settings_are_unreadable_reaches_the_index_folder(self):
+        far = os.path.join(self.tmp, 'far')
+        home = self.home_dir(indexDir=far)
+        self.write('P/S1.jsonl', [owner_line('my password is hunter2xyz'), claude_line('noted')])
+        for folder in (home, far):
+            conn = memdb.connect(os.path.join(folder, 'index.db'))
+            memdb.update(conn, self.projects)
+            conn.close()
+        with contextlib.closing(sqlite3.connect(os.path.join(home, 'index.db'))) as conn:
+            pos = conn.execute("SELECT pos FROM chunks WHERE text LIKE '%hunter2xyz%'").fetchone()[0]
+        self.break_settings(home)
+        self.assertEqual(self.main_home('forget', '--conv', 'S1', '--pos', str(pos))[1]['forgotten'], 1)
+        self.home_dir(indexDir=far)  # the file is mended
+        self.assertEqual(self.main_home('lessons', '--all')[0], 0)
+        self.assertEqual(self.secret_in(os.path.join(far, 'index.db')), (0, 1, 0))
+
     def test_unreadable_settings_tells_owner(self):
         far, home = self.forgotten_in_the_folder(old_copy=True)
         path = self.break_settings(home)

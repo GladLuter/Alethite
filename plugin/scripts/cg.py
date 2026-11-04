@@ -557,7 +557,8 @@ def main(argv):
         merged = pending and indexdir.merge_back(a.where, crypto.load_key(crypto.settings_path(a.db)) if enc else None)
         if pending and not os.path.exists(pending):  # merged and deleted just now: the command is not to see it as still to merge
             a.where = a.where._replace(merge_from=None)
-        if a.where and (a.where.fallback or a.where.settings_error) and a.cmd not in INDEX_FREE:  # before anything is read from a transcript
+        # before anything is read from a transcript; an index in its folder too: it may lack forgets made on C: while the settings were unreadable
+        if a.where and (a.where.configured or a.where.fallback or a.where.settings_error) and a.cmd not in INDEX_FREE:
             indexdir.apply_forgets(a.db)
         try:
             out, code = a.fn(a), 0
@@ -565,7 +566,8 @@ def main(argv):
             if a.where:
                 with contextlib.suppress(OSError):  # it must not replace the command's own exception, nor stop keep_forgets
                     indexdir.remark(a.where)
-                if a.where.configured and not a.where.fallback and a.cmd not in SHORT:  # this run, or the merge before it, may have made forgets or taken some in
+                # this run, or the merge before it, may have made forgets or taken some in; the home index of unreadable settings keeps its own too
+                if (a.where.configured and not a.where.fallback or a.where.settings_error) and a.cmd not in SHORT:
                     indexdir.keep_forgets(a.db)
         note = merged or indexdir.notice(a.where)
         if note and isinstance(out, dict):
