@@ -1,124 +1,174 @@
-**English** · [Русский](README.ru.md) · [Українська](README.uk.md)
+<div align="center">
+
+<img src="plugin/.claude-plugin/icon.png" alt="Alethite" width="128">
 
 # Alethite
 
-A mod for Claude Code that makes long-lived "worker" chats cheaper without taking their memory away.
+**Cheaper long chats in Claude Code. Memory that stays.**
 
-If you have the old mod, it used to be called CacheGuard. How to move is in the section [Moving from CacheGuard](INSTALL.md#moving-from-cacheguard).
+A free, MIT-licensed plugin for the Claude Code desktop app on Windows.
 
-## Why
+[![License: MIT](https://img.shields.io/badge/license-MIT-4ea1ff?style=flat-square)](LICENSE)
+![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-d97757?style=flat-square)
+![Windows](https://img.shields.io/badge/Windows-0078d4?style=flat-square)
+![Languages](https://img.shields.io/badge/EN%20%C2%B7%20RU%20%C2%B7%20UK-3fb68b?style=flat-square)
 
-An audit of the owner's transcripts (May–October 2026, at API prices) showed where the money goes:
-- 89% is spent re-sending context that already exists (cache writes and reads);
-- 32% is the first message after a pause of over an hour in a big chat, when the one-hour cache has expired and the whole context is written again at double price.
+**English** · [Русский](README.ru.md) · [Українська](README.uk.md)
 
-So the expensive part is not what is typed, but coming back to a big, idle chat.
+</div>
 
-## What it does
+---
 
-**Cache guard.**
-- The status line shows the size of the context and the minutes left in the cache.
-- When you come back to a big chat after a pause, a band above the prompt shows what sending there costs now.
-- The **New worker** button starts a clean chat: a mechanical handoff (no model calls) plus the message you already typed.
+## 💸 Why
 
-**Short memory.** Claude Code's own auto-memory. The mod adds:
-- one short rule to the system prompt: write decisions down at once, save an understood error as a lesson, check memory before proposing;
-- a toast whenever a fact is saved.
+I audited my own Claude Code transcripts (May to October 2026, at API prices) to see where the money goes.
 
-**Long memory.** Every past conversation of every project, subagents included, in a local SQLite index (FTS5) with vectors from a local Ollama model.
-- The worker calls `recall` (hybrid search by words and by meaning) and `recall_more` (read around a hit).
-- Secrets are hidden before indexing.
-- Nothing that got into the index is ever lost: rebuilds and rewritten transcripts only add.
+- **89%** went on re-sending context that already existed (cache writes and reads).
+- **32%** went on the first message after a pause of over an hour in a big chat. The one-hour cache had expired, so the whole context was written again at double price.
 
-**Two computers** (stage 2). A shared folder on a network drive carries the index, the vectors and the memory facts.
-- Each computer writes only its own numbered batches; the merge is mechanical and repeatable.
-- Without the folder everything works locally.
+The money goes on coming back to a big idle chat. Alethite shows you the price before you pay it, and keeps a memory of your past chats so a fresh one starts informed.
 
-**Memory compression** (stage 3). What the mod gives the model (search results, handoff quotes) is squeezed mechanically. Four levels, `ultra` by default; code, paths and negations are never touched.
-- `/al-stats` measures how much memory sits in the context.
+---
 
-**Lessons** (stage 4). An understood error is saved as a lesson in the index, not in the auto-memory that goes into every request.
-- The mod brings a lesson back mechanically and only where it fits: beside an owner's message close in meaning (hidden context, at most 2, each once a chat), and as one stop before a command that holds its trigger.
-- No lessons, or none fits — zero tokens. `/al-health` shows what they cost.
+## ✨ What you get
 
-**Searching by an error's traces** (stage 4). Tool errors go into the index; `recall` searches several wordings at once (the error text, the action, the cause).
-
-**A background job** (stage 4, Windows). A Task Scheduler task keeps the index, the vectors (on mains power) and the sync up to date with no chat open.
-
-**Encryption** (stage 5, Windows, optional). The index on disk and everything a computer puts in the sync folder are encrypted. The key sits in `settings.json`, protected by Windows.
-- `/al-encrypt on` turns it on. The recovery code is shown once, in a window, and belongs in a password manager. A second computer joins with `join`.
-- The ciphers are chosen in `settings.json`, one for the index (`indexCipher`) and one for the sync folder (`shareCipher`). Left alone, both stay SQLCipher.
-  - Index: SQLCipher (needs the `sqlcipher3` package) or EFS, the file encryption of Windows itself (needs Windows Pro and an NTFS drive, no packages).
-  - Sync folder: SQLCipher or AES-GCM, which is built into Windows, no packages.
-- Smart App Control may refuse to load `sqlcipher3`, so under it only EFS and AES-GCM work. The `cryptography` package is no longer needed.
-- With EFS, a copy of the index on a FAT or exFAT stick or over the network comes out unencrypted, and the files open only under the same Windows account.
-- Claude Code's own transcripts, each project's auto-memory files and the text of a handoff that goes into the chat stay plain (with EFS the handoff files on disk are encrypted).
-- Until you run `/al-encrypt on`, nothing changes for you.
-
-**Languages.** English (default), Russian, Ukrainian: the interface, the texts for the model and the handoff.
-
-## Commands
-
-| command | what it does |
-|---|---|
-| `/al-health` | checks the mod, the index, the vectors, the memory, the sync and the compression |
-| `/al-band [off]` | shows the band now, or back to the thresholds |
-| `/al-index [rebuild]` | updates the index (rebuild: re-read everything, add what is missing) |
-| `/al-sync [skip <computer> <N>]` | syncs with the other computers now |
-| `/al-stats [days]` | cost measurement, written to Obsidian |
-| `/al-lessons [forget <pos>]` | the lessons of this project; delete one |
-| `/al-job [on [minutes] \| off]` | the background job (Windows): on, off, its state |
-| `/al-encrypt [on \| join \| off \| status]` | encryption of the index and the sync folder (Windows): on, join a second computer, off, its state |
-| `/al-index-dir [folder]` | moves the index to another folder on a local disk (Windows), without a folder a window asks for one |
-
-## Settings (the `settings.json` file)
-
-The file `%USERPROFILE%\.claude\alethite\settings.json` is one per computer and stays in this folder even when the index has moved. The mod creates it at the first start with all the current values, so you only open it and edit. The mod reads the file at every load, and its values win over `/config`. After an edit, type `/reload-plugins`. Backslashes in JSON are doubled.
-
-| key | what it sets | default |
+| Feature | What it does | Command |
 |---|---|---|
-| `language` | language | `"en"` (also `"ru"`, `"uk"`) |
-| `compression` | memory compression | `"ultra"` (also `"off"`, `"lite"`, `"full"`) |
-| `syncDir` | sync folder | `""` (empty: no sync) |
-| `bandMinTokens` | band threshold: chat size, tokens | `100000` |
-| `bandIdleMinutes` | band threshold: idle time, minutes | `55` |
-| `showLimits` | limits line in the band | `true` |
+| 🛡️ **Cache guard** | The status line shows the context size and the minutes left in the cache. After a pause, a band above the prompt shows what sending costs now. | `/al-band` |
+| 🆕 **New worker** | A button that starts a clean chat with a handoff of the old one (no model calls) and the message you already typed. | button in the band |
+| 📝 **Short memory** | One short rule for Claude: write decisions down at once, save an understood error as a lesson, check memory before proposing. A toast shows each saved fact. | |
+| 🔎 **Long memory** | Every past conversation of every project, subagents included, in a local SQLite index with vectors from a local Ollama model. Claude searches it with `recall`, by words and by meaning. Secrets are hidden before indexing. Nothing that got into the index is ever lost, and tool errors are indexed too. | `/al-index` |
+| 🎓 **Lessons** | An understood error is saved as a lesson and comes back only where it fits. A command that holds a lesson's trigger is stopped once with it, and at most 2 lessons come per message. No fitting lesson, zero tokens. | `/al-lessons` |
+| 🔄 **Sync between computers** | A shared folder on a network drive carries the index, the vectors and the memory facts. Without it everything works locally. | `/al-sync` |
+| 🗜️ **Memory compression** | What the plugin hands to the model is squeezed mechanically, in four levels. Code, paths and negations are never touched. | `/al-stats` |
+| ⏱️ **Background job** | A Task Scheduler task keeps the index, the vectors and the sync fresh with no chat open. Windows only. | `/al-job` |
+| 🔐 **Encryption** | Optional. Encrypts the index on disk and everything your computer puts in the sync folder. Windows only. | `/al-encrypt` |
+| 🌍 **Languages** | English, Russian, Ukrainian: the interface, the texts for the model and the handoff. | |
+
+---
+
+## 🚀 Quick start
+
+You need the Claude Code desktop app (engine 2.1.295 or newer), Python 3.8+ with numpy, and git. Ollama is optional, but without it the search goes by words only. Run the commands in PowerShell.
+
+```powershell
+git clone https://github.com/GladLuter/Alethite.git C:\_git\Alethite
+```
+
+Then register the plugin with the desktop app's own `claude.exe`. The first line finds it and must print a path ending in `claude.exe` (if it prints nothing, INSTALL.md has a wider search):
+
+```powershell
+$CC = (Get-ChildItem "$env:LOCALAPPDATA\Claude-Data\claude_*\claude-code\*\*\claude.exe", "$env:APPDATA\Claude\claude-code\*\*\claude.exe", "$env:LOCALAPPDATA\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code\*\*\claude.exe" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1).FullName; $CC
+& $CC plugin marketplace add C:\_git\Alethite
+& $CC plugin install alethite@alethite
+```
+
+Restart the app, then build the index:
+
+```powershell
+python C:\_git\Alethite\plugin\scripts\cg.py index
+```
+
+Type `/al-health` in a new chat to check it. Computing the vectors (it takes hours the first time) and the other steps are in **[INSTALL.md](INSTALL.md)**.
+
+---
+
+## ⌨️ Commands
+
+| Command | What it does |
+|---|---|
+| `/al-health` | Checks the plugin, the index, the vectors, the memory, the sync and the compression |
+| `/al-band [off]` | Shows the band now, or goes back to the thresholds |
+| `/al-index [rebuild]` | Updates the index. `rebuild` re-reads everything and adds what is missing |
+| `/al-sync [skip <computer> <N>]` | Syncs with the other computers now |
+| `/al-stats [days]` | Measures the cost and writes it to Obsidian |
+| `/al-lessons [forget <pos>]` | Lists the lessons of this project, or deletes one |
+| `/al-job [on [minutes] \| off]` | The background job (Windows): on, off, its state |
+| `/al-encrypt [on \| join \| off \| status]` | Encryption of the index and the sync folder (Windows) |
+| `/al-index-dir [folder]` | Moves the index to another local disk (Windows). Without a folder, a window asks for one |
+
+---
+
+<details>
+<summary><b>⚙️ Settings</b></summary>
+
+<br>
+
+The file `%USERPROFILE%\.claude\alethite\settings.json` is one per computer. The plugin creates it at the first start with all the current values, so you only open it and edit. Its values win over `/config`. After an edit, type `/reload-plugins`. Backslashes in JSON are doubled.
+
+| Key | What it sets | Default |
+|---|---|---|
+| `language` | Language | `"en"` (also `"ru"`, `"uk"`) |
+| `compression` | Memory compression | `"ultra"` (also `"off"`, `"lite"`, `"full"`) |
+| `syncDir` | Sync folder | `""` (empty: no sync) |
+| `bandMinTokens` | Band threshold: chat size, tokens | `100000` |
+| `bandIdleMinutes` | Band threshold: idle time, minutes | `55` |
+| `showLimits` | Limits line in the band | `true` |
 | `python` | Python command | `"python"` |
 | `embedModel` | Ollama embedding model | `"embeddinggemma"` |
-| `lessons` | bring lessons back to messages and commands | `true` |
-| `lessonsMinScore` | how close a message must be (0–1) | `0.45` |
-| `indexCipher` | how the index is encrypted (`/al-encrypt on` writes it itself) | `"sqlcipher"` (also `"efs"`) |
-| `shareCipher` | how the sync folder is encrypted (`/al-encrypt on` writes it itself). `"cryptography"` means the AES-GCM of Windows, no package needed | `"sqlcipher"` (also `"cryptography"`) |
-| `indexDir` | the index folder (written by `/al-index-dir`, do not edit by hand) | no key (the index is in the standard folder) |
-| `projectAliases` | old folders whose memory a project folder also sees, written by hand: `{"C:\\work\\new": ["C:\\work\\old"]}` | no key |
+| `lessons` | Bring lessons back to messages and commands | `true` |
+| `lessonsMinScore` | How close a message must be (0 to 1) | `0.45` |
+| `indexCipher` | How the index is encrypted (`/al-encrypt on` writes it) | `"sqlcipher"` (also `"efs"`) |
+| `shareCipher` | How the sync folder is encrypted (`/al-encrypt on` writes it). `"cryptography"` is the AES-GCM built into Windows | `"sqlcipher"` (also `"cryptography"`) |
+| `indexDir` | The index folder (written by `/al-index-dir`, do not edit by hand) | no key |
+| `projectAliases` | Old folders whose memory a project folder also sees: `{"C:\\work\\new": ["C:\\work\\old"]}` | no key |
 
-The file may hold only the keys you change. For example:
+The file may hold only the keys you change:
 
 ```json
 {
   "language": "ru",
-  "syncDir": "Z:\\alethite"
+  "syncDir": "\\\\NAS\\share\\alethite"
 }
 ```
 
-## Requirements
+</details>
 
-- The Claude Code desktop app (engine 2.1.295 or newer);
-- Python 3.8+ with numpy;
-- Ollama for the search by meaning (optional);
-- the `sqlcipher3` package for the SQLCipher ciphers (optional, Windows only);
-- Windows Pro and an NTFS drive for the EFS cipher (optional);
-- git.
+<details>
+<summary><b>🔐 Encryption details</b></summary>
 
-Installation: [INSTALL.md](INSTALL.md).
+<br>
 
-## Documents
+Until you run `/al-encrypt on`, nothing changes for you. The key sits in `settings.json`, protected by Windows. The recovery code is shown once, in a window. Put it in a password manager. A second computer joins with `/al-encrypt join`.
 
-| document | English | Русский | Українська |
+The index and the sync folder each have their own cipher:
+
+- Index: SQLCipher (needs the `sqlcipher3` package) or EFS, the file encryption of Windows itself (needs Windows Pro and an NTFS drive, no packages).
+- Sync folder: SQLCipher or AES-GCM, which is built into Windows, no packages.
+
+Smart App Control may refuse to load `sqlcipher3`. Under it only EFS and AES-GCM work.
+
+With EFS, a copy of the index on a FAT or exFAT stick or over the network comes out unencrypted, and the files open only under the same Windows account.
+
+Claude Code's own transcripts, each project's auto-memory files and the text of a handoff that goes into the chat stay plain. With EFS the handoff files on disk are encrypted.
+
+Full walkthrough: [INSTALL.md](INSTALL.md).
+
+</details>
+
+---
+
+## 📋 Requirements
+
+- The Claude Code desktop app, engine 2.1.295 or newer
+- Python 3.8+ with numpy
+- git
+- Ollama, for the search by meaning (optional)
+- The `sqlcipher3` package for the SQLCipher ciphers (optional, Windows only)
+- Windows Pro and an NTFS drive for the EFS cipher (optional)
+
+## 🔒 Privacy
+
+The index and the vectors hold your conversations. They stay on your computers and your network folder. They are never in this repository and never sent anywhere else. The only network calls go to your local Ollama and to your shared folder.
+
+## 📄 License
+
+[MIT](LICENSE). Free to use, copy and change.
+
+## 📚 Documents
+
+| Document | English | Русский | Українська |
 |---|---|---|---|
 | Installation | [INSTALL.md](INSTALL.md) | [INSTALL.ru.md](INSTALL.ru.md) | [INSTALL.uk.md](INSTALL.uk.md) |
 
-## Privacy
-
-- The index and the vectors hold personal conversations. They stay on the owner's computers and the owner's network folder: never in this repository, never sent anywhere else.
-- The only network calls are to the local Ollama and to the shared folder.
+Used the old private CacheGuard plugin? There is a moving section in [INSTALL.md](INSTALL.md#from-cacheguard).
