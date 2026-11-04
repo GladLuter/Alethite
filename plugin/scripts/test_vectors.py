@@ -19,7 +19,7 @@ from test_memdb import TS, claude_line, owner_line, search
 from test_texts import use_lang
 from transcripts import project_key
 from vectors import (CHUNK, DIMS, DOC_PREFIX, MODEL, OVERLAP, OllamaDown, chunks_of, embed_pending, hybrid_search, ollama_embed, pack,
-                     rrf_scores, search_vectors, vector_status)
+                     rrf_scores, search_many, search_vectors, vector_status)
 
 TOOL = dict(type='assistant', timestamp=TS, cwd='C:\\a', message={
     'id': 'm2', 'model': 'claude-opus-5-5', 'role': 'assistant', 'content': [{'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'ls'}}]})
@@ -487,11 +487,33 @@ class VectorsTest(unittest.TestCase):
         piece.assert_called()
         self.assertEqual((hits, state), (words, 'гонка'))
 
+    def test_other_wordings_read_the_vectors_once(self):
+        embed_pending(self.conn, embed_fn=fake)
+        reads = []
+        self.conn.set_trace_callback(lambda sql: reads.append(sql) if 'SELECT chunk, vec FROM vecs' in sql else None)
+        self.addCleanup(self.conn.set_trace_callback, None)
+        hits, state = hybrid_search(self.conn, 'ёжик в тумане', also=['кэш', 'другой проект', 'итог'], embed_fn=fake)
+        self.assertEqual(state, 'ok')
+        self.assertEqual(len(reads), 1)  # was one read per wording
+
+    def test_search_many_answers_each_query_on_its_own(self):
+        embed_pending(self.conn, embed_fn=fake)
+        qs = [pack(v) for v in fake(['ёжик в тумане', 'совсем другое про кэш'])]
+        many = search_many(self.conn, qs, None)
+        cache = self.q("SELECT rowid FROM chunks WHERE text = 'совсем другое про кэш'")
+        self.assertEqual(many[1][0][0], cache)
+        self.assertNotEqual(many[0][0][0], cache)
+        self.assertEqual(many, [search_vectors(self.conn, q, None) for q in qs])
+        self.assertEqual([len(h) for h in search_many(self.conn, qs, None, limit=2)], [2, 2])
+        empty = search_many(self.conn, qs, project_key('C:\нет'))
+        self.assertEqual(empty, [[], []])
+        self.assertIsNot(empty[0], empty[1])
+
     def test_one_or_two_words_favour_the_word_search(self):
         embed_pending(self.conn, embed_fn=fake)
         w1, w2, v1 = [r[0] for r in self.conn.execute("SELECT rowid FROM chunks WHERE kind = 'owner' ORDER BY rowid LIMIT 3")]
         word_hits = [dict(id=i, conv='', parent='', ts='', kind='owner', pos=0, snippet='x%d' % i) for i in (w1, w2)]
-        with mock.patch.object(memdb, 'word_hits', return_value=word_hits), mock.patch('vectors.search_vectors', return_value=[(v1, 0.9)]):
+        with mock.patch.object(memdb, 'word_hits', return_value=word_hits), mock.patch('vectors.search_many', return_value=[[(v1, 0.9)]]):
             ids = lambda query: [h['id'] for h in hybrid_search(self.conn, query, embed_fn=fake)[0]]
             self.assertEqual(ids('один два'), [w1, w2, v1])  # the vector hit counts half
             self.assertEqual(ids('один два три'), [w1, v1, w2])

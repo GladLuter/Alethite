@@ -137,19 +137,28 @@ def embed_pending(conn, model=MODEL, embed_fn=ollama_embed, max_seconds=120, bat
             'model': model, 'errors': errors}
 
 
-def search_vectors(conn, qvec, project, limit=50):
-    """(chunks.rowid, cosine) pairs, best first; of several pieces of one record the best counts. Same project scope as memdb.word_hits."""
+def search_many(conn, qvecs, project, limit=50):
+    """For each query vector, (chunks.rowid, cosine) pairs, best first; of several pieces of one record the best counts. The vectors are read
+    once for all queries. Same project scope as memdb.word_hits."""
     # shortcut: brute force over all vectors in numpy; switch to sqlite-vec past ~500k vectors (the BLOBs move as they are)
     np = _np()
     # a BLOB of another length (a broken write, another model) would break the matrix: such rows are left out
     rows = conn.execute('SELECT chunk, vec FROM vecs WHERE length(vec) = :n AND ' + memdb.IN_PROJECT, {'p': json.dumps(project), 'n': 4 * DIMS}).fetchall()
     if not rows:
-        return []
-    sims = np.frombuffer(b''.join(r[1] for r in rows), dtype='float32').reshape(len(rows), DIMS) @ np.frombuffer(qvec, dtype='float32')
-    best = {}
-    for (chunk, _), s in zip(rows, sims.tolist()):
-        best[chunk] = max(s, best.get(chunk, s))
-    return sorted(best.items(), key=lambda kv: -kv[1])[:limit]
+        return [[] for _ in qvecs]
+    matrix = np.frombuffer(b''.join(r[1] for r in rows), dtype='float32').reshape(len(rows), DIMS)
+    out = []
+    for q in qvecs:  # one product per query, not one matrix product: its floats then equal those of a lone search to the last digit
+        col = (matrix @ np.frombuffer(q, dtype='float32')).tolist()
+        best = {}
+        for (chunk, _), s in zip(rows, col):
+            best[chunk] = max(s, best.get(chunk, s))
+        out.append(sorted(best.items(), key=lambda kv: -kv[1])[:limit])
+    return out
+
+
+def search_vectors(conn, qvec, project, limit=50):
+    return search_many(conn, [qvec], project, limit)[0]
 
 
 def vector_status(conn):
@@ -178,14 +187,13 @@ def _best_piece(conn, rowid, qvec):
     return chunks_of(conn.execute('SELECT text FROM chunks WHERE rowid = ?', (rowid,)).fetchone()[0])[part][:300]
 
 
-def _ranked(conn, query, project, limit, qvec):
+def _ranked(conn, query, project, limit, qvec, vec):
     """The hits of one query, best first and not cut yet, and their RRF scores: the word hits, merged with the vector hits when `qvec`
-    is given."""
+    is given (`vec`: its vector hits)."""
     # repeats are cut only at the end: both copies of a message are word hits with one snippet there, but the vector leg shows one of them with another
     words = memdb.word_hits(conn, query, project, 50)
     if qvec is None:
         return words, rrf_scores([[h['id'] for h in words]], [1.0])
-    vec = search_vectors(conn, qvec, project, 50)
     info = {r[0]: r[1:] for r in conn.execute(
         'SELECT rowid, conv, pos, ts, kind, (SELECT parent FROM convs WHERE convs.conv = chunks.conv) FROM chunks WHERE rowid IN (%s)'
         % ','.join('?' * len(vec)), [c for c, _ in vec])}
@@ -218,10 +226,10 @@ def hybrid_search(conn, query, project=None, limit=8, budget=7000, model=MODEL, 
             raise LookupError(t('no_model_vectors', model=model, have=have or t('nothing')))
         # one call for every wording: a hung Ollama must leave room for the words inside the mod's 120 s, once and not per wording
         qvecs = [pack(v) for v in embed_fn([QUERY_PREFIX + q for q in queries], model, timeout=45)]
-        lists = [_ranked(conn, q, project, limit, v) for q, v in zip(queries, qvecs)]
+        lists = [_ranked(conn, q, project, limit, v, h) for q, v, h in zip(queries, qvecs, search_many(conn, qvecs, project, 50))]
     except Exception as e:
         state = str(e) or type(e).__name__
-        lists = [_ranked(conn, q, project, limit, None) for q in queries]
+        lists = [_ranked(conn, q, project, limit, None, None) for q in queries]
     if len(lists) == 1:
         return memdb.cut(lists[0][0], budget, limit), state
     # the scores add up across the wordings: a record found by the words and the vectors of one wording leads one that only the vectors
