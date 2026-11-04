@@ -1341,6 +1341,59 @@ class CgTest(unittest.TestCase):
             self.assertEqual(json.load(f), {'indexDir': far})
 
 
+class FakeClipboard:
+    """user32 and kernel32 in one: a clipboard that keeps what is put there, by format, and a sequence number that counts the changes."""
+
+    def __init__(self):
+        self.formats, self.ids, self.mem, self.seq, self.opened, self.closed, self.fail_open = {}, {}, {}, 1, 0, 0, False
+        for name in ('OpenClipboard', 'CloseClipboard', 'EmptyClipboard', 'RegisterClipboardFormatW', 'GlobalAlloc', 'GlobalLock', 'GlobalUnlock',
+                     'GlobalFree', 'SetClipboardData', 'GetClipboardSequenceNumber'):  # mocks: the code sets argtypes and restype on them
+            setattr(self, name, mock.Mock(side_effect=getattr(self, name)))
+
+    def OpenClipboard(self, _):
+        if self.fail_open:
+            return 0
+        self.opened += 1
+        return 1
+
+    def CloseClipboard(self):
+        self.closed += 1
+        return 1
+
+    def EmptyClipboard(self):
+        self.formats = {}
+        self.seq += 1
+        return 1
+
+    def RegisterClipboardFormatW(self, name):
+        return self.ids.setdefault(name, 0xC000 + len(self.ids))
+
+    def GlobalAlloc(self, flags, size):
+        handle = 100 + len(self.mem)
+        self.mem[handle] = b''
+        return handle
+
+    def GlobalLock(self, handle):
+        return handle
+
+    def GlobalUnlock(self, handle):
+        return 1
+
+    def GlobalFree(self, handle):
+        return 0
+
+    def memmove(self, ptr, data, size):
+        self.mem[ptr] = bytes(data)[:size]
+
+    def SetClipboardData(self, fmt, handle):
+        self.formats[fmt] = self.mem[handle]
+        self.seq += 1
+        return handle
+
+    def GetClipboardSequenceNumber(self):
+        return self.seq
+
+
 @unittest.skipUnless(os.name == 'nt', 'user32 is Windows only')
 class DialogsTest(unittest.TestCase):
     """No window opens here: the system is a fake. How the windows look is shown to the owner by hand."""
@@ -1349,7 +1402,8 @@ class DialogsTest(unittest.TestCase):
         user32 = mock.Mock()
         with mock.patch('ctypes.WinDLL', return_value=user32):
             user32.MessageBoxW.return_value = 1
-            dialogs.WindowsUI().show_code('CG1-AAAA')
+            with mock.patch.dict(sys.modules, {'tkinter': None}):  # no tkinter: the box, as before
+                dialogs.WindowsUI().show_code('CG1-AAAA')
             user32.MessageBoxW.return_value = 6
             self.assertTrue(dialogs.WindowsUI().confirm('?'))
             user32.MessageBoxW.return_value = 7
@@ -1364,9 +1418,74 @@ class DialogsTest(unittest.TestCase):
         user32.MessageBoxW.return_value = 0
         with mock.patch('ctypes.WinDLL', return_value=user32):
             for call in (lambda ui: ui.show_code('CG1-SECRET'), lambda ui: ui.confirm('SECRET?')):
-                with self.assertRaises(OSError) as e:
+                with mock.patch.dict(sys.modules, {'tkinter': None}), self.assertRaises(OSError) as e:
                     call(dialogs.WindowsUI())
                 self.assertNotIn('SECRET', str(e.exception))
+
+    def code_window(self, fake, on_run):
+        """show_code with a fake tkinter and a fake clipboard; on_run(copy, ok, root, status) plays the owner while the window is open."""
+        tk = mock.MagicMock()
+        root = tk.Tk.return_value
+        root.mainloop.side_effect = lambda: on_run(
+            *[next(c[1]['command'] for c in tk.Button.call_args_list if c[1]['text'] == t(k)) for k in ('dlg_copy', 'dlg_ok')], root, tk.Label.return_value)
+        with mock.patch.dict(sys.modules, {'tkinter': tk}), mock.patch('ctypes.WinDLL', return_value=fake), mock.patch('ctypes.memmove', fake.memmove), \
+                mock.patch('ctypes.get_last_error', return_value=5):
+            dialogs.WindowsUI().show_code('CG1-AAAA')
+        return tk, root
+
+    def test_copy_puts_exactly_the_code_and_keeps_it_out_of_the_history(self):
+        fake = FakeClipboard()
+        tk, root = self.code_window(fake, lambda copy, ok, root, status: copy())
+        self.assertEqual(fake.formats[13], 'CG1-AAAA\0'.encode('utf-16-le'))
+        for name in ('CanIncludeInClipboardHistory', 'CanUploadToCloudClipboard'):
+            self.assertEqual(fake.formats[fake.ids[name]], b'\0\0\0\0')
+        self.assertIn('ExcludeClipboardContentFromMonitorProcessing', fake.ids)
+        self.assertEqual(fake.opened, fake.closed)  # whatever happens the clipboard is closed again
+        tk.Entry.return_value.insert.assert_called_with(0, 'CG1-AAAA')
+        tk.Entry.return_value.config.assert_called_with(state='readonly')
+
+    def test_closing_clears_the_clipboard_only_while_it_still_holds_our_code(self):
+        for change, cleared in ((False, True), (True, False)):
+            fake = FakeClipboard()
+
+            def play(copy, ok, root, status, fake=fake, change=change):
+                copy()
+                if change:
+                    fake.seq += 1  # something else was copied after ours
+                ok()
+            self.code_window(fake, play)
+            self.assertEqual(fake.formats == {}, cleared, change)
+        fake = FakeClipboard()
+        self.code_window(fake, lambda copy, ok, root, status: ok())  # never copied: nothing to clear, the clipboard is not touched
+        self.assertEqual(fake.opened, 0)
+
+    def test_the_cross_and_escape_close_the_same_way_as_ok(self):
+        fake = FakeClipboard()
+        tk, root = self.code_window(fake, lambda copy, ok, root, status: (copy(), root.protocol.call_args[0][1]()))
+        self.assertEqual(root.protocol.call_args[0][0], 'WM_DELETE_WINDOW')
+        self.assertEqual(fake.formats, {})
+        self.assertIn('<Escape>', [c[0][0] for c in root.bind.call_args_list])
+
+    def test_a_clipboard_failure_keeps_the_window_and_never_names_the_code(self):
+        fake = FakeClipboard()
+        fake.fail_open = True
+        shown = []
+
+        def play(copy, ok, root, status):
+            copy()
+            shown.append(status.config.call_args[1]['text'])
+            root.destroy.assert_not_called()
+        self.code_window(fake, play)
+        self.assertIn('OpenClipboard failed: error 5', shown[0])
+        self.assertNotIn('CG1', shown[0])
+
+    def test_without_a_working_tcl_the_code_goes_to_the_box(self):
+        user32 = mock.Mock()
+        user32.MessageBoxW.return_value = 1
+        with mock.patch.dict(sys.modules, {'tkinter': mock.Mock(Tk=mock.Mock(side_effect=Exception('no Tcl')))}), \
+                mock.patch('ctypes.WinDLL', return_value=user32):
+            dialogs.WindowsUI().show_code('CG1-AAAA')
+        self.assertEqual(user32.MessageBoxW.call_args[0][1], t('dlg_code', code='CG1-AAAA'))
 
     def test_the_folder_window_is_hidden_on_top_and_gives_back_the_folder_or_none(self):
         tk = mock.MagicMock()

@@ -25,6 +25,107 @@ def _box(text, flags, title=None):
     return button
 
 
+CF_UNICODETEXT, GMEM_MOVEABLE = 13, 2
+
+
+def _clipboard_set(code):
+    """The code, and only the code, on the clipboard as text, marked to stay out of the Win+V history and the cloud clipboard (those formats
+    go in first: if one fails, nothing of the code is out there). The clipboard's sequence number right after, for _clipboard_clear. An
+    OSError names the call that failed and the system's error number, never the code."""
+    user32, kernel32 = ctypes.WinDLL('user32', use_last_error=True), ctypes.WinDLL('kernel32', use_last_error=True)
+    c_void, c_uint, c_size = ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t
+    for fn, args, res in ((user32.OpenClipboard, [c_void], ctypes.c_int), (user32.CloseClipboard, [], ctypes.c_int),
+                          (user32.EmptyClipboard, [], ctypes.c_int), (user32.RegisterClipboardFormatW, [ctypes.c_wchar_p], c_uint),
+                          (user32.SetClipboardData, [c_uint, c_void], c_void), (user32.GetClipboardSequenceNumber, [], ctypes.c_uint32),
+                          (kernel32.GlobalAlloc, [c_uint, c_size], c_void), (kernel32.GlobalLock, [c_void], c_void),
+                          (kernel32.GlobalUnlock, [c_void], ctypes.c_int), (kernel32.GlobalFree, [c_void], c_void)):
+        fn.argtypes, fn.restype = args, res
+
+    def fail(what):
+        raise OSError('%s failed: error %d' % (what, ctypes.get_last_error()))
+
+    def put(fmt, data):
+        mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data)) or fail('GlobalAlloc')
+        ptr = kernel32.GlobalLock(mem)
+        if not ptr:
+            kernel32.GlobalFree(mem)
+            fail('GlobalLock')
+        ctypes.memmove(ptr, data, len(data))
+        kernel32.GlobalUnlock(mem)
+        if not user32.SetClipboardData(fmt, mem):  # on success the system owns the memory
+            kernel32.GlobalFree(mem)
+            fail('SetClipboardData')
+
+    if not user32.OpenClipboard(None):
+        fail('OpenClipboard')
+    try:
+        if not user32.EmptyClipboard():
+            fail('EmptyClipboard')
+        for name, data in (('ExcludeClipboardContentFromMonitorProcessing', b'\0\0\0\0'), ('CanIncludeInClipboardHistory', b'\0\0\0\0'),
+                           ('CanUploadToCloudClipboard', b'\0\0\0\0')):
+            put(user32.RegisterClipboardFormatW(name) or fail('RegisterClipboardFormatW'), data)
+        put(CF_UNICODETEXT, (code + '\0').encode('utf-16-le'))
+    finally:
+        user32.CloseClipboard()
+    return user32.GetClipboardSequenceNumber()
+
+
+def _clipboard_clear(seq):
+    """Empties the clipboard only if it is still what _clipboard_set left (its sequence number is `seq`): the text is never read back."""
+    user32 = ctypes.WinDLL('user32', use_last_error=True)
+    user32.GetClipboardSequenceNumber.restype = ctypes.c_uint32
+    user32.OpenClipboard.argtypes = [ctypes.c_void_p]
+    if user32.GetClipboardSequenceNumber() != seq:
+        return
+    if not user32.OpenClipboard(None):
+        raise OSError('OpenClipboard failed: error %d' % ctypes.get_last_error())
+    try:
+        user32.EmptyClipboard()
+    finally:
+        user32.CloseClipboard()
+
+
+def _window_show_code(tkinter, root, code):
+    """The recovery code in a window: the explanation, the code in a field that can be selected but not changed, Copy and OK. Closing it (OK,
+    the cross, Escape) empties the clipboard if our code is still there. A clipboard failure is told in the window, which stays."""
+    root.title(t('dlg_title'))
+    root.attributes('-topmost', True)
+    root.resizable(False, False)
+    tkinter.Label(root, text=t('dlg_code_head'), padx=12, pady=8, justify='left', wraplength=460).pack()
+    entry = tkinter.Entry(root, width=len(code) + 2, justify='center')
+    entry.insert(0, code)
+    entry.config(state='readonly')
+    entry.pack(padx=12)
+    tkinter.Label(root, text=t('dlg_code_tail'), padx=12, pady=8, justify='left', wraplength=460).pack()
+    status = tkinter.Label(root, text='', padx=12)
+    status.pack()
+    seq = []
+
+    def copy():
+        try:
+            seq[:] = [_clipboard_set(code)]
+            status.config(text='')
+        except OSError as e:  # the message holds the failed call and its error number only
+            status.config(text=str(e))
+
+    def close(_=None):
+        try:
+            if seq:
+                _clipboard_clear(seq[0])
+        finally:
+            root.destroy()
+
+    row = tkinter.Frame(root)
+    row.pack(pady=8)
+    tkinter.Button(row, text=t('dlg_copy'), width=10, command=copy).pack(side='left', padx=4)
+    tkinter.Button(row, text=t('dlg_ok'), width=10, command=close).pack(side='left', padx=4)
+    root.protocol('WM_DELETE_WINDOW', close)
+    root.bind('<Return>', close)
+    root.bind('<Escape>', close)
+    entry.focus_force()
+    root.mainloop()
+
+
 def _window_code(tkinter, root):
     """The code typed into a window with a hidden field: the string, None when cancelled."""
     root.title(t('dlg_title'))
@@ -83,7 +184,12 @@ class WindowsUI:
     and of indexdir.py: pick_folder() -> str | None (None: cancelled)."""
 
     def show_code(self, code):
-        _box(t('dlg_code', code=code), 0)
+        try:
+            import tkinter
+            root = tkinter.Tk()
+        except Exception:  # no tkinter, or no Tcl/Tk behind it (ImportError, TclError): the box has no Copy button, its text says Ctrl+C
+            return _box(t('dlg_code', code=code), 0)
+        _window_show_code(tkinter, root, code)
 
     def confirm(self, text, title=None):
         # No is the default button: an Enter held down to close the box before closes this one too, and must never answer Yes
