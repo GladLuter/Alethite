@@ -146,14 +146,14 @@ class LessonsTest(unittest.TestCase):
         self.addCleanup(other.close)
         out = lessons.save(self.conn, A, RATE)
         embed_pending(self.conn, embed_fn=fake)
-        for conn, name in ((self.conn, 'AIJ-HP'), (other, 'MTLAPTOP')):
+        for conn, name in ((self.conn, 'HOMEPC'), (other, 'NOTEBOOK')):
             self.assertEqual(cgsync.sync(conn, share, name, digest=lambda m: None)['errors'], [])
         there = lessons.listing(other, [A])
         self.assertEqual([l['trigger'] for l in there], ['gh api /repos'])
-        self.assertEqual(there[0]['from'], 'AIJ-HP')
+        self.assertEqual(there[0]['from'], 'HOMEPC')
         self.assertEqual(memdb.forget(self.conn, out['conv'], out['pos']), 1)
-        cgsync.sync(self.conn, share, 'AIJ-HP', digest=lambda m: None)
-        cgsync.sync(other, share, 'MTLAPTOP', digest=lambda m: None)
+        cgsync.sync(self.conn, share, 'HOMEPC', digest=lambda m: None)
+        cgsync.sync(other, share, 'NOTEBOOK', digest=lambda m: None)
         self.assertEqual(lessons.listing(other, [A]), [])
 
     def test_recall_finds_a_lesson_by_the_trace(self):

@@ -913,7 +913,7 @@ test('settings file: broken JSON: a toast with the file, and the values of /conf
 // ---- sync of two computers ----
 const SHARE = '\\\\NAS\\share\\alethite'
 const synced = (over: object = {}) =>
-  ran(JSON.stringify({ machine: 'AIJ-HP', pushed: 3, pulled: 5, vectors: { pushed: 3, pulled: 5 }, forgotten: 0, skipped_vectors: 0, peers: { MTLAPTOP: 2 }, memory: { pushed: 0, pulled: 1, conflicts: 0 }, warnings: [], errors: [], ...over }))
+  ran(JSON.stringify({ machine: 'HOMEPC', pushed: 3, pulled: 5, vectors: { pushed: 3, pulled: 5 }, forgotten: 0, skipped_vectors: 0, peers: { NOTEBOOK: 2 }, memory: { pushed: 0, pulled: 1, conflicts: 0 }, warnings: [], errors: [], ...over }))
 const unreachable = { where: 'sync', error: `the sync folder is unavailable: ${SHARE} (FileNotFoundError: x)` }
 
 test('/al-sync: off without a folder: says where to set it and runs nothing', async ($, on) => {
@@ -929,7 +929,7 @@ test('/al-sync: the folder, the model, the auto-memory folder and the project ro
   expect(run).toEqual({ argv: ['sync', `--sync-dir=${SHARE}`, '--model', 'embeddinggemma', '--max-seconds', '60', '--memory-dir=C:/mem/memory', '--project-cwd=C:/w', '--share-cipher=sqlcipher'], timeoutMs: 120_000 })
   expect(text.split('\n')).toEqual([
     T.cgSyncDone({ pushed: 3, pulled: 5, vectors: { pushed: 3, pulled: 5 } }),
-    T.cgSyncPeers('MTLAPTOP 2'),
+    T.cgSyncPeers('NOTEBOOK 2'),
     T.syncMemory({ pushed: 0, pulled: 1, conflicts: 0 }),
   ])
   expect(m.toasts).toEqual([])
@@ -943,8 +943,8 @@ test('/al-sync: a folder pasted with Explorer\'s quotes is the folder', { option
 
 test('/al-sync: the cipher of the sync folder is the setting', { options: { syncDir: SHARE, shareCipher: 'cryptography' } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')))
-  await ($ as any).command.run({ command: 'al-sync', args: 'skip MTLAPTOP 12' })
-  expect(ofCg(m, 'sync')[0]!.argv.slice(-4)).toEqual(['--share-cipher=cryptography', '--skip-batch', 'MTLAPTOP', '12'])
+  await ($ as any).command.run({ command: 'al-sync', args: 'skip NOTEBOOK 12' })
+  expect(ofCg(m, 'sync')[0]!.argv.slice(-4)).toEqual(['--share-cipher=cryptography', '--skip-batch', 'NOTEBOOK', '12'])
 })
 
 test('/al-sync: no auto-memory folder in this chat: no memory step, and the reply says so', { options: { syncDir: SHARE } }, async ($, on) => {
@@ -956,14 +956,14 @@ test('/al-sync: no auto-memory folder in this chat: no memory step, and the repl
 
 test('/al-sync skip: the owner goes on past a broken batch; without a computer and a number, how to ask', { options: { syncDir: SHARE } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')))
-  await ($ as any).command.run({ command: 'al-sync', args: 'skip MTLAPTOP 12' })
-  expect(ofCg(m, 'sync')[0]!.argv.slice(-3)).toEqual(['--skip-batch', 'MTLAPTOP', '12'])
+  await ($ as any).command.run({ command: 'al-sync', args: 'skip NOTEBOOK 12' })
+  expect(ofCg(m, 'sync')[0]!.argv.slice(-3)).toEqual(['--skip-batch', 'NOTEBOOK', '12'])
   expect((await ($ as any).command.run({ command: 'al-sync', args: 'skip 12' })).text).toBe(T.cgSyncSkipUsage)
   expect(ofCg(m, 'sync')).toHaveLength(1)
 })
 
 test('/al-sync: errors of the run are in the reply, in one toast, and /al-health keeps the first', { options: { syncDir: SHARE } }, async ($, on) => {
-  const broken = { where: 'pull', machine: 'MTLAPTOP', batch: 3, error: 'batch 3 is broken' }
+  const broken = { where: 'pull', machine: 'NOTEBOOK', batch: 3, error: 'batch 3 is broken' }
   const m = await started($, on, a => (a[0] === 'sync' ? synced({ errors: [broken, unreachable] }) : ran('{}')))
   const { text } = await ($ as any).command.run({ command: 'al-sync', args: '' })
   expect(text).toContain(T.cgSyncError('batch 3 is broken'))
@@ -1016,25 +1016,25 @@ test('background: an unavailable folder: the status line, /al-health and one toa
 
 test('/al-health: the folder, the computers, their last batches, the errors', { options: { syncDir: SHARE } }, async ($, on) => {
   const sync = {
-    machine: 'AIJ-HP',
+    machine: 'HOMEPC',
     last: { at: '2026-10-19T10:00:00Z', dir: SHARE, pushed: 3, pulled: 5, memory: null, errors: 1, error: 'batch 8 is broken' },
     peers: [
-      { machine: 'AIJ-HP', last_batch: 9, skipped: [], model: 'embeddinggemma', error: null },
-      { machine: 'MTLAPTOP', last_batch: 7, skipped: [4], model: 'embeddinggemma', error: 'batch 8 is broken' },
+      { machine: 'HOMEPC', last_batch: 9, skipped: [], model: 'embeddinggemma', error: null },
+      { machine: 'NOTEBOOK', last_batch: 7, skipped: [4], model: 'embeddinggemma', error: 'batch 8 is broken' },
     ],
-    origins: { 'AIJ-HP': 100, MTLAPTOP: 40 },
+    origins: { 'HOMEPC': 100, NOTEBOOK: 40 },
   }
   const status = { db: 'C:/x/mem.db', convs: 12, rows: 140, last_update: null, size_mb: 1.5, sync }
   wire(on, [], () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } }), (_, e) => (e.argv.includes('status') ? ran(JSON.stringify(status)) : noTurn()))
   on('session.root', () => ({ value: 'C:/w' }))
   const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
   for (const line of [
-    T.healthSync(SHARE, 'AIJ-HP'),
-    T.healthOrigins('AIJ-HP 100, MTLAPTOP 40'),
-    T.healthOwnBatches('AIJ-HP', 9),
-    T.healthPeer('MTLAPTOP', 7, 'embeddinggemma'),
-    T.healthPeerSkipped('MTLAPTOP', '4'),
-    T.healthPeerError('MTLAPTOP', 'batch 8 is broken'),
+    T.healthSync(SHARE, 'HOMEPC'),
+    T.healthOrigins('HOMEPC 100, NOTEBOOK 40'),
+    T.healthOwnBatches('HOMEPC', 9),
+    T.healthPeer('NOTEBOOK', 7, 'embeddinggemma'),
+    T.healthPeerSkipped('NOTEBOOK', '4'),
+    T.healthPeerError('NOTEBOOK', 'batch 8 is broken'),
     T.healthSyncError('batch 8 is broken'),
     T.syncMemoryOff,
   ])

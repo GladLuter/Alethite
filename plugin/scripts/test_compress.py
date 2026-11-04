@@ -45,7 +45,7 @@ class CompressTest(unittest.TestCase):
         self.assertEqual(out, 'кэш API GitHub работает? «Модель» да M a.txt')  # the word the search matched keeps its case too
 
     def test_code_paths_links_numbers_names_and_flags_go_through_as_they_are(self):
-        keep = ['`cg.py index --rebuild`', 'C:\\Users\\AIJ\\x.py', '~/.claude/projects', 'https://example.com/a_b?c=1', '42', 'snake_case',
+        keep = ['`cg.py index --rebuild`', 'C:\\Users\\Ann\\x.py', '~/.claude/projects', 'https://example.com/a_b?c=1', '42', 'snake_case',
                 '--no-verify', 'v2.1.303', '[cg-handoff]', '#123', 'x=1']
         text = 'The ' + ' and the '.join(keep) + ' is here.'
         for level in LEVELS:

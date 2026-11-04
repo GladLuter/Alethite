@@ -48,7 +48,7 @@ def _norm(p):
 
 def project_key(cwd, home=None):
     """Same key for a project folder and for any of its worktrees. Under the home folder (`home`, by default this computer's) it starts
-    with ~, so one project inside two profiles (C:\\Users\\AIJ, C:\\Users\\gladl) has one key on both computers."""
+    with ~, so one project inside two profiles (C:\\Users\\Ann, C:\\Users\\alice) has one key on both computers."""
     key, sep = _norm(cwd)
     key = _WORKTREE.sub('', key)
     h, hsep = _norm(os.path.expanduser('~') if home is None else home)

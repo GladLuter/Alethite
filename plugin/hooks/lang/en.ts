@@ -123,7 +123,7 @@ export const en = {
   cgSyncDescription: 'Sync the memory with the other computers now (skip <computer> <N>: go on past a broken batch)',
   cgSyncHint: '[skip <computer> <N>]',
   cgSyncOff: 'al-sync: sync is off. Put the shared folder in "syncDir" of the settings file (/al-health names it), then /reload-plugins.',
-  cgSyncSkipUsage: 'al-sync skip: name the computer and the batch, for example /al-sync skip MTLAPTOP 12',
+  cgSyncSkipUsage: 'al-sync skip: name the computer and the batch, for example /al-sync skip NOTEBOOK 12',
   cgSyncDone: (r: { pushed: number; pulled: number; vectors: { pushed: number; pulled: number } }) =>
     `Sync: records pushed ${r.pushed} (vectors ${r.vectors.pushed}), taken in ${r.pulled} (vectors ${r.vectors.pulled})`,
   cgSyncPeers: (parts: string) => `Computers, last batch taken in: ${parts}`,

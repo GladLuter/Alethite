@@ -1508,7 +1508,7 @@ class OwnBatchTest(unittest.TestCase):
         root, share = d.name, os.path.join(d.name, 'share')
         os.makedirs(share)
         digest = lambda m: None
-        c = Computer(root, share, 'AIJ-HP')  # the standard folder: its index is the temporary one
+        c = Computer(root, share, 'HOMEPC')  # the standard folder: its index is the temporary one
         self.addCleanup(c.close)
         far = os.path.join(root, 'far', 'index.db')
         c.say('conv-a', 'first question', 'first answer')
@@ -1534,7 +1534,7 @@ class OwnBatchTest(unittest.TestCase):
         self.assertEqual((out['errors'], out['pushed'], out['pulled'], out['own_batch']), ([], 2, 0, 3))
         rows = d2.execute('SELECT text FROM chunks').fetchall()
         self.assertEqual((len(rows), len(set(rows))), (6, 6))
-        b = Computer(root, share, 'MTLAPTOP')  # another computer reads all three batches: no record twice
+        b = Computer(root, share, 'NOTEBOOK')  # another computer reads all three batches: no record twice
         self.addCleanup(b.close)
         self.assertEqual(b.sync(memory=False)['errors'], [])
         self.assertEqual(b.texts(), sorted(r[0] for r in rows))

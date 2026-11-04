@@ -24,7 +24,7 @@ from transcripts import project_key
 from vectors import DOC_PREFIX, MODEL, embed_pending, hybrid_search, pack, search_vectors
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
-HOMES = {'AIJ-HP': 'C:\\Users\\AIJ', 'MTLAPTOP': 'C:\\Users\\gladl', 'THIRD': 'C:\\Users\\third'}
+HOMES = {'HOMEPC': 'C:\\Users\\Ann', 'NOTEBOOK': 'C:\\Users\\alice', 'THIRD': 'C:\\Users\\third'}
 
 
 class Computer:
@@ -108,8 +108,8 @@ class SyncTest(unittest.TestCase):
         self.root = d.name
         self.share = os.path.join(d.name, 'share')
         os.makedirs(self.share)
-        self.a = self.computer('AIJ-HP')
-        self.b = self.computer('MTLAPTOP')
+        self.a = self.computer('HOMEPC')
+        self.b = self.computer('NOTEBOOK')
         self.a.say('SA', 'ёжик в тумане на i3', 'ответ про ёжика')
         self.b.say('SB', 'кэш протух на ноутбуке', 'ответ про кэш')
 
@@ -135,7 +135,7 @@ class SyncTest(unittest.TestCase):
         ra, rb, ra2 = self.exchange()
         self.assertEqual((ra['pushed'], ra['pulled'], rb['pushed'], rb['pulled'], ra2['pulled']), (2, 0, 2, 2, 2))
         self.assertEqual((ra['vectors']['pushed'], rb['vectors']['pulled'], ra2['vectors']['pulled']), (2, 2, 2))
-        self.assertEqual((rb['peers'], ra2['peers']), ({'AIJ-HP': 1}, {'MTLAPTOP': 1}))
+        self.assertEqual((rb['peers'], ra2['peers']), ({'HOMEPC': 1}, {'NOTEBOOK': 1}))
         self.assertEqual(self.a.texts(), self.b.texts())
         self.assertEqual((self.a.rows(), self.a.vecs(), self.b.rows(), self.b.vecs()), (4, 4, 4, 4))
         # the laptop's conversation is found on the i3 by its words and by its vectors
@@ -149,7 +149,7 @@ class SyncTest(unittest.TestCase):
         self.assertFalse(any('ноутбук' in t for t in self.a.embedded))
         self.assertEqual((self.a.embed()['done'], self.b.embed()['done']), (0, 0))
         # each record is ours or theirs: /al-health tells them apart
-        self.assertEqual(cgsync.status(self.a.conn, 'AIJ-HP')['origins'], {'AIJ-HP': 2, 'MTLAPTOP': 2})
+        self.assertEqual(cgsync.status(self.a.conn, 'HOMEPC')['origins'], {'HOMEPC': 2, 'NOTEBOOK': 2})
 
     # 2. repeat
     def test_a_second_sync_changes_nothing(self):
@@ -184,10 +184,10 @@ class SyncTest(unittest.TestCase):
         with mock.patch.object(cgsync, '_write', cut):
             r = self.a.sync()
         self.assertIn('the cable is out', r['errors'][0]['error'])
-        self.assertEqual((self.a.batches(), os.listdir(os.path.join(self.share, 'AIJ-HP'))), ([], ['batch-00000001.jsonl.gz.tmp']))
+        self.assertEqual((self.a.batches(), os.listdir(os.path.join(self.share, 'HOMEPC'))), ([], ['batch-00000001.jsonl.gz.tmp']))
         self.assertEqual(self.b.sync()['pulled'], 0)  # a .tmp is no batch
         self.assertEqual(self.a.sync()['pushed'], 2)  # nothing was marked: all of it again, under the same number
-        self.assertEqual(sorted(os.listdir(os.path.join(self.share, 'AIJ-HP'))), ['batch-00000001.jsonl.gz'])
+        self.assertEqual(sorted(os.listdir(os.path.join(self.share, 'HOMEPC'))), ['batch-00000001.jsonl.gz'])
         self.assertEqual(self.b.sync()['pulled'], 2)
 
     def test_a_push_whose_mark_is_lost_is_pushed_again_and_doubles_nothing(self):
@@ -322,21 +322,21 @@ class SyncTest(unittest.TestCase):
         r = self.a.sync()
         self.assertEqual(len(r['errors']), 1)
         e = r['errors'][0]
-        self.assertEqual((e['machine'], e['batch']), ('MTLAPTOP', 1))
-        self.assertIn('skip MTLAPTOP 1', e['error'])
-        self.assertEqual(r['peers'], {'MTLAPTOP': 0, 'THIRD': 1})  # the third computer came in; the laptop's mark stays where it was
+        self.assertEqual((e['machine'], e['batch']), ('NOTEBOOK', 1))
+        self.assertIn('skip NOTEBOOK 1', e['error'])
+        self.assertEqual(r['peers'], {'NOTEBOOK': 0, 'THIRD': 1})  # the third computer came in; the laptop's mark stays where it was
         self.assertEqual(search(self.a.conn, 'третий')[0]['conv'], 'SC')
         self.assertEqual((search(self.a.conn, 'ноутбуке'), search(self.a.conn, 'вторая')), ([], []))  # nothing of the broken batch, and the next one waits
         self.assertEqual(self.a.sync()['errors'][0]['batch'], 1)  # told on every sync
-        peer = lambda: next(p for p in cgsync.status(self.a.conn, 'AIJ-HP')['peers'] if p['machine'] == 'MTLAPTOP')
+        peer = lambda: next(p for p in cgsync.status(self.a.conn, 'HOMEPC')['peers'] if p['machine'] == 'NOTEBOOK')
         self.assertEqual(peer()['error'], e['error'])
-        cgsync.skip_batch(self.a.conn, 'MTLAPTOP', 1)
+        cgsync.skip_batch(self.a.conn, 'NOTEBOOK', 1)
         r = self.a.sync()
-        self.assertEqual((r['errors'], r['peers']['MTLAPTOP'], r['pulled']), ([], 2, 1))
+        self.assertEqual((r['errors'], r['peers']['NOTEBOOK'], r['pulled']), ([], 2, 1))
         self.assertEqual(search(self.a.conn, 'вторая')[0]['conv'], 'SB2')
         self.assertEqual((peer()['skipped'], peer()['error']), ([1], None))
         with self.assertRaises(ValueError):
-            cgsync.skip_batch(self.a.conn, 'MTLAPTOP', 0)
+            cgsync.skip_batch(self.a.conn, 'NOTEBOOK', 0)
 
     def test_skip_batch_takes_only_a_known_computer_and_the_batch_it_waits_at(self):  # the review of PR 1
         self.ready(self.b)
@@ -346,14 +346,14 @@ class SyncTest(unittest.TestCase):
         self.b.sync()
         self.break_line(self.b, 1, 3)
         self.assertEqual(self.a.sync()['errors'][0]['batch'], 1)
-        with self.assertRaisesRegex(ValueError, 'MTLAPTOP'):
+        with self.assertRaisesRegex(ValueError, 'NOTEBOOK'):
             cgsync.skip_batch(self.a.conn, 'NOSUCH', 1)  # no phantom computer
         with self.assertRaisesRegex(ValueError, ' 1'):
-            cgsync.skip_batch(self.a.conn, 'MTLAPTOP', 2)  # a sound batch is not skipped ahead
+            cgsync.skip_batch(self.a.conn, 'NOTEBOOK', 2)  # a sound batch is not skipped ahead
         self.assertEqual(self.a.q("SELECT count(*) FROM peers WHERE machine = 'NOSUCH'"), 0)
-        cgsync.skip_batch(self.a.conn, 'mtlaptop', 1)  # the name in any case: the one in the folder is meant
+        cgsync.skip_batch(self.a.conn, 'notebook', 1)  # the name in any case: the one in the folder is meant
         r = self.a.sync()
-        self.assertEqual((r['errors'], r['peers']['MTLAPTOP']), ([], 2))
+        self.assertEqual((r['errors'], r['peers']['NOTEBOOK']), ([], 2))
 
     def test_a_missing_batch_with_later_ones_is_an_error(self):
         self.ready(self.b)
@@ -361,10 +361,10 @@ class SyncTest(unittest.TestCase):
         self.b.say('SB2', 'вторая')
         self.ready(self.b)
         self.b.sync()
-        os.remove(os.path.join(self.share, 'MTLAPTOP', 'batch-00000001.jsonl.gz'))
+        os.remove(os.path.join(self.share, 'NOTEBOOK', 'batch-00000001.jsonl.gz'))
         r = self.a.sync()
         self.assertEqual((r['errors'][0]['batch'], r['pulled']), (1, 0))
-        self.assertIn('/al-sync skip MTLAPTOP 1', r['errors'][0]['error'])
+        self.assertIn('/al-sync skip NOTEBOOK 1', r['errors'][0]['error'])
 
     def test_a_hiccup_of_the_share_or_a_locked_index_is_no_broken_batch_and_offers_no_skip(self):  # the next sync simply tries again
         import sqlcipher3  # an encrypted index raises its own class, once it is loaded
@@ -375,7 +375,7 @@ class SyncTest(unittest.TestCase):
             with self.subTest(type(e).__name__), mock.patch.object(cgsync, '_import', side_effect=e):
                 r = self.a.sync()
                 err = r['errors'][0]
-                self.assertEqual((len(r['errors']), err['machine'], err['batch']), (1, 'MTLAPTOP', 1))
+                self.assertEqual((len(r['errors']), err['machine'], err['batch']), (1, 'NOTEBOOK', 1))
                 self.assertNotIn('skip', err['error'])
                 self.assertIn('could not be read now', err['error'])
 
@@ -384,9 +384,9 @@ class SyncTest(unittest.TestCase):
         self.b.sync()
         for name, data in (('no gzip', b'not a gzip'), ('no json', gzip.compress(b'not json\n'))):
             with self.subTest(name):
-                with open(os.path.join(self.share, 'MTLAPTOP', 'batch-00000001.jsonl.gz'), 'wb') as f:
+                with open(os.path.join(self.share, 'NOTEBOOK', 'batch-00000001.jsonl.gz'), 'wb') as f:
                     f.write(data)
-                self.assertIn('/al-sync skip MTLAPTOP 1', self.a.sync()['errors'][0]['error'])
+                self.assertIn('/al-sync skip NOTEBOOK 1', self.a.sync()['errors'][0]['error'])
 
     # 4. an unavailable folder
     def test_an_unavailable_folder_is_an_error_and_the_local_memory_works(self):
@@ -394,7 +394,7 @@ class SyncTest(unittest.TestCase):
         for gone in (os.path.join(self.root, 'nas-off'), os.path.join(self.share, 'file')):
             if gone.endswith('file'):
                 open(gone, 'w').close()
-            r = cgsync.sync(self.a.conn, gone, 'AIJ-HP', digest=lambda m: None)
+            r = cgsync.sync(self.a.conn, gone, 'HOMEPC', digest=lambda m: None)
             self.assertEqual((r['pushed'], len(r['errors'])), (0, 1))
             self.assertIn(gone, r['errors'][0]['error'])
         self.assertEqual(search(self.a.conn, 'ёжик')[0]['conv'], 'SA')
@@ -407,7 +407,7 @@ class SyncTest(unittest.TestCase):
         os.makedirs(os.path.join(self.share, 'notes'))
         self.ready(self.a)
         r = self.a.sync()
-        self.assertEqual((r['peers'], [p['machine'] for p in cgsync.status(self.a.conn, 'AIJ-HP')['peers']]), ({}, ['AIJ-HP']))
+        self.assertEqual((r['peers'], [p['machine'] for p in cgsync.status(self.a.conn, 'HOMEPC')['peers']]), ({}, ['HOMEPC']))
 
     # 5. no echo
     def test_what_came_from_the_laptop_never_goes_out_from_the_i3(self):
@@ -436,7 +436,7 @@ class SyncTest(unittest.TestCase):
         self.a.sync(digest=lambda m: 'sha256:aaaa')
         r = self.b.sync(digest=lambda m: 'sha256:bbbb')
         self.assertEqual((r['vectors']['pulled'], r['errors'], len(r['warnings'])), (2, [], 1))
-        self.assertIn('AIJ-HP', r['warnings'][0])
+        self.assertIn('HOMEPC', r['warnings'][0])
         self.assertEqual(self.a.batch_lines(1)[0]['digest'], 'sha256:aaaa')
 
     # 7. one project under two profiles
@@ -470,13 +470,13 @@ class SyncTest(unittest.TestCase):
         r = self.b.sync()
         self.assertEqual(r['memory'], {'pushed': 1, 'pulled': 1, 'conflicts': 1})
         self.assertIn('версия ноутбука', self.b.read('note.md'))
-        self.assertIn('версия i3', self.b.read('note--AIJ-HP.md'))
-        self.assertIn('(note--AIJ-HP.md)', self.b.read('MEMORY.md'))
+        self.assertIn('версия i3', self.b.read('note--HOMEPC.md'))
+        self.assertIn('(note--HOMEPC.md)', self.b.read('MEMORY.md'))
         self.a.sync()
         self.assertIn('версия i3', self.a.read('note.md'))
-        self.assertIn('версия ноутбука', self.a.read('note--MTLAPTOP.md'))
+        self.assertIn('версия ноутбука', self.a.read('note--NOTEBOOK.md'))
         # the copy with the suffix does not go back
-        self.assertEqual(sorted(os.listdir(os.path.join(self.share, 'MTLAPTOP', 'memory', cgsync.project_folder('~\\work\\proj')))), ['note.md'])
+        self.assertEqual(sorted(os.listdir(os.path.join(self.share, 'NOTEBOOK', 'memory', cgsync.project_folder('~\\work\\proj')))), ['note.md'])
         self.assertEqual(self.b.sync()['memory'], {'pushed': 0, 'pulled': 0, 'conflicts': 0})
 
     def test_a_newer_version_replaces_an_untouched_copy_and_never_an_edited_one(self):
@@ -495,7 +495,7 @@ class SyncTest(unittest.TestCase):
         r = self.b.sync()
         self.assertEqual(r['memory']['conflicts'], 1)
         self.assertIn('правка владельца', self.b.read('f.md'))
-        self.assertIn('v3', self.b.read('f--AIJ-HP.md'))
+        self.assertIn('v3', self.b.read('f--HOMEPC.md'))
 
     def test_a_fact_the_owner_deleted_does_not_come_back(self):
         self.a.fact('f.md', 'v1')
@@ -515,14 +515,14 @@ class SyncTest(unittest.TestCase):
         self.a.sync()
         self.a.fact('f.md', 'v2')
         self.a.sync()
-        with open(os.path.join(self.share, 'AIJ-HP', 'memory', cgsync.project_folder('~\\work\\proj'), 'f.md'), encoding='utf-8') as f:
+        with open(os.path.join(self.share, 'HOMEPC', 'memory', cgsync.project_folder('~\\work\\proj'), 'f.md'), encoding='utf-8') as f:
             self.assertIn('v2', f.read())
 
     def test_no_memory_folder_known_no_memory_step(self):
         self.a.fact('f.md', 'v1')
         self.assertIsNone(self.a.sync(memory=False)['memory'])
-        self.assertFalse(os.path.exists(os.path.join(self.share, 'AIJ-HP', 'memory')))
-        r = cgsync.sync(self.a.conn, self.share, 'AIJ-HP', memory_dir=os.path.join(self.root, 'nope'), project_cwd=self.a.cwd, digest=lambda m: None)
+        self.assertFalse(os.path.exists(os.path.join(self.share, 'HOMEPC', 'memory')))
+        r = cgsync.sync(self.a.conn, self.share, 'HOMEPC', memory_dir=os.path.join(self.root, 'nope'), project_cwd=self.a.cwd, digest=lambda m: None)
         self.assertIn('nope', r['errors'][0]['error'])
 
     # 13. the refinements of §5.7
@@ -540,7 +540,7 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(self.a.embed()['done'], 0)  # and nothing is embedded again
         self.assertEqual(self.a.embedded, [])
         self.assertEqual((self.a.sync()['pushed'], self.a.batches()), (0, [1]))  # nor pushed again
-        self.assertEqual(cgsync.status(self.a.conn, 'AIJ-HP')['origins'], {'AIJ-HP': 2})
+        self.assertEqual(cgsync.status(self.a.conn, 'HOMEPC')['origins'], {'HOMEPC': 2})
 
     def test_a_fresh_index_past_a_broken_batch_of_its_own_loses_none_of_the_later_ones(self):
         self.a.say('SBIG', *['сообщение номер %d ' % i + 'я' * 300 for i in range(40)])
@@ -561,11 +561,11 @@ class SyncTest(unittest.TestCase):
         r = self.a.sync()  # stops at its own batch 2, and still pushes the new conversation
         self.assertEqual((r['errors'][0]['batch'], r['pushed']), (2, 1))
         self.assertEqual(self.a.sync()['errors'][0]['batch'], 2)  # the error stays until it is skipped
-        cgsync.skip_batch(self.a.conn, 'AIJ-HP', 2)
+        cgsync.skip_batch(self.a.conn, 'HOMEPC', 2)
         r = self.a.sync()
         self.assertEqual(r['errors'], [])
         self.assertEqual(self.a.rows(), 2 + 40 - lost + 1)  # every record but those of the broken batch
-        self.assertEqual(self.a.q("SELECT last_batch FROM peers WHERE machine = 'AIJ-HP'"), batches[-1] + 1)  # the new conversation's batch
+        self.assertEqual(self.a.q("SELECT last_batch FROM peers WHERE machine = 'HOMEPC'"), batches[-1] + 1)  # the new conversation's batch
 
     def batch_texts(self, c, n):
         return [l['text'] for l in c.batch_lines(n) if l.get('type') == 'chunk']
@@ -704,7 +704,7 @@ class SyncTest(unittest.TestCase):
         r = self.b.sync()
         self.assertEqual((r['errors'], r['pulled'], r['batches']['pulled']), ([], 0, 1))  # read from batch 1; nothing is new in it
         self.assertEqual((self.b.rows(), self.b.vecs()), before)
-        self.assertEqual(self.peer_row(self.b, 'AIJ-HP'), (1, 1, '[]', None))
+        self.assertEqual(self.peer_row(self.b, 'HOMEPC'), (1, 1, '[]', None))
         self.assertEqual(self.b.sync()['batches']['pulled'], 0)  # and once only
 
     def test_generation_clears_skip(self):
@@ -712,14 +712,14 @@ class SyncTest(unittest.TestCase):
         self.a.sync()
         self.break_line(self.a, 1, 3)
         self.assertEqual(self.b.sync()['errors'][0]['batch'], 1)
-        cgsync.skip_batch(self.b.conn, 'AIJ-HP', 1)
+        cgsync.skip_batch(self.b.conn, 'HOMEPC', 1)
         self.assertEqual(self.b.sync()['errors'], [])
-        self.assertEqual(self.peer_row(self.b, 'AIJ-HP')[:3], (0, 1, '[1]'))
+        self.assertEqual(self.peer_row(self.b, 'HOMEPC')[:3], (0, 1, '[1]'))
         self.start(self.a)
         self.a.sync()
         r = self.b.sync()  # the new generation holds what the skipped batch did
         self.assertEqual((r['errors'], r['pulled']), ([], 2))
-        self.assertEqual(self.peer_row(self.b, 'AIJ-HP'), (1, 1, '[]', None))
+        self.assertEqual(self.peer_row(self.b, 'HOMEPC'), (1, 1, '[]', None))
 
     def test_restored_index_reads_own_generation(self):
         self.ready(self.a)
@@ -730,8 +730,8 @@ class SyncTest(unittest.TestCase):
         self.a.open()
         r = self.a.sync()
         self.assertEqual((r['pulled'], r['vectors']['pulled'], r['pushed'], r['errors']), (2, 2, 0, []))
-        self.assertEqual((sorted(cgsync._batches(self.gen_dir(self.a, 1))), os.listdir(os.path.join(self.share, 'AIJ-HP'))), ([1], ['gen-0001']))
-        self.assertEqual(self.peer_row(self.a, 'AIJ-HP'), (1, 1, '[]', None))
+        self.assertEqual((sorted(cgsync._batches(self.gen_dir(self.a, 1))), os.listdir(os.path.join(self.share, 'HOMEPC'))), ([1], ['gen-0001']))
+        self.assertEqual(self.peer_row(self.a, 'HOMEPC'), (1, 1, '[]', None))
 
     def test_new_generation_carries_forgets(self):
         self.exchange()
@@ -748,7 +748,7 @@ class SyncTest(unittest.TestCase):
     def test_old_generations(self):
         self.a.fact('f.md', 'v1')
         self.exchange()
-        own = os.path.join(self.share, 'AIJ-HP')
+        own = os.path.join(self.share, 'HOMEPC')
         self.assertEqual(cgsync.old_generations(own), [])  # generation 0 is the current one
         self.start(self.a)
         self.a.sync()
@@ -760,8 +760,8 @@ class SyncTest(unittest.TestCase):
 
     def test_a_start_that_fails_leaves_no_generation_and_changes_nothing(self):
         self.exchange()
-        own = os.path.join(self.share, 'AIJ-HP')
-        marks = lambda: (self.peer_row(self.a, 'AIJ-HP'), self.a.q('SELECT count(*) FROM keys WHERE pushed = 1'))
+        own = os.path.join(self.share, 'HOMEPC')
+        marks = lambda: (self.peer_row(self.a, 'HOMEPC'), self.a.q('SELECT count(*) FROM keys WHERE pushed = 1'))
         other = connect(self.a.db, home=self.a.home)
         self.addCleanup(other.close)
         other.execute('BEGIN IMMEDIATE')  # another run holds the index
@@ -785,7 +785,7 @@ class SyncTest(unittest.TestCase):
         with mock.patch.object(cgsync, '_gens', return_value={}):  # a start that did not see the folder of the other one
             with self.assertRaises(FileExistsError):
                 self.start(self.a)
-        self.assertEqual(cgsync.generation(os.path.join(self.share, 'AIJ-HP')), winner)
+        self.assertEqual(cgsync.generation(os.path.join(self.share, 'HOMEPC')), winner)
 
     def test_restored_own_records_go_out_again_in_the_next_generation(self):
         self.ready(self.a)
@@ -795,7 +795,7 @@ class SyncTest(unittest.TestCase):
         os.remove(self.a.db)
         self.a.open()
         self.a.sync()  # the records are back from gen-0001, taken in from our own folder: origin is ours, and they are marked pushed
-        self.assertEqual(self.a.q("SELECT count(*) FROM keys WHERE origin = 'AIJ-HP' AND pushed = 1"), 2)
+        self.assertEqual(self.a.q("SELECT count(*) FROM keys WHERE origin = 'HOMEPC' AND pushed = 1"), 2)
         self.start(self.a)
         self.assertEqual(self.a.sync()['errors'], [])
         lines = self.gen_lines(self.a, 2)
@@ -808,7 +808,7 @@ class SyncTest(unittest.TestCase):
         self.start(self.a)
         self.a.sync()
         self.b.sync()
-        self.assertEqual(self.peer_row(self.b, 'AIJ-HP'), (2, 1, '[]', None))
+        self.assertEqual(self.peer_row(self.b, 'HOMEPC'), (2, 1, '[]', None))
         self.a.say('SA', 'третье сообщение', mode='ab')
         self.ready(self.a)
         real = open
@@ -822,11 +822,11 @@ class SyncTest(unittest.TestCase):
             ra, rb = self.a.sync(), self.b.sync()
         # we write nothing into the generation before the current one, and the laptop keeps its place in the current one
         self.assertEqual(([e['where'] for e in ra['errors']], ra['pushed'], sorted(cgsync._batches(self.gen_dir(self.a, 2)))), (['sync'], 0, [1]))
-        self.assertEqual([(e['where'], e['machine'], 'batch' in e) for e in rb['errors']], [('pull', 'AIJ-HP', False)])
-        self.assertEqual(self.peer_row(self.b, 'AIJ-HP')[:3], (2, 1, '[]'))
-        self.assertIn('PermissionError', self.peer_row(self.b, 'AIJ-HP')[3])
+        self.assertEqual([(e['where'], e['machine'], 'batch' in e) for e in rb['errors']], [('pull', 'HOMEPC', False)])
+        self.assertEqual(self.peer_row(self.b, 'HOMEPC')[:3], (2, 1, '[]'))
+        self.assertIn('PermissionError', self.peer_row(self.b, 'HOMEPC')[3])
         self.assertEqual((self.a.sync()['pushed'], sorted(cgsync._batches(self.gen_dir(self.a, 2)))), (1, [1, 2]))
-        self.assertEqual((self.b.sync()['errors'], self.peer_row(self.b, 'AIJ-HP')), ([], (2, 2, '[]', None)))
+        self.assertEqual((self.b.sync()['errors'], self.peer_row(self.b, 'HOMEPC')), ([], (2, 2, '[]', None)))
 
     def test_only_the_one_spelling_of_a_number_names_a_generation_or_a_batch(self):  # else two names are one number
         own = os.path.join(self.root, 'M')
@@ -863,14 +863,14 @@ class SyncTest(unittest.TestCase):
         put(2, json.dumps(good))
         self.assertEqual(cgsync.generation(own), cgsync.Gen(2, os.path.join(own, 'gen-0002'), 'sqlcipher', fp))
         os.makedirs(os.path.join(own, 'gen-0007'))  # unreadable, yet the next number goes beyond it
-        self.assertEqual(cgsync.start_generation(self.a.conn, own, 'AIJ-HP', 'sqlcipher', b'k' * 32).n, 8)
+        self.assertEqual(cgsync.start_generation(self.a.conn, own, 'HOMEPC', 'sqlcipher', b'k' * 32).n, 8)
 
     def test_a_peer_first_seen_in_a_generation_is_read_once_and_can_skip_a_broken_batch(self):
         self.ready(self.a)
         self.start(self.a)
         self.a.sync()
         self.assertEqual(self.b.sync()['batches']['pulled'], 1)
-        self.assertEqual((self.b.sync()['batches']['pulled'], self.peer_row(self.b, 'AIJ-HP')), (0, (1, 1, '[]', None)))
+        self.assertEqual((self.b.sync()['batches']['pulled'], self.peer_row(self.b, 'HOMEPC')), (0, (1, 1, '[]', None)))
         c = self.computer('THIRD')
         path = os.path.join(self.gen_dir(self.a, 1), 'batch-00000001.jsonl.gz')
         with gzip.open(path, 'rt', encoding='utf-8') as f:
@@ -879,9 +879,9 @@ class SyncTest(unittest.TestCase):
         with gzip.open(path, 'wt', encoding='utf-8') as f:
             f.write('\n'.join(lines))
         self.assertEqual(c.sync()['errors'][0]['batch'], 1)
-        cgsync.skip_batch(c.conn, 'AIJ-HP', 1)  # the mark of the generation must stay, or the next sync would clear the skip
+        cgsync.skip_batch(c.conn, 'HOMEPC', 1)  # the mark of the generation must stay, or the next sync would clear the skip
         r = c.sync()
-        self.assertEqual((r['errors'], self.peer_row(c, 'AIJ-HP')), ([], (1, 1, '[1]', None)))
+        self.assertEqual((r['errors'], self.peer_row(c, 'HOMEPC')), ([], (1, 1, '[1]', None)))
 
     def set_gen(self, path, gen):
         with gzip.open(path, 'rt', encoding='utf-8') as f:
@@ -896,15 +896,15 @@ class SyncTest(unittest.TestCase):
     def test_a_batch_names_its_generation(self):
         self.ready(self.a)
         self.a.sync()
-        path = os.path.join(self.share, 'AIJ-HP', 'batch-00000001.jsonl.gz')
+        path = os.path.join(self.share, 'HOMEPC', 'batch-00000001.jsonl.gz')
         self.set_gen(path, None)  # a batch of before stage 5 has no such field: generation 0
         self.assertEqual((self.b.sync()['errors'], self.b.rows()), ([], 2))
         self.start(self.a)
         self.a.sync()
         self.set_gen(os.path.join(self.gen_dir(self.a, 1), 'batch-00000001.jsonl.gz'), 0)  # a copy from another generation
         r = self.b.sync()
-        self.assertEqual((r['errors'][0]['batch'], self.peer_row(self.b, 'AIJ-HP')[1]), (1, 0))
-        self.assertIn('AIJ-HP', r['errors'][0]['error'])
+        self.assertEqual((r['errors'][0]['batch'], self.peer_row(self.b, 'HOMEPC')[1]), (1, 0))
+        self.assertIn('HOMEPC', r['errors'][0]['error'])
 
     # 15. encrypted batches (stage 5): one key, one of two ciphers; a computer with the key takes nothing plain, one without it nothing sealed
     def pair(self, tag):
@@ -912,11 +912,11 @@ class SyncTest(unittest.TestCase):
         root = os.path.join(self.root, tag)
         share = os.path.join(root, 'share')
         os.makedirs(share)
-        a, b = Computer(root, share, 'AIJ-HP'), Computer(root, share, 'MTLAPTOP')
+        a, b = Computer(root, share, 'HOMEPC'), Computer(root, share, 'NOTEBOOK')
         for c in (a, b):
             self.addCleanup(c.close)
-        a.say('conv-of-aij-hp', 'ёжик в тумане на i3', 'ответ про ёжика')
-        b.say('conv-of-mtlaptop', 'кэш протух на ноутбуке', 'ответ про кэш')
+        a.say('conv-of-homepc', 'ёжик в тумане на i3', 'ответ про ёжика')
+        b.say('conv-of-notebook', 'кэш протух на ноутбуке', 'ответ про кэш')
         self.ready(a, b)
         return a, b
 
@@ -932,8 +932,8 @@ class SyncTest(unittest.TestCase):
                 self.swap(a, b, key, cipher)
                 self.assertEqual(a.texts(), b.texts())
                 self.assertEqual((a.rows(), a.vecs(), b.rows(), b.vecs()), (4, 4, 4, 4))
-                secret = [x.encode('utf-8') for x in a.texts() + ['conv-of-aij-hp', 'conv-of-mtlaptop']]
-                name = re.compile(r'AIJ-HP|MTLAPTOP|gen-0001|generation\.json|batch-[0-9]{8}' + re.escape(crypto.EXT[cipher]))
+                secret = [x.encode('utf-8') for x in a.texts() + ['conv-of-homepc', 'conv-of-notebook']]
+                name = re.compile(r'HOMEPC|NOTEBOOK|gen-0001|generation\.json|batch-[0-9]{8}' + re.escape(crypto.EXT[cipher]))
                 for d, dirs, files in os.walk(a.share):
                     for n in dirs + files:
                         self.assertTrue(name.fullmatch(n), n)
@@ -961,28 +961,28 @@ class SyncTest(unittest.TestCase):
 
     def test_plain_peer_refused(self):
         a, b, key, ra, rb = self.plain_meets_key()
-        self.assertEqual(ra['errors'], [{'where': 'pull', 'machine': 'MTLAPTOP', 'error': t('peer_plain', machine='MTLAPTOP')}])
-        self.assertEqual(rb['errors'], [{'where': 'pull', 'machine': 'AIJ-HP', 'error': t('peer_needs_key', machine='AIJ-HP')}])
+        self.assertEqual(ra['errors'], [{'where': 'pull', 'machine': 'NOTEBOOK', 'error': t('peer_plain', machine='NOTEBOOK')}])
+        self.assertEqual(rb['errors'], [{'where': 'pull', 'machine': 'HOMEPC', 'error': t('peer_needs_key', machine='HOMEPC')}])
         self.assertEqual((a.rows(), b.rows()), (2, 4))  # A never took B's records; B keeps what came before
-        self.assertEqual(self.peer_row(b, 'AIJ-HP'), (0, 1, '[]', t('peer_needs_key', machine='AIJ-HP')))  # and nothing is reset
+        self.assertEqual(self.peer_row(b, 'HOMEPC'), (0, 1, '[]', t('peer_needs_key', machine='HOMEPC')))  # and nothing is reset
 
     def test_join_converges(self):
         a, b, key, _, _ = self.plain_meets_key()
         self.assertEqual(b.sync(key=key)['errors'], [])  # B joins: a sealed generation of its own
         self.assertEqual(a.sync(key=key)['errors'], [])
         self.assertEqual((a.texts(), len(b.texts())), (b.texts(), 4))
-        self.assertEqual(cgsync.generation(os.path.join(b.share, 'MTLAPTOP')).cipher, 'sqlcipher')
+        self.assertEqual(cgsync.generation(os.path.join(b.share, 'NOTEBOOK')).cipher, 'sqlcipher')
 
     def test_other_key(self):
         a, b = self.pair('other-key')
         k1, k2 = secrets.token_bytes(32), secrets.token_bytes(32)
         a.sync(key=k1)
-        self.assertEqual(b.sync(key=k2)['errors'], [{'where': 'pull', 'machine': 'AIJ-HP', 'error': t('peer_other_key', machine='AIJ-HP')}])
-        self.assertEqual(a.sync(key=k1)['errors'], [{'where': 'pull', 'machine': 'MTLAPTOP', 'error': t('peer_other_key', machine='MTLAPTOP')}])
+        self.assertEqual(b.sync(key=k2)['errors'], [{'where': 'pull', 'machine': 'HOMEPC', 'error': t('peer_other_key', machine='HOMEPC')}])
+        self.assertEqual(a.sync(key=k1)['errors'], [{'where': 'pull', 'machine': 'NOTEBOOK', 'error': t('peer_other_key', machine='NOTEBOOK')}])
         self.assertEqual((a.rows(), b.rows()), (2, 2))
 
     def broken(self, n):
-        return t('batch_broken', n=n, machine='AIJ-HP', e='ValueError: ' + t('seal_broken'))
+        return t('batch_broken', n=n, machine='HOMEPC', e='ValueError: ' + t('seal_broken'))
 
     def test_tampered_batch(self):
         key = secrets.token_bytes(32)
@@ -999,11 +999,11 @@ class SyncTest(unittest.TestCase):
                 r = b.sync(key=key, cipher=cipher)
                 self.assertEqual([(e['batch'], e['error']) for e in r['errors']], [(1, self.broken(1))])
                 self.assertEqual(b.rows(), 2)
-                cgsync.skip_batch(b.conn, 'AIJ-HP', 1)
-                a.say('conv-of-aij-hp-2', 'третье сообщение', 'ответ на третье')
+                cgsync.skip_batch(b.conn, 'HOMEPC', 1)
+                a.say('conv-of-homepc-2', 'третье сообщение', 'ответ на третье')
                 self.ready(a)
                 a.sync(key=key, cipher=cipher)
-                self.assertEqual((b.sync(key=key, cipher=cipher)['errors'], b.rows(), self.peer_row(b, 'AIJ-HP')[1:3]), ([], 4, (2, '[1]')))
+                self.assertEqual((b.sync(key=key, cipher=cipher)['errors'], b.rows(), self.peer_row(b, 'HOMEPC')[1:3]), ([], 4, (2, '[1]')))
 
     def test_renamed_batch(self):  # a sound batch under another number is no batch there
         key = secrets.token_bytes(32)
@@ -1015,7 +1015,7 @@ class SyncTest(unittest.TestCase):
                 shutil.copy(one, os.path.join(self.gen_dir(a, 1), 'batch-00000002' + crypto.EXT[cipher]))
                 r = b.sync(key=key, cipher=cipher)
                 self.assertEqual([(e['batch'], e['error']) for e in r['errors']], [(2, self.broken(2))])
-                self.assertEqual((b.rows(), self.peer_row(b, 'AIJ-HP')[1]), (4, 1))
+                self.assertEqual((b.rows(), self.peer_row(b, 'HOMEPC')[1]), (4, 1))
 
     def test_needs_join_after_reinstall(self):
         a, b = self.pair('reinstall')
@@ -1026,7 +1026,7 @@ class SyncTest(unittest.TestCase):
         os.remove(a.db)
         a.open()
         r = a.sync()
-        self.assertEqual(r['errors'], [{'where': 'sync', 'error': t('share_needs_join', machine='AIJ-HP')}])
+        self.assertEqual(r['errors'], [{'where': 'sync', 'error': t('share_needs_join', machine='HOMEPC')}])
         self.assertEqual((listing(), a.rows()), (before, 0))  # nothing written, nothing read
 
     def test_cipher_change(self):
@@ -1036,14 +1036,14 @@ class SyncTest(unittest.TestCase):
         rows = b.rows()
         self.assertEqual(a.sync(key=key, cipher='cryptography')['errors'], [])
         self.assertEqual(sorted(os.listdir(self.gen_dir(a, 2))), ['batch-00000001.aesgcm', 'generation.json'])
-        self.assertEqual((b.sync(key=key)['errors'], b.rows(), self.peer_row(b, 'AIJ-HP')), ([], rows, (2, 1, '[]', None)))
+        self.assertEqual((b.sync(key=key)['errors'], b.rows(), self.peer_row(b, 'HOMEPC')), ([], rows, (2, 1, '[]', None)))
 
     def test_plain_after_off(self):
         a, b = self.pair('off')
         a.sync(key=secrets.token_bytes(32))
         a.conn.execute("INSERT OR REPLACE INTO meta VALUES('share_plain', '1')")
         self.assertEqual(a.sync()['errors'], [])
-        self.assertEqual(cgsync.generation(os.path.join(a.share, 'AIJ-HP')), cgsync.Gen(2, self.gen_dir(a, 2), None, None))
+        self.assertEqual(cgsync.generation(os.path.join(a.share, 'HOMEPC')), cgsync.Gen(2, self.gen_dir(a, 2), None, None))
         self.assertEqual(sorted(os.listdir(self.gen_dir(a, 2))), ['batch-00000001.jsonl.gz', 'generation.json'])
         self.assertEqual(sum(l['type'] == 'chunk' for l in self.gen_lines(a, 2)), 2)
         self.assertIsNone(memdb.meta(a.conn, 'share_plain'))
@@ -1056,28 +1056,28 @@ class SyncTest(unittest.TestCase):
         a.sync(key=key, cipher='sqlcipher')  # a new generation of A
         with mock.patch.dict(sys.modules, {'sqlcipher3': None}):
             r, r2 = b.sync(key=key, cipher='cryptography'), b.sync(key=key, cipher='sqlcipher')
-        self.assertEqual(r['errors'], [{'where': 'pull', 'machine': 'AIJ-HP', 'error': t('peer_sqlcipher_unreadable', machine='AIJ-HP')}])
+        self.assertEqual(r['errors'], [{'where': 'pull', 'machine': 'HOMEPC', 'error': t('peer_sqlcipher_unreadable', machine='HOMEPC')}])
         error = t('cipher_missing', pkg='sqlcipher3')
-        self.assertEqual((r2['errors'], os.listdir(os.path.join(b.share, 'MTLAPTOP'))), ([{'where': 'sync', 'error': error}], ['gen-0001']))  # no label
-        self.assertEqual(self.peer_row(b, 'AIJ-HP'), (1, 1, '[]', t('peer_sqlcipher_unreadable', machine='AIJ-HP')))  # still at the generation it was
-        self.assertEqual((b.sync(key=key, cipher='cryptography')['errors'], self.peer_row(b, 'AIJ-HP')), ([], (2, 1, '[]', None)))
+        self.assertEqual((r2['errors'], os.listdir(os.path.join(b.share, 'NOTEBOOK'))), ([{'where': 'sync', 'error': error}], ['gen-0001']))  # no label
+        self.assertEqual(self.peer_row(b, 'HOMEPC'), (1, 1, '[]', t('peer_sqlcipher_unreadable', machine='HOMEPC')))  # still at the generation it was
+        self.assertEqual((b.sync(key=key, cipher='cryptography')['errors'], self.peer_row(b, 'HOMEPC')), ([], (2, 1, '[]', None)))
 
     def test_a_start_killed_before_its_reset_is_repaired_by_the_next_sync(self):  # the label is out, the marks still say 'out already'
         self.ready(self.a)
         self.a.sync()
         with mock.patch.object(cgsync, '_restart'):
             self.start(self.a)
-        self.assertEqual((self.peer_row(self.a, 'AIJ-HP')[:2], self.a.q('SELECT count(*) FROM keys WHERE pushed = 1')), ((0, 1), 2))
+        self.assertEqual((self.peer_row(self.a, 'HOMEPC')[:2], self.a.q('SELECT count(*) FROM keys WHERE pushed = 1')), ((0, 1), 2))
         self.assertEqual(self.a.sync()['pushed'], 2)
         lines = self.gen_lines(self.a, 1)
         self.assertEqual((sum(l['type'] == 'chunk' for l in lines), sum(l['type'] == 'vec' for l in lines)), (2, 2))
-        self.assertEqual((self.peer_row(self.a, 'AIJ-HP'), self.a.sync()['pushed']), ((1, 1, '[]', None), 0))
+        self.assertEqual((self.peer_row(self.a, 'HOMEPC'), self.a.sync()['pushed']), ((1, 1, '[]', None), 0))
 
     def test_a_start_takes_a_cipher_only_with_a_key(self):
         for cipher, key in (('sqlcipher', None), (None, b'k' * 32), ('rot13', b'k' * 32)):
             with self.assertRaises(ValueError):
-                cgsync.start_generation(self.a.conn, os.path.join(self.share, 'AIJ-HP'), 'AIJ-HP', cipher, key)
-        self.assertEqual((os.path.exists(os.path.join(self.share, 'AIJ-HP')), self.a.conn.in_transaction), (False, False))
+                cgsync.start_generation(self.a.conn, os.path.join(self.share, 'HOMEPC'), 'HOMEPC', cipher, key)
+        self.assertEqual((os.path.exists(os.path.join(self.share, 'HOMEPC')), self.a.conn.in_transaction), (False, False))
 
     def test_pending(self):
         pending = lambda: cgsync.pending(self.a.conn)
@@ -1113,7 +1113,7 @@ class SyncTest(unittest.TestCase):
         b.close()
         os.remove(b.db)
         b.open()
-        return b, os.path.join(b.share, 'MTLAPTOP')
+        return b, os.path.join(b.share, 'NOTEBOOK')
 
     def test_a_fresh_index_with_a_key_brings_its_own_history_into_the_new_generation(self):
         b, own = self.reinstalled('fresh-key')
@@ -1130,9 +1130,9 @@ class SyncTest(unittest.TestCase):
         key = secrets.token_bytes(32)
         self.break_line(b, 1, 3)
         r = b.sync(key=key)
-        self.assertEqual([(e['where'], e['machine'], e['batch']) for e in r['errors']], [('pull', 'MTLAPTOP', 1)])
+        self.assertEqual([(e['where'], e['machine'], e['batch']) for e in r['errors']], [('pull', 'NOTEBOOK', 1)])
         self.assertEqual(sorted(os.listdir(own)), ['batch-00000001.jsonl.gz'])  # no generation, no batch of the new kind
-        cgsync.skip_batch(b.conn, 'MTLAPTOP', 1)
+        cgsync.skip_batch(b.conn, 'NOTEBOOK', 1)
         self.assertEqual(b.sync(key=key)['errors'], [])
         self.assertEqual(cgsync.generation(own).n, 1)
 
@@ -1160,7 +1160,7 @@ class SyncTest(unittest.TestCase):
     def test_a_sealed_batch_is_written_by_its_generation_not_by_what_the_seal_returned(self):  # fail closed
         gen = cgsync.Gen(1, self.root, 'sqlcipher', 'ab' * 8)
         with mock.patch.object(crypto, 'seal', return_value=b''):
-            cgsync._write(gen, 1, ['{"x":1}'], 'AIJ-HP', b'k' * 32)
+            cgsync._write(gen, 1, ['{"x":1}'], 'HOMEPC', b'k' * 32)
         with open(os.path.join(self.root, 'batch-00000001.sqlcipher'), 'rb') as f:
             self.assertEqual(f.read(), b'')
 
@@ -1201,7 +1201,7 @@ class SyncTest(unittest.TestCase):
         b.fact('open.md', 'открыто')
         b.sync()
         r = a.sync(key=key)
-        self.assertEqual([(e['where'], e['error']) for e in r['errors']], [('pull', t('peer_plain', machine='MTLAPTOP'))])
+        self.assertEqual([(e['where'], e['error']) for e in r['errors']], [('pull', t('peer_plain', machine='NOTEBOOK'))])
         self.assertEqual((r['memory'], os.listdir(a.memory)), ({'pushed': 0, 'pulled': 0, 'conflicts': 0}, []))
         b.fact('open.md', 'открыто снова')
         self.assertEqual(b.sync()['memory']['pulled'], 0)  # and the other way round: B, with no key, takes nothing sealed
@@ -1212,7 +1212,7 @@ class SyncTest(unittest.TestCase):
         a.fact('f.md', 'v1')
         a.sync(key=secrets.token_bytes(32))
         r = b.sync(key=secrets.token_bytes(32))
-        self.assertEqual([(e['where'], e['error']) for e in r['errors']], [('pull', t('peer_other_key', machine='AIJ-HP'))])
+        self.assertEqual([(e['where'], e['error']) for e in r['errors']], [('pull', t('peer_other_key', machine='HOMEPC'))])
         self.assertEqual((r['memory']['pulled'], os.listdir(b.memory)), (0, []))
 
     def test_memory_swapped_projects(self):
@@ -1232,12 +1232,12 @@ class SyncTest(unittest.TestCase):
         os.rename(os.path.join(folder, 'swap'), os.path.join(folder, y))
         r = b.sync(key=key)
         self.assertEqual([(e['where'], e['machine'], e['error']) for e in r['errors']],
-                         [('memory', 'AIJ-HP', t('memory_broken', machine='AIJ-HP', e='ValueError: ' + t('seal_broken')))])
+                         [('memory', 'HOMEPC', t('memory_broken', machine='HOMEPC', e='ValueError: ' + t('seal_broken')))])
         self.assertEqual((r['memory']['pulled'], os.listdir(b.memory)), (0, []))
 
     def test_memory_file_that_is_not_what_it_says_writes_no_fact(self):
         key = secrets.token_bytes(32)
-        good = {'type': 'memory', 'machine': 'AIJ-HP', 'gen': 1}
+        good = {'type': 'memory', 'machine': 'HOMEPC', 'gen': 1}
         for tag, header, entries in (('machine', {**good, 'machine': 'THIRD'}, [('f.md', b'x')]),
                                      ('gen', {**good, 'gen': 2}, [('f.md', b'x')]),
                                      ('type', {**good, 'type': 'batch'}, [('f.md', b'x')]),
@@ -1251,7 +1251,7 @@ class SyncTest(unittest.TestCase):
                 a.sync(key=key)
                 self.sealed_memory(a, key, header, entries)
                 r = b.sync(key=key)
-                self.assertEqual([(e['where'], e['machine']) for e in r['errors']], [('memory', 'AIJ-HP')])
+                self.assertEqual([(e['where'], e['machine']) for e in r['errors']], [('memory', 'HOMEPC')])
                 self.assertEqual((r['memory'], os.listdir(b.memory)), ({'pushed': 0, 'pulled': 0, 'conflicts': 0}, []))
                 self.assertFalse(os.path.exists(os.path.join(os.path.dirname(b.memory), 'evil.md')))  # out of the folder, where '..' leads
 
@@ -1267,7 +1267,7 @@ class SyncTest(unittest.TestCase):
         b.fact('f3.md', 'v3')
         b.sync(key=key)
         r = a.sync(key=key)
-        self.assertEqual([(e['where'], e['machine']) for e in r['errors']], [('memory', 'AIJ-HP')])
+        self.assertEqual([(e['where'], e['machine']) for e in r['errors']], [('memory', 'HOMEPC')])
         self.assertEqual((r['memory']['pushed'], r['memory']['pulled']), (0, 1))  # the others' facts come all the same
         with open(path, 'rb') as f:
             self.assertEqual(f.read(), b'not a sealed file')
@@ -1298,8 +1298,8 @@ class SyncTest(unittest.TestCase):
 
     def test_write_facts_adds_to_a_sealed_file_and_touches_it_only_on_a_change(self):
         key, gen = secrets.token_bytes(32), cgsync.Gen(1, os.path.join(self.root, 'gen-0001'), 'cryptography', 'ab' * 8)
-        write = lambda facts: cgsync._write_facts(gen, 'AIJ-HP', 'proj', key, facts)
-        read = lambda: cgsync._read_facts(gen, 'AIJ-HP', 'proj', key)
+        write = lambda facts: cgsync._write_facts(gen, 'HOMEPC', 'proj', key, facts)
+        read = lambda: cgsync._read_facts(gen, 'HOMEPC', 'proj', key)
         write({})
         self.assertEqual((read(), os.path.exists(gen.path)), ({}, False))  # nothing to say, no file
         write({'a.md': b'one', 'b.md': 'два'.encode('utf-8')})
@@ -1319,7 +1319,7 @@ class SyncTest(unittest.TestCase):
         self.a.sync()
         folder = os.path.join(self.memory_dir(self.a), cgsync.project_folder('~\\work\\proj'))
         self.assertEqual(os.listdir(folder), ['f.md'])
-        self.assertFalse(os.path.exists(os.path.join(self.share, 'AIJ-HP', 'memory')))
+        self.assertFalse(os.path.exists(os.path.join(self.share, 'HOMEPC', 'memory')))
         self.assertEqual(self.b.sync()['memory'], {'pushed': 0, 'pulled': 1, 'conflicts': 0})
 
     def test_no_memory_step_while_the_new_generation_waits(self):
@@ -1334,20 +1334,20 @@ class SyncTest(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k not in ('PYTHONIOENCODING', 'PYTHONUTF8')}
         run = lambda c, *args: json.loads(subprocess.run([sys.executable, CG, '--db', c.db, '--projects', c.projects, '--lang', 'ru', *args],
                                                          capture_output=True, env=env).stdout.decode('utf-8'))
-        out = run(self.a, 'sync', '--sync-dir', self.share, '--machine', 'AIJ-HP', '--max-seconds', '30')
+        out = run(self.a, 'sync', '--sync-dir', self.share, '--machine', 'HOMEPC', '--max-seconds', '30')
         self.assertEqual(set(out) >= {'pushed', 'pulled', 'peers', 'skipped_vectors', 'errors', 'memory'}, True)
         self.assertEqual((out['pushed'], out['errors']), (2, []))
-        out = run(self.b, 'sync', '--sync-dir', self.share, '--machine', 'MTLAPTOP', '--memory-dir', self.b.memory, '--project-cwd', self.b.cwd)
-        self.assertEqual((out['pulled'], out['peers'], out['memory']), (2, {'AIJ-HP': 1}, {'pushed': 0, 'pulled': 0, 'conflicts': 0}))
-        out = run(self.b, 'sync', '--sync-dir', os.path.join(self.root, 'off'), '--machine', 'MTLAPTOP')
+        out = run(self.b, 'sync', '--sync-dir', self.share, '--machine', 'NOTEBOOK', '--memory-dir', self.b.memory, '--project-cwd', self.b.cwd)
+        self.assertEqual((out['pulled'], out['peers'], out['memory']), (2, {'HOMEPC': 1}, {'pushed': 0, 'pulled': 0, 'conflicts': 0}))
+        out = run(self.b, 'sync', '--sync-dir', os.path.join(self.root, 'off'), '--machine', 'NOTEBOOK')
         self.assertIn('папка синхронизации недоступна', out['errors'][0]['error'])
-        out = run(self.b, 'sync', '--sync-dir', self.share, '--machine', 'MTLAPTOP', '--skip-batch', 'AIJ-HP', '7')
-        self.assertIn('AIJ-HP ждёт на пачке 2, а не 7', out['error'])  # a typo skips nothing
-        out = run(self.b, 'sync', '--sync-dir', self.share, '--machine', 'MTLAPTOP', '--skip-batch', 'AIJ-HP', '2')
+        out = run(self.b, 'sync', '--sync-dir', self.share, '--machine', 'NOTEBOOK', '--skip-batch', 'HOMEPC', '7')
+        self.assertIn('HOMEPC ждёт на пачке 2, а не 7', out['error'])  # a typo skips nothing
+        out = run(self.b, 'sync', '--sync-dir', self.share, '--machine', 'NOTEBOOK', '--skip-batch', 'HOMEPC', '2')
         self.assertEqual(out['errors'], [])
-        st = run(self.b, 'status', '--machine', 'MTLAPTOP')['sync']
-        self.assertEqual(([p['skipped'] for p in st['peers'] if p['machine'] == 'AIJ-HP'], st['last']['errors']), ([[2]], 0))
-        self.assertEqual(run(self.b, 'sync', '--sync-dir', self.share, '--skip-batch', 'AIJ-HP', 'x')['error'].split(':')[0], 'ValueError')
+        st = run(self.b, 'status', '--machine', 'NOTEBOOK')['sync']
+        self.assertEqual(([p['skipped'] for p in st['peers'] if p['machine'] == 'HOMEPC'], st['last']['errors']), ([[2]], 0))
+        self.assertEqual(run(self.b, 'sync', '--sync-dir', self.share, '--skip-batch', 'HOMEPC', 'x')['error'].split(':')[0], 'ValueError')
         pos = self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'")
         self.assertEqual(run(self.a, 'forget', '--conv', 'SA', '--pos', str(pos)), {'forgotten': 1})
 

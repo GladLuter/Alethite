@@ -564,10 +564,10 @@ class MemdbTest(unittest.TestCase):
         old.executemany('INSERT INTO chunks(text, conv, pos, ts, kind) VALUES(?, ?, ?, ?, ?)',
                         [('да', 'S', 1, TS, 'owner'), ('да', 'S', 2, TS, 'owner'), ('итог', 'A', 1, TS, 'report')])
         old.execute("INSERT INTO vecs VALUES(1, 0, 'S', X'01')")
-        old.executemany('INSERT INTO conv_projects VALUES(?, ?)', [('S', 'c:\\users\\aij\\proj'), ('A', 'c:\\_git\\x')])
+        old.executemany('INSERT INTO conv_projects VALUES(?, ?)', [('S', 'c:\\users\\ann\\proj'), ('A', 'c:\\_git\\x')])
         old.commit()
         old.close()
-        conn = connect(path, home='C:\\Users\\AIJ')
+        conn = connect(path, home='C:\\Users\\Ann')
         self.addCleanup(conn.close)
         self.assertEqual(conn.execute('SELECT id, conv, cls, n, origin, pushed FROM keys ORDER BY id').fetchall(),
                          [(1, 'S', 'owner', 0, None, 0), (2, 'S', 'owner', 1, None, 0), (3, 'A', 'sub', 0, None, 0)])

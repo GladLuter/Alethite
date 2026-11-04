@@ -53,7 +53,7 @@ All commands are for PowerShell.
    ```
    After that, new records are embedded by themselves at the start of a session, up to 2 minutes at a time.
    - **Laptop:** keep it awake during the run. On the charger it falls asleep without input and stops the run. After waking up, simply run the command again.
-   - **Built-in Intel graphics (Iris Xe):** the one-off run is about twice as fast on it, and the vectors are the same (measured 2026-10-19 on MTLAPTOP: 2.44 long pieces per second against 1.15 on the processor). Ollama sees such a card only when started with `OLLAMA_IGPU_ENABLE=1`. Stop the usual Ollama in the tray, then in a PowerShell window:
+   - **Built-in Intel graphics (Iris Xe):** the one-off run is about twice as fast on it, and the vectors are the same (measured 2026-10-19 on a laptop: 2.44 long pieces per second against 1.15 on the processor). Ollama sees such a card only when started with `OLLAMA_IGPU_ENABLE=1`. Stop the usual Ollama in the tray, then in a PowerShell window:
      ```powershell
      $env:OLLAMA_IGPU_ENABLE = '1'; ollama serve
      ```
@@ -91,14 +91,6 @@ The mod used to be called Claude-CacheGuard, and so was its repository. A comput
 
 Values that you set through `/config` under the old plugin are not carried over. Check them in the new plugin and set again what you still need. What lies in `settings.json` moves with the folder.
 
-**The second computer and the laptop.** The history of the old repository was rewritten, so an old clone cannot pull any more. But it is still needed for now: the old mod points at it, and the old Task Scheduler task may run `cg.py` from there until step 4. The order is:
-- On the laptop only: first accept the invitation to the private repository `GladLuter/Alethite`.
-- Clone `GladLuter/Alethite` into `C:\_git\Alethite`, next to the old clone ("Installing", step 1).
-- Do steps 0 to 5 above. In step 5 the old path is the folder of the old clone on this computer.
-- Delete the old clone after `/al-health` checks out, and only if nothing in it is unpushed.
-- Measurement notes. `/al-stats` now writes into the Obsidian folder `Alethite/Замеры`. The old mod (step 0, and any measurement run before a computer moves) still writes into `Claude-CacheGuard/Замеры`, and Obsidian makes that folder again if you renamed it. After the last computer has moved, move those notes into `Alethite/Замеры` and delete what is left of `Claude-CacheGuard/Замеры`, `Сводка.md` included. The next `/al-stats` builds the summary again from the notes of the new folder.
-- Encryption on the second computer is set up afterwards, as a separate step: "Encryption (stage 5)", step 4 (`/al-encrypt join`).
-
 ## Shared memory of two computers (stage 2)
 
 Each computer puts its new conversations, vectors and auto-memory facts into a shared folder and takes the other's from there.
@@ -120,7 +112,7 @@ What else to know:
   - Facts created on this computer go to the shared folder.
   - The other computer's facts are copied into the auto-memory folder when they are not there, and a pointer line is added to `MEMORY.md`.
   - A file of your own with the same name is never overwritten: the other version is put beside it as `name--COMPUTER.md`. An imported fact you deleted does not come back.
-- **A project** is recognised by its path without the home folder: `C:\Users\AIJ\work\x` and `C:\Users\gladl\work\x` are one project. Paths outside the profile (`C:\_git\…`) match anyway.
+- **A project** is recognised by its path without the home folder: `C:\Users\Ann\work\x` and `C:\Users\alice\work\x` are one project. Paths outside the profile (`C:\_git\…`) match anyway.
 - **A broken batch** (a dropped network, a disk failure) stops taking in only from its computer; the error is shown in `/al-health` at every sync. If the batch cannot be restored: `/al-sync skip <computer> <number>`. The skip is shown in `/al-health`.
 - **Deleting a record** (say, a secret the filter missed) is only possible explicitly, and the deletion reaches the other computer:
   ```powershell

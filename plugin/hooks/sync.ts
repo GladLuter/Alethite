@@ -39,7 +39,7 @@ export const syncArgs = (syncDir: string, model: string, memoryDir: string | nul
   ...(skip.length ? ['--skip-batch', ...skip] : []),
 ]
 
-// `/al-sync skip MTLAPTOP 12` → ['MTLAPTOP', '12']; [] for a plain run; null when skip is asked without a computer and a number.
+// `/al-sync skip NOTEBOOK 12` → ['NOTEBOOK', '12']; [] for a plain run; null when skip is asked without a computer and a number.
 export const skipArgs = (args: string): string[] | null => {
   const words = args.trim().split(/\s+/).filter(Boolean)
   if (words.length === 0) return []

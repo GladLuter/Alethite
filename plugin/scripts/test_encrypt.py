@@ -55,7 +55,7 @@ class EncryptTest(unittest.TestCase):
         p = mock.patch('urllib.request.build_opener', side_effect=OSError)  # no Ollama to ask for a digest
         p.start()
         self.addCleanup(p.stop)
-        self.a, self.b = self.computer('AIJ-HP'), self.computer('MTLAPTOP')
+        self.a, self.b = self.computer('HOMEPC'), self.computer('NOTEBOOK')
         self.a.say('conv-a', 'ёжик в тумане на i3', 'ответ про ёжика')
         self.b.say('conv-b', 'кэш протух на ноутбуке', 'ответ про кэш')
         for c in (self.a, self.b):
@@ -202,7 +202,7 @@ class EncryptTest(unittest.TestCase):
                 crypto.save_key(crypto.settings_path(a.db), key)
             with self.assertRaises(ValueError) as cm:
                 self.on(a, ui)
-            self.assertEqual(str(cm.exception), t('encrypt_use_join', machine='MTLAPTOP'))
+            self.assertEqual(str(cm.exception), t('encrypt_use_join', machine='NOTEBOOK'))
         self.assertEqual((ui.shown, ui.asked, crypto.is_encrypted(a.db), os.path.exists(self.own(a))), ([], [], False, False))
 
     def test_on_refuses_key_missing(self):
@@ -225,7 +225,7 @@ class EncryptTest(unittest.TestCase):
         again = FakeUI()
         with self.assertRaises(ValueError) as cm:
             self.on(a, again)
-        self.assertEqual(str(cm.exception), t('encrypt_use_join', machine='AIJ-HP'))
+        self.assertEqual(str(cm.exception), t('encrypt_use_join', machine='HOMEPC'))
         self.assertEqual((again.shown, again.asked, self.key(a), sorted(os.listdir(self.own(a)))), ([], [], None, ['gen-0001']))
         self.assertTrue(self.join(a, code)['done'])
         self.assertEqual(a.rows(), 2)
@@ -502,7 +502,7 @@ class EncryptTest(unittest.TestCase):
         a, b = self.a, self.b
         self.assertTrue(self.on(a)['done'])
         other = secrets.token_bytes(32)
-        cgsync.start_generation(b.conn, self.own(b), 'MTLAPTOP', 'sqlcipher', other)
+        cgsync.start_generation(b.conn, self.own(b), 'NOTEBOOK', 'sqlcipher', other)
         with self.assertRaises(ValueError) as cm:
             self.join(a, crypto.make_code(other))
         self.assertEqual(str(cm.exception), t('join_other_key_here'))
@@ -512,7 +512,7 @@ class EncryptTest(unittest.TestCase):
         a, b = self.a, self.b
         self.assertTrue(self.on(a)['done'])
         other = secrets.token_bytes(32)
-        cgsync.start_generation(b.conn, self.own(b), 'MTLAPTOP', 'sqlcipher', other)
+        cgsync.start_generation(b.conn, self.own(b), 'NOTEBOOK', 'sqlcipher', other)
         crypto.save_key(crypto.settings_path(a.db), None)
         with self.assertRaises(ValueError) as cm:
             self.join(a, crypto.make_code(other))
@@ -563,7 +563,7 @@ class EncryptTest(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(self.own(a))), ['gen-0002'])
         self.assertEqual(sorted(os.listdir(gen.path)), ['batch-00000001.jsonl.gz', 'generation.json'])
         self.assertEqual(ui.asked, [t('dlg_delete_old_share', n=1)])
-        self.assertEqual(b.sync(key=key)['errors'], [{'where': 'pull', 'machine': 'AIJ-HP', 'error': t('peer_plain', machine='AIJ-HP')}])
+        self.assertEqual(b.sync(key=key)['errors'], [{'where': 'pull', 'machine': 'HOMEPC', 'error': t('peer_plain', machine='HOMEPC')}])
         self.assertEqual(encrypt.status(a.db), {'on': False, 'db': 'plain', 'key': 'missing', 'notes': []})
 
     def test_off_keeps_the_old_share_when_told_to(self):

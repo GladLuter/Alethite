@@ -203,12 +203,12 @@ class TranscriptsTest(unittest.TestCase):
         self.assertEqual(project_key(r'C:\_git\X\.claude\worktrees\wf-1'), project_key('C:/_git/X'))
         self.assertNotEqual(project_key(r'C:\_git\X'), project_key(r'C:\_git\Y'))
 
-    def test_project_key_under_two_profiles_is_one(self):  # stage 2 §5.4: the i3 (C:\Users\AIJ) and the laptop (C:\Users\gladl)
-        i3, laptop = r'C:\Users\AIJ', r'C:\Users\gladl'
-        self.assertEqual(project_key(r'C:\Users\AIJ\work\proj', i3), r'~\work\proj')
-        self.assertEqual(project_key(r'c:\users\gladl\Work\Proj\.claude\worktrees\w1', laptop), r'~\work\proj')
+    def test_project_key_under_two_profiles_is_one(self):  # stage 2 §5.4: the i3 (C:\Users\Ann) and the laptop (C:\Users\alice)
+        i3, laptop = r'C:\Users\Ann', r'C:\Users\alice'
+        self.assertEqual(project_key(r'C:\Users\Ann\work\proj', i3), r'~\work\proj')
+        self.assertEqual(project_key(r'c:\users\alice\Work\Proj\.claude\worktrees\w1', laptop), r'~\work\proj')
         self.assertEqual(project_key(i3, i3 + '\\'), '~')
-        self.assertEqual(project_key(r'C:\Users\AIJ2\proj', i3), r'c:\users\aij2\proj')  # a prefix of the name is not the folder
+        self.assertEqual(project_key(r'C:\Users\Ann2\proj', i3), r'c:\users\ann2\proj')  # a prefix of the name is not the folder
         self.assertEqual(project_key(r'C:\_git\X', i3), project_key(r'C:\_git\X', laptop))  # outside the profile: the path itself
         self.assertEqual(project_key('/home/a/proj', '/home/a'), os.path.join('~', 'proj'))  # ~\\proj on Windows
         self.assertEqual(project_key('rel', '/nowhere'), project_key(os.path.abspath('rel'), '/nowhere'))  # a relative folder is made absolute
@@ -222,8 +222,8 @@ class TranscriptsTest(unittest.TestCase):
         # two names for one folder (another case, a worktree) are merged, and no key comes twice
         two = {r'C:\new\proj': [r'C:\old\proj', r'C:\new\proj'], r'c:\NEW\PROJ\.claude\worktrees\w': [r'C:\old\proj', r'C:\x']}
         self.assertEqual(project_keys(r'C:\new\proj', two), [project_key(r'C:\new\proj'), project_key(r'C:\old\proj'), project_key(r'C:\x')])
-        i3 = r'C:\Users\AIJ'  # the keys of the old folders are made the way the owner's own are
-        self.assertEqual(project_keys(r'C:\Users\AIJ\new', {r'C:\Users\AIJ\new': [r'C:\Users\AIJ\old']}, i3), [r'~\new', r'~\old'])
+        i3 = r'C:\Users\Ann'  # the keys of the old folders are made the way the owner's own are
+        self.assertEqual(project_keys(r'C:\Users\Ann\new', {r'C:\Users\Ann\new': [r'C:\Users\Ann\old']}, i3), [r'~\new', r'~\old'])
 
     def test_find_session_and_last_usage(self):
         u1 = {'input_tokens': 9, 'cache_read_input_tokens': 9, 'cache_creation_input_tokens': 9, 'output_tokens': 9}

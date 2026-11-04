@@ -77,12 +77,12 @@ class TaskTest(unittest.TestCase):
         self.dir = d.name
 
     def test_the_task_runs_cg_py_hidden_every_n_minutes_one_at_a_time(self):
-        root = ET.fromstring(job.task_xml('C:\\Py\\pythonw.exe', '"C:\\cg\\cg.py" maintain', 30, datetime.datetime(2026, 10, 20, 9, 0), 'PC\\AIJ'))
+        root = ET.fromstring(job.task_xml('C:\\Py\\pythonw.exe', '"C:\\cg\\cg.py" maintain', 30, datetime.datetime(2026, 10, 20, 9, 0), 'PC\\Ann'))
         find = lambda path: root.find(path, NS).text
         self.assertEqual(find('t:Triggers/t:TimeTrigger/t:Repetition/t:Interval'), 'PT30M')
         self.assertEqual(find('t:Triggers/t:TimeTrigger/t:StartBoundary'), '2026-10-20T09:00:00')
         self.assertEqual((find('t:Actions/t:Exec/t:Command'), find('t:Actions/t:Exec/t:Arguments')), ('C:\\Py\\pythonw.exe', '"C:\\cg\\cg.py" maintain'))
-        self.assertEqual((find('t:Principals/t:Principal/t:UserId'), find('t:Principals/t:Principal/t:LogonType')), ('PC\\AIJ', 'InteractiveToken'))
+        self.assertEqual((find('t:Principals/t:Principal/t:UserId'), find('t:Principals/t:Principal/t:LogonType')), ('PC\\Ann', 'InteractiveToken'))
         settings = {e.tag.split('}')[1]: e.text for e in root.find('t:Settings', NS)}
         self.assertEqual((settings['MultipleInstancesPolicy'], settings['Hidden'], settings['DisallowStartIfOnBatteries'], settings['StartWhenAvailable']),
                          ('IgnoreNew', 'true', 'false', 'true'))
@@ -240,14 +240,14 @@ class MaintainTest(unittest.TestCase):
         return cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'maintain'])
 
     def run_job(self, battery=False):
-        with mock.patch.dict(os.environ, {'COMPUTERNAME': 'AIJ-HP'}):
+        with mock.patch.dict(os.environ, {'COMPUTERNAME': 'HOMEPC'}):
             return cg.maintain(self.args(), embed_fn=fake, battery=lambda: battery, digest=lambda m: None)
 
     def test_one_run_indexes_embeds_and_syncs_with_the_mods_settings(self):
         out = self.run_job()
         self.assertEqual((out['index'], out['embed'], out['sync'], out['errors']),
                          ({'rows': 2, 'errors': 0}, {'done': 2, 'pending': 0, 'errors': 0}, {'pushed': 2, 'pulled': 0, 'errors': 0}, []))
-        self.assertTrue(os.path.exists(os.path.join(self.share, 'AIJ-HP', 'batch-00000001.jsonl.gz')))  # the quotes of "Copy as path" went
+        self.assertTrue(os.path.exists(os.path.join(self.share, 'HOMEPC', 'batch-00000001.jsonl.gz')))  # the quotes of "Copy as path" went
         conn = memdb.connect(self.db)
         self.addCleanup(conn.close)
         self.assertEqual(json.loads(memdb.meta(conn, 'job_last'))['sync']['pushed'], 2)  # kept for /al-health
@@ -285,7 +285,7 @@ class MaintainTest(unittest.TestCase):
         def down(texts, model, timeout=None):
             raise RuntimeError('Ollama не отвечает: тест')
 
-        with mock.patch.dict(os.environ, {'COMPUTERNAME': 'AIJ-HP'}):
+        with mock.patch.dict(os.environ, {'COMPUTERNAME': 'HOMEPC'}):
             out = cg.maintain(self.args(), embed_fn=down, battery=lambda: False, digest=lambda m: None)
         self.assertEqual(out['errors'][0]['where'], 'embed')
         self.assertIn('Ollama не отвечает: тест', out['errors'][0]['error'])
@@ -300,7 +300,7 @@ class MaintainTest(unittest.TestCase):
             seen.append(json.loads(memdb.meta(conn, 'job_last')))
             return fake(texts, model, timeout)
 
-        with mock.patch.dict(os.environ, {'COMPUTERNAME': 'AIJ-HP'}):
+        with mock.patch.dict(os.environ, {'COMPUTERNAME': 'HOMEPC'}):
             out = cg.maintain(self.args(), embed_fn=peek, battery=lambda: False, digest=lambda m: None)
         self.assertEqual(seen[0]['errors'], [{'where': 'job', 'error': 'запуск не завершився (зупинено, наприклад, за межею в 30 хвилин)'}])
         self.assertEqual(out['errors'], [])
@@ -323,7 +323,7 @@ class MaintainTest(unittest.TestCase):
 
     def test_the_status_carries_the_last_run(self):
         self.run_job()
-        st = cg._status(SimpleNamespace(db=self.db, machine='AIJ-HP', cwd=None, where=None))
+        st = cg._status(SimpleNamespace(db=self.db, machine='HOMEPC', cwd=None, where=None))
         self.assertEqual(st['job']['sync']['pushed'], 2)
 
     def test_main_runs_without_streams_as_pythonw_starts_it(self):

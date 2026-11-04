@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { END, forgetArg, formatLessons, gateFor, lessonContext, START } from '../hooks/lessons'
 import { T } from '../hooks/text'
 
-const lesson = (id: number, trigger: string | null) => ({ id, conv: 'c', pos: id, ts: '2026-10-20T00:00:00Z', text: `Action: a${id}`, trigger, from: id === 2 ? 'MTLAPTOP' : null })
+const lesson = (id: number, trigger: string | null) => ({ id, conv: 'c', pos: id, ts: '2026-10-20T00:00:00Z', text: `Action: a${id}`, trigger, from: id === 2 ? 'NOTEBOOK' : null })
 
 test('gate: the first lesson whose trigger the command holds, in any case, not one that stopped already, never one without a trigger', () => {
   const all = [lesson(1, null), lesson(2, 'npm publish'), lesson(3, 'NPM PUBLISH --tag')]
@@ -25,7 +25,7 @@ test('context: between the marks, each lesson on one line and at most 600 charac
 })
 
 test('list and forget: one line a lesson with its pos and the computer it came from; forget takes a pos only', () => {
-  expect(formatLessons([lesson(2, null)])).toBe('pos=2 [2026-10-20 MTLAPTOP] Action: a2')
+  expect(formatLessons([lesson(2, null)])).toBe('pos=2 [2026-10-20 NOTEBOOK] Action: a2')
   expect(formatLessons([])).toBe(T.noLessons)
   expect([forgetArg(''), forgetArg(' forget 12 '), forgetArg('forget x'), forgetArg('all')]).toEqual([null, 12, undefined, undefined])
 })

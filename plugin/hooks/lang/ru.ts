@@ -120,7 +120,7 @@ export const ru: Partial<Texts> = {
   cgSyncDescription: 'Синхронизировать память с другими компьютерами сейчас (skip <компьютер> <N>: идти дальше без испорченной пачки)',
   cgSyncHint: '[skip <компьютер> <N>]',
   cgSyncOff: 'al-sync: синхронизация выключена. Укажите общую папку в «syncDir» файла настроек (его путь — в /al-health), затем /reload-plugins.',
-  cgSyncSkipUsage: 'al-sync skip: нужны компьютер и номер пачки, например /al-sync skip MTLAPTOP 12',
+  cgSyncSkipUsage: 'al-sync skip: нужны компьютер и номер пачки, например /al-sync skip NOTEBOOK 12',
   cgSyncDone: (r: { pushed: number; pulled: number; vectors: { pushed: number; pulled: number } }) =>
     `Синхронизация: выложено записей ${r.pushed} (векторов ${r.vectors.pushed}), влито ${r.pulled} (векторов ${r.vectors.pulled})`,
   cgSyncPeers: (parts: string) => `Компьютеры, последняя влитая пачка: ${parts}`,
