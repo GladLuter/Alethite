@@ -246,6 +246,7 @@ test('new worker: a failed handoff leaves the chat alone, tells why and is kept 
   const log: string[] = []
   const store = new Map<string, unknown>()
   on('ui.toast', (_: unknown, e: { text: string }) => (toasts.push(e.text), { value: undefined }))
+  on('session.root', () => ({ value: 'C:/w' }))
   wire(on, [], () => ({ value: usage }), (_, e) => (e.argv.includes('handoff') ? { value: { exitCode: 1, stdout: '{"error":"no transcript"}', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } : noTurn()), store)
   box(on, 'x', log)
   const ui = await mountBand($)
@@ -983,7 +984,7 @@ test('background: the sync follows the index and the vectors, 60 s in cg.py, 120
   await m.clock.advance(3_000)
   const steps = m.runs.filter(r => r.argv[0] !== 'last-turn').map(r => [verb(r.argv)[0], r.timeoutMs])
   // the lessons are read at the start and again after the sync, which may have brought the other computer's (stage 4)
-  expect(steps).toEqual([['lessons', 120_000], ['index', 600_000], ['embed', 180_000], ['sync', 120_000], ['lessons', 120_000]])
+  expect(steps).toEqual([['lessons', 120_000], ['index', 600_000], ['embed', 180_000], ['sync', 120_000], ['lessons', 120_000], ['status', 120_000], ['savings', 120_000]])
   expect(ofCg(m, 'sync')[0]!.argv).toContain('--max-seconds')
   expect(m.toasts).toEqual([])
 })
@@ -1389,7 +1390,7 @@ test('/al-index-dir: a run the host stopped at its time limit says so and what t
 
 test('index notice: any answer of cg.py that carries one gives a toast when it differs from the last one shown, and an answer with none forgets it', async ($, on) => {
   let notice: string | undefined = 'the index of the test is not in D:/one'
-  const m = await started($, on, a => (a[0] === 'index' ? ran(JSON.stringify({ files: 0, rows: 0, convs: 0, seconds: 0, errors: [], index_notice: notice })) : ran('{}')))
+  const m = await started($, on, a => (ran(JSON.stringify({ ...(a[0] === 'index' && { files: 0, rows: 0, convs: 0, seconds: 0, errors: [] }), index_notice: notice }))))
   const index = () => ($ as any).command.run({ command: 'al-index', args: '' })
   await index()
   await index()
@@ -1495,4 +1496,29 @@ test('home_notes: a note beside an error answer is told as well', async ($, on) 
   const m = await started($, on, a => (a[0] === 'index' ? refused : ran('{}')))
   await ($ as any).command.run({ command: 'al-index', args: '' })
   expect(m.toasts).toEqual([T.toast('a note beside an error'), T.toast(T.failed('al-index', 'boom'))])
+})
+
+const savingsJson = ran(JSON.stringify({ last: null, worker: { usd: 0, links: 0, calls: 0 }, project: null }))
+
+test('band data: status and savings are asked at the start and after /al-sync', { options: { syncDir: 'D:\s' } }, async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'savings' ? savingsJson : a[0] === 'sync' ? synced() : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')))
+  await m.clock.advance(3_000)
+  const asked = () => [ofCg(m, 'status').length, ofCg(m, 'savings').length]
+  expect(ofCg(m, 'savings')[0]!.argv).toEqual(['savings', '--session', 'id', '--cwd', 'C:/w'])
+  expect(ofCg(m, 'status')[0]!.argv).toEqual(['status', '--cwd=C:/w'])
+  const [s0, v0] = asked()
+  await ($ as any).command.run({ command: 'al-sync', args: '' })
+  expect(asked()).toEqual([s0 + 1, v0 + 1])
+})
+
+test('band data: a failed savings is noted once, status still arrives', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'savings' ? failed('boom') : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')))
+  await m.clock.advance(3_000)
+  expect(m.store.get('lastError')).toMatchObject({ where: 'band', msg: 'boom' })
+  m.store.delete('lastError')
+  await m.clock.advance(600_000)
+  expect(ofCg(m, 'savings').length).toBeGreaterThanOrEqual(2)
+  expect(ofCg(m, 'status').length).toBeGreaterThanOrEqual(2)
+  expect(m.store.get('lastError')).toBeUndefined() // noted once per load
+  expect(m.toasts).toEqual([])
 })

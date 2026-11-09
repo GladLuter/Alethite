@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Snap } from '../types'
+import type { Savings, Snap } from '../types'
 import { bandLines, isStale, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
@@ -31,6 +31,10 @@ const hiddenId = atom({ plugin: 'alethite', key: 'hiddenId' } as const, '')
 const forcedId = atom({ plugin: 'alethite', key: 'forcedId' } as const, '')
 const isArmed = atom({ plugin: 'alethite', key: 'isArmed' } as const, false)
 const isBusy = atom({ plugin: 'alethite', key: 'isBusy' } as const, false)
+const info = atom({ plugin: 'alethite', key: 'info' } as const, null)
+const isDetails = atom({ plugin: 'alethite', key: 'isDetails' } as const, false)
+const calmId = atom({ plugin: 'alethite', key: 'calmId' } as const, '')
+const delayedAt = atom({ plugin: 'alethite', key: 'delayedAt' } as const, null)
 
 // The helpers below take `$` and so stay in this file: the loader follows `$` only into functions declared here, never across an import.
 
@@ -228,7 +232,7 @@ const refresh = async ($: EngineInterface, python: string) => {
     // a resumed chat has no live token count until its first reply, so fall back to the last one stored
     tokens: usage.context.tokens ?? rec?.tokens ?? null,
     at: rec?.at ?? null,
-    limits: usage.rateLimits.map(({ kind, percentUsed }) => ({ kind, percentUsed })),
+    limits: usage.rateLimits.map(({ kind, percentUsed, resetsAt }) => ({ kind, percentUsed, resetsAt })),
   }
   showStatus($, statusText(fresh.tokens, fresh.at, now))
   await update($, snap, () => fresh)
@@ -294,6 +298,28 @@ const runStats = async ($: EngineInterface, python: string, days: number, compre
   return `${figures}\n\n${T.cgStatsSent(sent.sent)}`
 }
 
+// What the band's «База» and «сэкономлено» draw from: asked of cg.py when something changes, never while drawing. A field that did not come is null;
+// the first failure of a load goes to /al-health, no toast (a broken index would repeat it every 10 minutes).
+let isInfoNoted = false
+const refreshInfo = async ($: EngineInterface, python: string) => {
+  try {
+    const [id, root] = await Promise.all([$.session.id(), $.session.root()])
+    const ask = (args: string[]) =>
+      runCg($, python, args).catch(async (err: unknown) => {
+        // an older error is the first cause (a broken index fails these too): it stays, and this one waits for the next run
+        if (!isInfoNoted && (await $.store.get('lastError')) === undefined) {
+          await noteError($, 'band', err)
+          isInfoNoted = true
+        }
+        return null
+      })
+    const [status, savings] = await Promise.all([ask(['status', `--cwd=${root}`]), ask(['savings', '--session', id, '--cwd', root])])
+    await update($, info, () => ({ status, savings: savings as Savings | null }))
+  } catch (err) {
+    await noteError($, 'band', err)
+  }
+}
+
 // "Новый работник": binds launch() to the engine through closures made here. One launch at a time.
 const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill', compression: string) => {
   let wasBusy = false
@@ -334,6 +360,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
     await update($, isArmed, () => false)
     await update($, isBusy, () => false)
     await guarded($, 'launch', () => refresh($, python))
+    await refreshInfo($, python)
   }
 }
 
@@ -391,6 +418,7 @@ export const register: Register = (on, options) => {
     $.clock.every(30_000, () => void guarded($, 'timer', () => refresh($, python)))
     // a chat open for hours learns of a lesson saved in another chat or brought by the job's sync
     $.clock.every(600_000, () => void lessonsOr($, python, lessonList).then(l => void (lessonList = l)))
+    $.clock.every(600_000, () => void refreshInfo($, python))
     // session.end has 1.5 s, too little to index: a closed chat is picked up here, or by the next recall. Never awaited, so session.start is not held.
     $.clock.after(
       3_000,
@@ -399,6 +427,7 @@ export const register: Register = (on, options) => {
           if (failed && !isCatchUpToasted) toast($, T.catchUpFailed(failed))
           if (failed) isCatchUpToasted = true
           lessonList = await lessonsOr($, python, lessonList) // the sync may have brought the other computer's
+          await refreshInfo($, python)
         }),
     )
     await guarded($, 'session.start', () => refresh($, python))
@@ -522,6 +551,7 @@ export const register: Register = (on, options) => {
     try {
       const i = await runCg($, python, ['index', ...(e.args.trim() === 'rebuild' ? ['--rebuild'] : [])], 600_000)
       await indexErrors($, 'al-index', i.errors as IndexError[], true)
+      await refreshInfo($, python)
       return { text: T.cgIndexDone(i) }
     } catch (err) {
       await fail($, 'al-index', err)
@@ -536,6 +566,7 @@ export const register: Register = (on, options) => {
     try {
       const r = await runSync($, python, syncDir, embedModel, shareCipher, skip)
       lessonList = await lessonsOr($, python, lessonList) // the other computer's lessons, if it brought any
+      await refreshInfo($, python)
       if (r.errors.length) {
         // the reply lists them all; the toast and /al-health keep the first one for when the reply has scrolled away
         toast($, T.syncErrors(r.errors.length))
@@ -565,6 +596,7 @@ export const register: Register = (on, options) => {
     try {
       if (!isState) toast($, T.encryptWindow)
       const r = await runCg($, python, args, isState ? 120_000 : 600_000)
+      if (!isState) await refreshInfo($, python)
       return { text: isState ? encryptHealth(r as unknown as EncryptStatus, shareCipher).join('\n') : encryptReply(r as unknown as EncryptResult) }
     } catch (err) {
       // cut at the time limit: not "Python did not start" (what runCg says of any failure of the process), but what to do
@@ -579,7 +611,9 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'al-index-dir' }, async ($, e) => {
     try {
       if (indexDirArgs(e.args).length === 1) toast($, T.indexDirWindow) // only the run without a path opens the window
-      return { text: indexDirReply((await runCg($, python, indexDirArgs(e.args), 600_000)) as unknown as IndexDirResult) }
+      const r = (await runCg($, python, indexDirArgs(e.args), 600_000)) as unknown as IndexDirResult
+      await refreshInfo($, python)
+      return { text: indexDirReply(r) }
     } catch (err) {
       const cut = isTimeout(message(err)) ? T.indexDirTimeout : undefined
       await fail($, 'al-index-dir', cut ?? err)
