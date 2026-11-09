@@ -27,7 +27,7 @@ test('fitTokens: saved goes first, then send, base stays', () => {
   expect(fitTokens(t, 200).length).toBe(5)
   expect(fitTokens(t, 55).map(x => x.key)).toEqual(['size', 'cache', 'send', 'base'])
   expect(fitTokens(t, 40).map(x => x.key)).toEqual(['size', 'cache', 'base'])
-  expect(fitTokens(t, 10).map(x => x.key)).toContain('base')
+  expect(fitTokens(t, 10).map(x => x.key)).toEqual(['size', 'cache', 'base'])
 })
 test('money: saved is plain, dearer is an error', () => {
   expect(money(1.24)).toEqual({ text: '$1.24' })
@@ -57,6 +57,37 @@ test('columns: limits only when shown and present; unknown is ?, no handoffs is 
   expect(dear.find(c => c.key === 'last')?.tone).toBe('error')
   expect(columns(snap(), info(), true).find(c => c.key === 'worker')?.value).toBe('до $18.70')
 })
+test('columns: sub-lines, project null, reset times, base facts', () => {
+  const col = (c: ReturnType<typeof columns>, key: string) => c.find(x => x.key === key)!
+  const c = columns(snap(), info(), true)
+  expect(col(c, 'chat').value).toBe('120k · кэш ещё 23 мин')
+  expect(col(c, 'chat').sub).toEqual(['сюда ≈ $0.02 / холодно $0.96'])
+  expect(col(c, 'last').value).toBe('$1.24')
+  expect(col(c, 'last').sub).toEqual(['303k → 61k'])
+  expect(col(c, 'worker').sub).toEqual(['передач: 7 · вызовов: 412', 'проект: до $40.10 (17)'])
+  expect(col(c, 'limits').sub).toHaveLength(2)
+  expect(col(c, 'limits').sub[0]).toMatch(/^сброс \d\d:\d\d$/)
+  expect(col(c, 'base').value).toBe('разговоров: 1539')
+  expect(col(c, 'base').sub[0]).toBe('векторы 19557/19557')
+  expect(col(c, 'base').sub[1]).toContain('99')
+  expect(col(c, 'base').sub[1]).toContain('EFS')
+  expect(col(c, 'base').sub[2]).toMatch(/\d\d:\d\d.*\d\d:\d\d/)
+  expect(col(columns(snap(), info({ savings: savings({ project: null }) }), true), 'worker').sub).toEqual(['передач: 7 · вызовов: 412'])
+  expect(col(columns(snap({ tokens: null }), info(), true), 'chat').sub).toEqual([])
+})
+test('columns: a reset on another day carries the weekday; a bad stamp is ?', () => {
+  const far = columns(snap({ limits: [{ kind: 'seven_day', percentUsed: 50, resetsAt: new Date(now + 3 * 86_400_000).toISOString() }] }), info(), true)
+  expect(far.find(x => x.key === 'limits')!.sub[0]).toMatch(/^сброс \S+ \d\d:\d\d$/)
+  const bad = columns(snap({ limits: [{ kind: 'seven_day', percentUsed: 50, resetsAt: 'soon' }] }), info(), true)
+  expect(bad.find(x => x.key === 'limits')!.sub[0]).toBe('сброс ?')
+})
+test('line: dearer worker is an error and has no "saved" prefix', () => {
+  const t = lineTokens(snap(), info({ savings: savings({ worker: { usd: -0.4, links: 2, calls: 3 } }) }), false)
+  const saved = t.find(x => x.key === 'saved')!
+  expect(saved.tone).toBe('error')
+  expect(saved.text).toContain('0.40')
+  expect(saved.text).not.toContain('сэкономлено')
+})
 test('delayAt: the latest reset at 90% or more, plus 5 minutes', () => {
   const at = (ms: number) => new Date(ms).toISOString()
   const day = 86_400_000
@@ -66,6 +97,11 @@ test('delayAt: the latest reset at 90% or more, plus 5 minutes', () => {
   expect(delayAt([{ kind: 'five_hour', percentUsed: 100, resetsAt: 'soon' }], now)).toBeNull()
   expect(delayAt([{ kind: 'five_hour', percentUsed: 100, resetsAt: at(now - 3_600_000) }], now)).toBeNull()
   expect(delayAt([], now)).toBeNull()
+})
+test('columnsSvg: the sample sub-lines are not cut at the default width', () => {
+  const svg = columnsSvg(columns(snap(), info(), true))
+  expect(svg).not.toContain('…')
+  expect(svg).toContain('проект: до $40.10 (17)')
 })
 test('columnsSvg: values, and the error color class', () => {
   const svg = columnsSvg(columns(snap(), info({ savings: savings({ last: { usd: -0.4, old_tokens: 1, new_tokens: 2 } }) }), true))

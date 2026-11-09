@@ -1,6 +1,6 @@
 // Pure side of the band: the one line, the Details columns, the time for the delayed worker. No `$`, so the tests call it directly.
 import type { Info, Snap } from '../types'
-import { cacheState, CACHE_MS, price } from './guard'
+import { cacheState, CACHE_MS, price, size } from './guard'
 import { T } from './text'
 
 export type Tone = 'error' | 'warning' | 'success'
@@ -44,7 +44,7 @@ export const lineTokens = (s: Snap, info: Info | null, isStaleLit: boolean): Tok
   const worker = info?.savings?.worker
   const saved = worker && worker.links > 0 ? money(worker.usd) : undefined
   return [
-    { key: 'size', text: s.tokens === null ? '?' : `${Math.round(s.tokens / 1000)}k`, tone: warn },
+    { key: 'size', text: size(s.tokens), tone: warn },
     { key: 'cache', text: cacheText(s) },
     ...(s.tokens === null ? [] : [{ key: 'send' as const, text: T.sendHere(usd(price(s.model, s.tokens, state === 'expired' || isStaleLit))), tone: warn }]),
     ...(saved ? [{ key: 'saved' as const, text: saved.tone ? saved.text : T.saved(saved.text), tone: saved.tone }] : []),
@@ -60,11 +60,11 @@ export const fitTokens = (tokens: Token[], budget: number) => {
   return out
 }
 
+// No "spent $X" under the chat: Snap carries no cost, so the design's optional line is dropped.
 export const columns = (s: Snap, info: Info | null, showLimits: boolean): Col[] => {
   const state = cacheState(s.at, s.now)
-  const k = s.tokens === null ? '?' : `${Math.round(s.tokens / 1000)}k`
   const chat: Col = {
-    key: 'chat', label: T.col.chat, value: `${k} · ${cacheText(s)}`,
+    key: 'chat', label: T.col.chat, value: `${size(s.tokens)} · ${cacheText(s)}`,
     sub: s.tokens === null ? [] : [`${T.sendHere(usd(price(s.model, s.tokens, false)))} / ${T.coldPrice(usd(price(s.model, s.tokens, true)))}`],
   }
 
@@ -72,7 +72,7 @@ export const columns = (s: Snap, info: Info | null, showLimits: boolean): Col[] 
   const last = sv?.last ? money(sv.last.usd) : undefined
   const lastCol: Col = {
     key: 'last', label: T.col.last, value: sv ? (last?.text ?? '—') : '?', tone: last?.tone,
-    sub: sv?.last ? [`${Math.round(sv.last.old_tokens / 1000)}k → ${Math.round(sv.last.new_tokens / 1000)}k`] : [],
+    sub: sv?.last ? [`${size(sv.last.old_tokens)} → ${size(sv.last.new_tokens)}`] : [],
   }
 
   const w = sv?.worker
@@ -113,8 +113,9 @@ export const columns = (s: Snap, info: Info | null, showLimits: boolean): Col[] 
 // The latest reset among the limits at 90% or more, plus 5 minutes (so the worker does not hit the next limit); null when there is none or it has passed.
 export const delayAt = (limits: Snap['limits'], now: number) => {
   const resets = limits.flatMap(l => (l.percentUsed >= 90 && l.resetsAt ? [Date.parse(l.resetsAt)] : [])).filter(Number.isFinite)
+  if (!resets.length) return null
   const at = Math.max(...resets) + 300_000
-  return resets.length && at > now ? at : null
+  return at > now ? at : null
 }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -125,13 +126,17 @@ const FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-ser
 const STYLE = `.l,.s{fill:#87867f;font:12px ${FONT}}.v{fill:#1f1e1d;font:600 16px ${FONT}}.d{stroke:#1f1e1d;stroke-opacity:.12}.warning{fill:#a86400}.success{fill:#2e7d32}.error{fill:#c62828}@media (prefers-color-scheme:dark){.v{fill:#ecebe6}.d{stroke:#fff;stroke-opacity:.14}.warning{fill:#e3a03d}.success{fill:#6abf69}.error{fill:#ef6a5a}}`
 
 // The Details columns as one SVG for the desktop, where box characters break in a proportional font.
-export const columnsSvg = (cols: Col[], width = 720) => {
-  const colW = width / Math.max(1, cols.length)
+// `width` is the band's real width; columns share it by how much text they hold, and text that still does not fit is cut with "…".
+export const columnsSvg = (cols: Col[], width = 900) => {
+  const need = cols.map(c => Math.max(c.label.length * 7, c.value.length * 9, ...c.sub.map(l => l.length * 6.2)) + 28)
+  const total = need.reduce((a, b) => a + b, 0)
+  const edge = need.map((_, i) => (need.slice(0, i).reduce((a, b) => a + b, 0) * width) / total)
   const height = 52 + 15 * Math.max(1, ...cols.map(c => c.sub.length))
   let body = `<line class="d" x1="0" y1="0.5" x2="${width}" y2="0.5"/>`
   cols.forEach((c, i) => {
-    const x = i * colW + (i === 0 ? 0 : 12)
-    if (i > 0) body += `<line class="d" x1="${i * colW}" y1="14" x2="${i * colW}" y2="${height - 2}"/>`
+    const colW = (need[i] * width) / total
+    const x = edge[i] + (i === 0 ? 0 : 12)
+    if (i > 0) body += `<line class="d" x1="${edge[i]}" y1="14" x2="${edge[i]}" y2="${height - 2}"/>`
     body += `<text class="l" x="${x}" y="24">${esc(c.label)}</text>`
     body += `<text class="v${c.tone ? ` ${c.tone}` : ''}" x="${x}" y="44">${esc(fit(c.value, Math.floor((colW - 16) / 9)))}</text>`
     c.sub.forEach((line, j) => (body += `<text class="s" x="${x}" y="${61 + 15 * j}">${esc(fit(line, Math.floor((colW - 16) / 6.2)))}</text>`))

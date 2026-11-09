@@ -27,12 +27,13 @@ export const cacheState = (at: number | null, now: number) =>
   at === null ? 'unknown' : now - at >= CACHE_MS ? 'expired' : 'warm'
 
 const k = (tokens: number | null) => (tokens === null ? '?' : String(Math.round(tokens / 1000)))
+export const size = (tokens: number | null) => (tokens === null ? '?' : `${k(tokens)}k`)
 
 export const statusText = (tokens: number | null, at: number | null, now: number) => {
   const state = cacheState(at, now)
   const left = Math.ceil((CACHE_MS - (now - (at ?? now))) / 60_000)
   const cache = state === 'warm' ? T.cacheLeft(left) : state === 'expired' ? T.cacheExpired : T.cacheUnknown
-  return T.ctx(`${k(tokens)}${tokens === null ? '' : 'k'}`, cache)
+  return T.ctx(size(tokens), cache)
 }
 
 export const isStale = (s: Snap, minTokens: number, idleMinutes: number) =>
