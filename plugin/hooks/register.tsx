@@ -337,9 +337,15 @@ const fireDue = async ($: EngineInterface, python: string, compression: string) 
   if (at === null || at > now || isWorking) return
   await $.store.delete(`delayed:${id}`)
   await update($, delayedAt, () => null)
-  if (await startWorker($, python, 'send', compression)) return // an emptied box ends in launch's own toast
-  await $.store.set(`delayed:${id}`, { at }) // a launch is running: back it goes
-  await update($, delayedAt, () => at)
+  let started = false // an emptied box counts: it ends in launch's own toast
+  try {
+    started = await startWorker($, python, 'send', compression)
+  } finally {
+    if (!started) {
+      await $.store.set(`delayed:${id}`, { at }) // a launch is running, or startWorker threw: back it goes
+      await update($, delayedAt, () => at)
+    }
+  }
 }
 
 // "Новый работник": binds launch() to the engine through closures made here. One launch at a time.
