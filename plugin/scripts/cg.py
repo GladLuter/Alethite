@@ -21,7 +21,7 @@ from transcripts import find_session, last_usage, project_key, project_keys
 
 
 INDEX_FREE = ('last-turn', 'compress', 'handoff')  # the commands that read no index: no merge waits for them, and they still work when the index cannot be used
-SHORT = (*INDEX_FREE, 'lessons-match')  # the runs that do not merge, nor open the index again to keep forgets (lessons-match reads it and writes no forget)
+SHORT = (*INDEX_FREE, 'lessons-match', 'savings')  # the runs that do not merge, nor open the index again to keep forgets (lessons-match reads it and writes no forget)
 
 
 class _Help(Exception):
@@ -269,6 +269,18 @@ def _last_turn(a):
     return (main and last_usage(main)) or {'tokens': None, 'at': None, 'model': None}
 
 
+def _savings(a):
+    import savings
+    try:
+        conn = memdb.connect(a.db)  # any trouble with the index leaves the project's figure out, never the rest
+        convs = [r[0] for r in conn.execute(
+            'SELECT DISTINCT p.conv FROM conv_projects p JOIN convs c ON c.conv = p.conv WHERE c.parent IS NULL AND p.project IN (SELECT value FROM json_each(?))',
+            (json.dumps(project_keys(a.cwd, _aliases(a))),))]
+    except Exception:
+        convs = None
+    return savings.savings(a.projects, _session(a.session), convs, os.path.join(os.path.dirname(a.db), 'savings-cache.json'))
+
+
 def _handoff(a):
     from handoff import build_handoff
     text = build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress)
@@ -434,6 +446,9 @@ def _parser():
     s.add_argument('--today', required=True)
     s.add_argument('--memory-dir')
     s.add_argument('--compress', choices=LEVELS, default='off')
+    s = add('savings', _savings)
+    s.add_argument('--session', required=True)
+    s.add_argument('--cwd', required=True)
     s = add('sync', _sync)
     s.add_argument('--sync-dir', required=True)
     s.add_argument('--machine')
