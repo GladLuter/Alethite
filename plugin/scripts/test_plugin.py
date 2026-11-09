@@ -13,7 +13,8 @@ def manifest(*path):
 class ManifestTest(unittest.TestCase):
     def test_plugin_and_marketplace_carry_the_new_name(self):
         plugin, market = manifest('plugin', '.claude-plugin', 'plugin.json'), manifest('.claude-plugin', 'marketplace.json')
-        self.assertEqual((plugin['name'], plugin['version']), ('alethite', '0.3.0'))
+        self.assertEqual(plugin['name'], 'alethite')
+        self.assertRegex(plugin['version'], r'^\d+\.\d+\.\d+$')  # the number itself goes up before every merge into master
         self.assertTrue(plugin['description'].startswith('Alethite'))
         self.assertEqual((market['name'], market['plugins'][0]['name']), ('alethite', 'alethite'))
         self.assertTrue(market['description'].startswith('Alethite'))
