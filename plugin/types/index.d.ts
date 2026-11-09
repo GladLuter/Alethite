@@ -22,9 +22,8 @@ declare module 'claude-code' {
   interface PluginState {
     alethite: {
       snap: Snap | null
-      // session ids the band is hidden / force-shown for; a /clear changes the id and ends both
+      // session id the band is hidden for (/al-band off); a /clear changes the id and ends it
       hiddenId: string
-      forcedId: string
       // the band is showing the model picker instead of its two buttons
       isArmed: boolean
       // a new-worker launch is running: the band shows T.busy and ignores presses

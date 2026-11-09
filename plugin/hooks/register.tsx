@@ -2,7 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Savings, Snap } from '../types'
-import { bandLines, isStale, statusText } from './guard'
+import { columns, columnsSvg, fitTokens, lineTokens } from './band'
+import { isStale, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
 import { flush, notePath, summaryNote, summaryPath } from './notes'
@@ -28,7 +29,6 @@ import type { LaunchIO } from './worker'
 
 const snap = atom({ plugin: 'alethite', key: 'snap' } as const, null)
 const hiddenId = atom({ plugin: 'alethite', key: 'hiddenId' } as const, '')
-const forcedId = atom({ plugin: 'alethite', key: 'forcedId' } as const, '')
 const isArmed = atom({ plugin: 'alethite', key: 'isArmed' } as const, false)
 const isBusy = atom({ plugin: 'alethite', key: 'isBusy' } as const, false)
 const info = atom({ plugin: 'alethite', key: 'info' } as const, null)
@@ -435,6 +435,10 @@ export const register: Register = (on, options) => {
         }),
     )
     await guarded($, 'session.start', () => refresh($, python))
+    await guarded($, 'session.start', async () => {
+      const isOpen = (await $.store.get('details')) === true
+      await update($, isDetails, () => isOpen)
+    })
 
     // after the status line and the timers: a refusal of one schema must not leave the owner without the rest
     // two short schemas in every request cost less than the extra ToolSearch turn a deferred tool needs in each new chat
@@ -499,8 +503,7 @@ export const register: Register = (on, options) => {
     // a subagent's turn or one that cost nothing (interrupted, API error) does not move the cache clock
     if (e.agentId === undefined && e.usage !== undefined) {
       await guarded($, 'turn.complete', async () => {
-        // "Остаться здесь" lasts one turn, and an armed picker never outlives one
-        await update($, hiddenId, () => '')
+        // an armed picker never outlives a turn
         await update($, isArmed, () => false)
         const [id, now, usage] = await Promise.all([$.session.id(), $.clock.now(), $.session.usage()])
         await $.store.set(`turn:${id}`, { at: now, tokens: usage.context.tokens ?? null })
@@ -517,8 +520,7 @@ export const register: Register = (on, options) => {
     const isOk = await guarded($, 'al-band', async () => {
       await refresh($, python)
       const id = await $.session.id()
-      await update($, forcedId, () => (isOff ? '' : id))
-      if (!isOff) await update($, hiddenId, () => '')
+      await update($, hiddenId, () => (isOff ? id : ''))
     })
 
     return { text: !isOk ? T.cgBandFailed : isOff ? T.cgBandOff : T.cgBandOn }
@@ -787,41 +789,94 @@ export const register: Register = (on, options) => {
     // every read first, so the band is subscribed to all of them even when it draws nothing
     const s = await read($, snap)
     const hidden = await read($, hiddenId)
-    const forced = await read($, forcedId)
+    const calm = await read($, calmId)
     const armed = await read($, isArmed)
     const busy = await read($, isBusy)
+    const data = await read($, info)
+    const isOpen = await read($, isDetails)
 
-    if (s === null || e.props.hasSurvey || e.props.isWorking || s.id === hidden) return next(e)
-    if (!isStale(s, minTokens, idleMinutes) && s.id !== forced) return next(e)
+    if (s === null || e.props.hasSurvey || s.id === hidden) return next(e)
 
     const { Box, Button, Text } = $.ui.resolve(e)
-    // the band above the prompt is one area for every mod: ours goes in a frame of its own, so it never reads as part of another mod's,
-    // and what the mods beneath draw stays, under the frame, instead of being covered by it
+    // the band above the prompt is one area for every mod: ours is a row or a frame of its own, and what the mods beneath draw stays under it
     const below = await next(e)
+    const isWorking = e.props.isWorking // /clear in the middle of a turn is dangerous: no New worker then
+    const isLit = isStale(s, minTokens, idleMinutes) && s.id !== calm
+    const title = <Text bold>{T.bandTitle}</Text>
 
+    if (armed && !isWorking) {
+      return (
+        <Box flexDirection="column">
+          <Box borderStyle="round" borderDimColor flexDirection="column" paddingX={1}>
+            {title}
+            <Text>{T.willClear}</Text>
+            <Box gap={1} flexWrap="wrap">
+              <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send', compression)} />
+              <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill', compression)} />
+              <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
+            </Box>
+            <Text dimColor>{T.atFilesHint}</Text>
+          </Box>
+          {below}
+        </Box>
+      )
+    }
+
+    const launchLabel = busy ? T.busy : T.newWorker
+    const detailsLabel = isOpen ? T.compact : T.details
+    const toggle = () => guarded($, 'band', async () => (await update($, isDetails, () => !isOpen), await $.store.set('details', !isOpen)))
+    const actions = (
+      <Box gap={1}>
+        {!isWorking && <Button key="launch" label={launchLabel} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />}
+        {!isWorking && isLit && <Button key="stay" label={T.stayHere} onPress={() => update($, calmId, () => s.id)} />}
+        <Button key="details" label={detailsLabel} onPress={toggle} />
+      </Box>
+    )
+
+    if (!isOpen) {
+      // the terminal counts cells; the desktop draws wider and does not wrap, so only the terminal trims the tokens to the room the buttons leave
+      const buttons = [launchLabel, ...(isLit ? [T.stayHere] : []), detailsLabel].slice(isWorking ? -1 : 0)
+      const room = e.surface === 'terminal' ? e.props.bodyColumns - T.bandTitle.length - 2 * buttons.length - buttons.join('').length - 6 : Infinity
+      return (
+        <Box flexDirection="column">
+          <Box gap={1}>
+            {title}
+            {fitTokens(lineTokens(s, data, isLit), room).map(t => (
+              <Text key={t.key} color={t.tone}>{`· ${t.text}`}</Text>
+            ))}
+            <Box flexGrow={1} />
+            {actions}
+          </Box>
+          {below}
+        </Box>
+      )
+    }
+
+    const cols = columns(s, data, showLimits)
+    let body = (
+      <Box gap={2}>
+        {cols.map(c => (
+          <Box key={c.key} flexDirection="column">
+            <Text dimColor>{c.label}</Text>
+            <Text bold color={c.tone}>{c.value}</Text>
+            {c.sub.map(line => (
+              <Text dimColor wrap="truncate-end">{line}</Text>
+            ))}
+          </Box>
+        ))}
+      </Box>
+    )
+    // box characters break in the desktop's proportional font: one image there
+    if (e.surface === 'desktop') {
+      const { Svg } = $.ui.resolve(e)
+      body = <Svg source={columnsSvg(cols)} alt={cols.map(c => `${c.label} ${c.value}`).join(', ')} />
+    }
     return (
       <Box flexDirection="column">
         <Box borderStyle="round" borderDimColor flexDirection="column" paddingX={1}>
-          <Text bold>{T.bandTitle}</Text>
-          {bandLines(s, showLimits).map(line => (
-            <Text>{line}</Text>
-          ))}
-          {armed ? (
-            <Box flexDirection="column">
-              <Text>{T.willClear}</Text>
-              <Box gap={1} flexWrap="wrap">
-                <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send', compression)} />
-                <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill', compression)} />
-                <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
-              </Box>
-              <Text dimColor>{T.atFilesHint}</Text>
-            </Box>
-          ) : (
-            <Box gap={1} flexWrap="wrap">
-              <Button key="launch" label={busy ? T.busy : T.newWorker} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />
-              <Button key="stay" label={T.stayHere} onPress={() => update($, hiddenId, () => s.id)} />
-            </Box>
-          )}
+          {title}
+          {body}
+          {actions}
         </Box>
         {below}
       </Box>

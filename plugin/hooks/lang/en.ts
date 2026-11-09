@@ -14,19 +14,9 @@ export const en = {
   toast: (text: string) => `Alethite: ${text}`,
 
   // band
-  head: (k: string, ago: string, cache: string) => `This chat: ${k}k tokens · last reply ${ago} · ${cache}`,
   bandCache: { expired: 'cache expired', warm: 'cache warm', unknown: 'cache ?' },
-  agoNow: 'just now',
-  agoMin: (n: number) => `${n} min ago`,
-  agoHours: (n: number) => `${n} h ago`,
-  agoDays: (n: number) => `${n} d ago`,
-  send: (cost: string) => `Sending here ≈ ${cost}`,
-  sendHot: (cost: string) => `${cost} (cache warm)`,
-  sendCold: (cost: string) => `${cost} (cache rewrite)`,
-  sendEither: (hot: string, cold: string) => `${hot} or ${cold}`,
   limitNames: { five_hour: '5 h', seven_day: 'week' } as Record<string, string>,
   limit: (name: string, percent: number) => `${name}: ${percent}%`,
-  limits: (parts: string) => `Limits ${parts}`,
   // band, new
   details: 'Details',
   compact: 'Collapse',
@@ -74,9 +64,9 @@ export const en = {
   indexProblemStatus: 'Index unavailable, details in /al-health',
 
   // /al-band
-  cgBandDescription: 'Show the band now (off: back to the thresholds)',
-  cgBandOn: 'al-band: the band is shown now.',
-  cgBandOff: 'al-band: the band follows the thresholds again.',
+  cgBandDescription: 'Hide the band in this chat (off) or bring it back',
+  cgBandOn: 'al-band: the band is back.',
+  cgBandOff: 'al-band: the band is hidden in this chat; /al-band brings it back.',
   cgBandFailed: 'al-band: did not work, the reason is on the status line.',
 
   // errors: the toast of an owner-started action; cg.py could not be started at all

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { bandLines, isStale, price, statusText } from '../hooks/guard'
+import { isStale, price, statusText } from '../hooks/guard'
 import { setLanguage } from '../hooks/text'
 
 // the Russian texts of stage 1 for one test; the module is this file's own, the plugin's language is not touched
@@ -16,19 +16,6 @@ const now = 10_000_000_000
 const snap = (over = {}) => ({ id: 'id', model: 'claude-opus-5-5', now, tokens: 512_000, at: now - 6.2 * 3_600_000,
   limits: [{ kind: 'five_hour', percentUsed: 7 }, { kind: 'seven_day', percentUsed: 70 }], ...over })
 
-test('band: owner example, 512k opus-5-5, expired', () => {
-  expect(bandLines(snap(), true)).toEqual(['This chat: 512k tokens · last reply 6 h ago · cache expired', 'Sending here ≈ $4.10 (cache rewrite)', 'Limits 5 h: 7% · week: 70%'])
-  inRussian(() =>
-    expect(bandLines(snap(), true)).toEqual([
-      'Этот чат: 512 тыс. токенов · последний ответ 6 ч назад · кэш истёк',
-      'Отправка сюда ≈ $4.10 (перезапись кэша)',
-      'Лимит 5 ч: 7% · неделя: 70%',
-    ]),
-  )
-})
-test('band: limits line is a setting', () => {
-  expect(bandLines(snap(), false).some(l => l.startsWith('Limits'))).toBe(false)
-})
 test('price: haiku-5-5 over 100k uses the long-context price', () => {
   expect(price('claude-haiku-5-5', 300_000, true)).toBe(0.3)
 })

@@ -15,19 +15,9 @@ export const ru: Partial<Texts> = {
   toast: (text: string) => `Alethite: ${text}`,
 
   // band
-  head: (k: string, ago: string, cache: string) => `Этот чат: ${k} тыс. токенов · последний ответ ${ago} · ${cache}`,
   bandCache: { expired: 'кэш истёк', warm: 'кэш тёплый', unknown: 'кэш ?' },
-  agoNow: 'только что',
-  agoMin: (n: number) => `${n} мин назад`,
-  agoHours: (n: number) => `${n} ч назад`,
-  agoDays: (n: number) => `${n} д назад`,
-  send: (cost: string) => `Отправка сюда ≈ ${cost}`,
-  sendHot: (cost: string) => `${cost} (кэш тёплый)`,
-  sendCold: (cost: string) => `${cost} (перезапись кэша)`,
-  sendEither: (hot: string, cold: string) => `${hot} или ${cold}`,
   limitNames: { five_hour: '5 ч', seven_day: 'неделя' } as Record<string, string>,
   limit: (name: string, percent: number) => `${name}: ${percent}%`,
-  limits: (parts: string) => `Лимит ${parts}`,
   // band, new
   details: 'Детали',
   compact: 'Свернуть',
@@ -73,9 +63,9 @@ export const ru: Partial<Texts> = {
   indexProblemStatus: 'Индекс недоступен, подробности в /al-health',
 
   // /al-band
-  cgBandDescription: 'Показать полосу принудительно (off: вернуть пороги)',
-  cgBandOn: 'al-band: полоса показана принудительно.',
-  cgBandOff: 'al-band: полоса снова по порогам.',
+  cgBandDescription: 'Скрыть полосу в этом чате (off) или вернуть',
+  cgBandOn: 'al-band: полоса снова на месте.',
+  cgBandOff: 'al-band: полоса скрыта в этом чате; /al-band вернёт её.',
   cgBandFailed: 'al-band: не вышло, причина в строке состояния.',
 
   // errors: the toast of an owner-started action; cg.py could not be started at all

@@ -39,7 +39,7 @@ test('a failed refresh shows its error in the status line', async ($, on) => {
   expect(store.get('lastError')).toMatchObject({ at: 10_000_000_000, where: 'al-band' }) // kept for /al-health too
 })
 
-test('"Остаться здесь" and an armed picker last one turn', async ($, on) => {
+test('an armed picker lasts one turn', async ($, on) => {
   wire(on, [], () => ({ value: usage }))
   await ($ as any).command.run({ command: 'al-band', args: '' })
   const ui = await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props } as never)
@@ -47,19 +47,13 @@ test('"Остаться здесь" and an armed picker last one turn', async ($
   await ui.press({ key: 'launch' })
   expect(await buttons(ui)).toEqual(['send', 'pick', 'cancel'])
   await ($ as any).turn.complete(turn)
-  expect(await buttons(ui)).toEqual(['launch', 'stay'])
-
-  await ui.press({ key: 'stay' })
-  expect(await buttons(ui)).toEqual([])
-  await ($ as any).turn.complete(turn)
-  expect(await buttons(ui)).toEqual(['launch', 'stay'])
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
 })
 
-test('no band while the model is working', async ($, on) => {
+test('while the model works the row stays without New worker', async ($, on) => {
   wire(on, [], () => ({ value: usage }))
-  await ($ as any).command.run({ command: 'al-band', args: '' }) // forces the band
-  expect(await buttons(await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props } as never))).toEqual(['launch', 'stay'])
-  expect(await buttons(await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props: { ...props, isWorking: true } } as never))).toEqual([])
+  await ($ as any).command.run({ command: 'al-band', args: '' })
+  expect(await buttons(await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props: { ...props, isWorking: true } } as never))).toEqual(['details'])
 })
 
 const noSize = () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } })
@@ -153,13 +147,71 @@ const mountBand = async ($: any) => {
 
 type Drawn = { type: string; props?: Record<string, unknown>; children: Drawn[] }
 
-test('the band is a frame of its own, the Alethite title first in it, bold, above its lines and buttons', async ($, on) => {
+const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text)
+const UI = { plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props } as never
+
+test('the band is always one row: the title first, no frame', async ($, on) => {
   wire(on, [], () => ({ value: usage }))
-  const band = (await (await mountBand($)).drawn()) as unknown as Drawn
-  const frame = band.children[0]!
+  const ui = await mountBand($)
+  const band = (await ui.drawn()) as unknown as Drawn
+  expect(band.children[0]!.props?.borderStyle).toBeUndefined()
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
+  expect((await texts(ui))[0]).toBe(T.bandTitle)
+})
+
+test('a stale chat lights the row and offers to stay; staying lasts to the end of the chat', async ($, on) => {
+  const at = new Date(10_000_000_000 - 2 * 3_600_000).toISOString()
+  wire(on, [], () => ({ value: usage }), () => ran(JSON.stringify({ tokens: 300_000, at, model: 'm' })))
+  const ui = await mountBand($)
+  expect(await buttons(ui)).toEqual(['launch', 'stay', 'details'])
+  await ui.press({ key: 'stay' })
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
+})
+
+test('Details opens the columns in a frame, remembers it, and the next press brings the row back', async ($, on) => {
+  const store = new Map<string, unknown>()
+  wire(on, [], () => ({ value: usage }), undefined, store)
+  const ui = await mountBand($)
+  await ui.press({ key: 'details' })
+  const frame = ((await ui.drawn()) as unknown as Drawn).children[0]!
   expect(frame).toMatchObject({ type: 'Box', props: { borderStyle: 'round' } })
   expect(frame.children[0]).toMatchObject({ type: 'Text', props: { bold: true }, children: [T.bandTitle] })
-  expect(frame.children.length).toBeGreaterThan(2)
+  expect(await texts(ui)).toContain(T.col.chat)
+  expect(store.get('details')).toBe(true)
+  await ui.press({ key: 'details' })
+  expect(store.get('details')).toBe(false)
+  expect(((await ui.drawn()) as unknown as Drawn).children[0]!.props?.borderStyle).toBeUndefined()
+})
+
+test('Details stays open after a restart of the mod', async ($, on) => {
+  mock.env(on, {})
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  on('command.register', () => ({ value: { command: 'x' } }))
+  on('session.root', () => ({ value: 'C:/w' }))
+  on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  wire(on, [], () => ({ value: usage }), undefined, new Map<string, unknown>([['details', true]]))
+  await ($ as any).session.start({ cwd: 'C:/w', surface: null, isInteractive: false })
+  const ui = await $.ui.mount(UI)
+  expect(await texts(ui)).toContain(T.col.chat)
+})
+
+test('desktop draws the columns as one Svg', async ($, on) => {
+  wire(on, [], () => ({ value: usage }))
+  await mountBand($)
+  const ui = await $.ui.mount({ plugin: 'alethite', surface: 'desktop', component: 'AbovePrompt', props } as never)
+  await ui.press({ key: 'details' })
+  const svg = await ui.findAll({ type: 'Svg' })
+  expect(svg).toHaveLength(1)
+  expect(typeof svg[0]!.props.alt).toBe('string')
+})
+
+test('/al-band off hides the band in this chat, /al-band brings it back', async ($, on) => {
+  wire(on, [], () => ({ value: usage }))
+  const ui = await mountBand($)
+  await ($ as any).command.run({ command: 'al-band', args: 'off' })
+  expect(await buttons(ui)).toEqual([])
+  await ($ as any).command.run({ command: 'al-band', args: '' })
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
 })
 
 test("another mod's band beneath ours is not covered: it stays, under our frame", async ($, on) => {
@@ -181,7 +233,7 @@ test('new worker: the first press arms the band: two ways to go, cancel and the 
   expect(await ui.findAll({ type: 'Text', text: T.willClear })).toHaveLength(1)
 
   await ui.press({ key: 'cancel' })
-  expect(await buttons(ui)).toEqual(['launch', 'stay'])
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
 })
 
 test('new worker, send at once: /clear, then handoff + draft as the first message on the same model, draft taken out of the box, band idle', async ($, on) => {
@@ -198,7 +250,7 @@ test('new worker, send at once: /clear, then handoff + draft as the first messag
   expect(state.text).toBe('')
   const a = argvs[0]!
   expect(a.slice(a.indexOf('handoff'))).toEqual(['handoff', '--session', 'id', '--today', expect.stringMatching(/^\d{4}-\d\d-\d\d$/), '--memory-dir', 'C:/mem/memory', '--compress', 'ultra'])
-  expect(await buttons(ui)).toEqual(['launch', 'stay']) // not armed, not busy
+  expect(await buttons(ui)).toEqual(['launch', 'details']) // not armed, not busy
   expect(await ui.findAll({ type: 'Button', text: T.busy })).toEqual([])
 })
 
@@ -216,7 +268,7 @@ test('new worker, pick the model myself: /clear, handoff + draft left in the box
   expect(log).toEqual(['/clear']) // no submit, no /model
   expect(state.text).toBe('[al-handoff]x[/al-handoff]\n\nпродолжаем')
   expect(toasts).toEqual([T.toast(T.pickThenEnter)])
-  expect(await buttons(ui)).toEqual(['launch', 'stay']) // not armed, not busy
+  expect(await buttons(ui)).toEqual(['launch', 'details']) // not armed, not busy
   expect(await ui.findAll({ type: 'Button', text: T.busy })).toEqual([])
 })
 
@@ -233,7 +285,7 @@ test('new worker: busy for the whole launch, the arm button is ignored meanwhile
   for (let i = 0; i < 100 && !log.some(l => l.startsWith('submit')); i++) await new Promise(r => (globalThis as any).setTimeout(r, 10))
   expect(await ui.findAll({ type: 'Button', text: T.busy })).toHaveLength(1)
   await ui.press({ key: 'launch' })
-  expect(await buttons(ui)).toEqual(['launch', 'stay']) // the picker did not open
+  expect(await buttons(ui)).toEqual(['launch', 'details']) // the picker did not open
 
   release()
   await Promise.all([pressed, again])
@@ -257,7 +309,7 @@ test('new worker: a failed handoff leaves the chat alone, tells why and is kept 
   expect(log).toEqual([])
   expect(toasts).toEqual([T.toast(T.handoffFailed('no transcript'))])
   expect(store.get('lastError')).toMatchObject({ where: 'launch', msg: T.handoffFailed('no transcript') })
-  expect(await buttons(ui)).toEqual(['launch', 'stay'])
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
   expect(await ui.findAll({ type: 'Button', text: T.newWorker })).toHaveLength(1) // busy ended
 })
 
@@ -272,7 +324,7 @@ test('new worker, pick the model myself: the box refuses the text: readable reas
   await ui.press({ key: 'pick' })
 
   expect(toasts).toEqual([T.toast(T.fillFailed(T.notSent, T.fillRefused.other, 'C:/h/id.md'))])
-  expect(await buttons(ui)).toEqual(['launch', 'stay'])
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
 })
 
 // ---- long memory ----
@@ -1531,4 +1583,29 @@ test('band data: both calls failing at once note only the first error', async ($
   const first = m.store.get('lastError')
   await m.clock.advance(600_000)
   expect(m.store.get('lastError')).toEqual(first)
+})
+
+const worker = { last: null, worker: { usd: 18.7, links: 7, calls: 400 }, project: null }
+const bandData = async ($: any, on: any, savings: unknown, status: object = { convs: 12, size_mb: 1.5 }) => {
+  const m = await started($, on, a => (a[0] === 'savings' ? savings : a[0] === 'status' ? ran(JSON.stringify(status)) : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')))
+  await m.clock.advance(3_000)
+  return m
+}
+
+test('narrow terminal keeps one row: the savings drop out first', async ($, on) => {
+  await bandData($, on, ran(JSON.stringify(worker)))
+  const wide = await texts(await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 120 } } as never))
+  expect(wide.some((t: string) => t.includes(T.saved('$18.70')))).toBe(true)
+  const narrow = await texts(await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 60 } } as never))
+  expect(narrow.some((t: string) => t.includes(T.saved('')))).toBe(false)
+  expect(narrow[0]).toBe(T.bandTitle)
+})
+
+test('the Base column is filled while savings failed', async ($, on) => {
+  await bandData($, on, failed('boom'))
+  const ui = await $.ui.mount(UI)
+  await ui.press({ key: 'details' })
+  const all = await texts(ui)
+  expect(all).toContain(T.baseConvs(12))
+  expect(all).toContain('?') // the handoff columns say they do not know
 })

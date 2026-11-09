@@ -38,21 +38,3 @@ export const statusText = (tokens: number | null, at: number | null, now: number
 
 export const isStale = (s: Snap, minTokens: number, idleMinutes: number) =>
   s.at !== null && (s.tokens ?? 0) > minTokens && s.now - s.at > idleMinutes * 60_000
-
-const ago = (ms: number) => {
-  const min = Math.floor(ms / 60_000)
-  return min < 1 ? T.agoNow : min < 60 ? T.agoMin(min) : min < 2880 ? T.agoHours(Math.floor(min / 60)) : T.agoDays(Math.floor(min / 1440))
-}
-
-export const bandLines = (s: Snap, showLimits: boolean) => {
-  const state = cacheState(s.at, s.now)
-  const cost = (isExpired: boolean) => `$${price(s.model, s.tokens ?? 0, isExpired).toFixed(2)}`
-  const hot = T.sendHot(cost(false))
-  const cold = T.sendCold(cost(true))
-  const send = state === 'expired' ? cold : state === 'warm' ? hot : T.sendEither(hot, cold)
-  return [
-    T.head(k(s.tokens), s.at === null ? '?' : ago(s.now - s.at), T.bandCache[state]),
-    ...(s.tokens === null ? [] : [T.send(send)]),
-    ...(showLimits && s.limits.length ? [T.limits(s.limits.map(l => T.limit(T.limitNames[l.kind] ?? l.kind, l.percentUsed)).join(' · '))] : []),
-  ]
-}

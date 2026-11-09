@@ -15,19 +15,9 @@ export const uk: Partial<Texts> = {
   toast: (text: string) => `Alethite: ${text}`,
 
   // band
-  head: (k: string, ago: string, cache: string) => `Цей чат: ${k} тис. токенів · остання відповідь ${ago} · ${cache}`,
   bandCache: { expired: 'кеш сплив', warm: 'кеш теплий', unknown: 'кеш ?' },
-  agoNow: 'щойно',
-  agoMin: (n: number) => `${n} хв тому`,
-  agoHours: (n: number) => `${n} год тому`,
-  agoDays: (n: number) => `${n} дн тому`,
-  send: (cost: string) => `Надіслати сюди ≈ ${cost}`,
-  sendHot: (cost: string) => `${cost} (кеш теплий)`,
-  sendCold: (cost: string) => `${cost} (перезапис кешу)`,
-  sendEither: (hot: string, cold: string) => `${hot} або ${cold}`,
   limitNames: { five_hour: '5 год', seven_day: 'тиждень' } as Record<string, string>,
   limit: (name: string, percent: number) => `${name}: ${percent}%`,
-  limits: (parts: string) => `Ліміт ${parts}`,
   // band, new
   details: 'Деталі',
   compact: 'Згорнути',
@@ -74,9 +64,9 @@ export const uk: Partial<Texts> = {
   indexProblemStatus: 'Індекс недоступний, подробиці в /al-health',
 
   // /al-band
-  cgBandDescription: 'Показати смугу примусово (off: повернути пороги)',
-  cgBandOn: 'al-band: смугу показано примусово.',
-  cgBandOff: 'al-band: смуга знову за порогами.',
+  cgBandDescription: 'Сховати смугу в цьому чаті (off) або повернути',
+  cgBandOn: 'al-band: смуга знову на місці.',
+  cgBandOff: 'al-band: смугу сховано в цьому чаті; /al-band поверне її.',
   cgBandFailed: 'al-band: не вийшло, причина в рядку стану.',
 
   // errors: the toast of an owner-started action; cg.py could not be started at all
