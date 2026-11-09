@@ -2,6 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { ru } from '../hooks/lang/ru'
 import { uk } from '../hooks/lang/uk'
 import { notePath, summaryPath } from '../hooks/notes'
+import { when } from '../hooks/band'
 import { price } from '../hooks/guard'
 import { T } from '../hooks/text'
 
@@ -349,9 +350,9 @@ const found = (extra: object = {}) => ran(JSON.stringify({ hits: [hit], errors: 
 const failed = (error: string) => ({ value: { exitCode: 1, stdout: JSON.stringify({ error }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
 // A session that has started: cg.py answers `answer(argv)` and every run is recorded in `runs`; the tools and the index timer exist.
-const started = async ($: any, on: any, answer: (a: string[]) => unknown, statuses: (string | undefined)[] = [], answerUsage: () => unknown = () => ({ value: usage }), env: Record<string, string> = {}, lastTurn: () => unknown = noTurn) => {
+const started = async ($: any, on: any, answer: (a: string[]) => unknown, statuses: (string | undefined)[] = [], answerUsage: () => unknown = () => ({ value: usage }), env: Record<string, string> = {}, lastTurn: () => unknown = noTurn, store = new Map<string, unknown>()) => {
   mock.env(on, env) // no USERPROFILE: no settings file
-  const m = { runs: [] as { argv: string[]; timeoutMs?: number }[], langs: [] as string[][], toasts: [] as string[], specs: [] as any[], store: new Map<string, unknown>(), clock: undefined as any }
+  const m = { runs: [] as { argv: string[]; timeoutMs?: number }[], langs: [] as string[][], toasts: [] as string[], specs: [] as any[], store, clock: undefined as any }
   on('ui.toast', (_: unknown, e: { text: string }) => (m.toasts.push(e.text), { value: undefined }))
   on('tool.register', (_: unknown, e: unknown) => (m.specs.push(e), { value: { tool: 'x' } }))
   on('command.register', () => ({ value: { command: 'x' } }))
@@ -1638,4 +1639,98 @@ test('the Base column is filled while savings failed', async ($, on) => {
   const all = await texts(ui)
   expect(all).toContain(T.baseConvs(12))
   expect(all).toContain('?') // the handoff columns say they do not know
+})
+
+// the delayed New worker: a limit at 92% that resets in an hour, so the wait ends 5 minutes after the reset
+const NOW = 10_000_000_000
+const AT = NOW + 3_600_000 + 300_000
+const nearLimit = (resetsAt: string | undefined = new Date(NOW + 3_600_000).toISOString(), percentUsed = 92) => () => ({ value: { ...usage, rateLimits: [{ kind: 'five_hour', percentUsed, resetsAt }] } })
+const waitLabel = T.waitingAt(when(new Date(AT).toISOString(), NOW))
+
+// a chat that started, with a draft in the box; its handoff notes whether the wait was already gone
+const delayed = async ($: any, on: any, draft = 'продолжаем', store = new Map<string, unknown>(), limit = nearLimit()) => {
+  const log: string[] = []
+  const gone: boolean[] = []
+  const state = box(on, draft, log)
+  const m = await started($, on, a => (a[0] === 'handoff' ? (gone.push(!store.has('delayed:id')), ran(JSON.stringify({ text: 'h', path: 'C:/h/id.md' }))) : ran('{}')), [], limit, {}, noTurn, store)
+  return { m, log, gone, state, ui: await $.ui.mount(UI) }
+}
+
+test('after-reset is offered only near a limit', async ($, on) => {
+  wire(on, [], nearLimit())
+  const ui = await mountBand($)
+  await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
+  expect(await ui.findAll({ type: 'Button', text: T.afterReset(when(new Date(AT).toISOString(), NOW)) })).toHaveLength(1)
+})
+
+for (const [name, limit] of [
+  ['under 90%', nearLimit(undefined, 50)],
+  ['without a reset time', () => ({ value: { ...usage, rateLimits: [{ kind: 'five_hour', percentUsed: 92 }] } })],
+] as const)
+  test(`after-reset is not offered ${name}`, async ($, on) => {
+    wire(on, [], limit)
+    const ui = await mountBand($)
+    await ui.press({ key: 'launch' })
+    expect(await buttons(ui)).toEqual(['send', 'pick', 'cancel'])
+  })
+
+test('after-reset needs a draft and waits', async ($, on) => {
+  const { m, state, ui } = await delayed($, on, '')
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after' })
+  expect(m.toasts).toEqual([T.toast(T.draftEmpty)])
+  expect(m.store.has('delayed:id')).toBe(false)
+
+  state.text = 'продолжаем'
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after' })
+  expect(m.store.get('delayed:id')).toEqual({ at: AT })
+  expect(await texts(ui)).toContain(waitLabel)
+  expect(await buttons(ui)).toEqual(['cancel-delay', 'details'])
+})
+
+test('a wait fires once when due: the key goes before the launch', async ($, on) => {
+  const { m, log, gone } = await delayed($, on, 'продолжаем', new Map([['delayed:id', { at: AT }]]))
+  await m.clock.advance(AT - NOW - 30_000)
+  expect(log).toEqual([])
+  await m.clock.advance(30_000)
+  expect(log).toEqual(['/clear', 'submit h' + String.fromCharCode(10, 10) + 'продолжаем'])
+  expect(gone).toEqual([true])
+  await m.clock.advance(120_000)
+  expect(log).toHaveLength(2)
+})
+
+test('cancel-delay removes the wait', async ($, on) => {
+  const { m, log, ui } = await delayed($, on)
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after' })
+  await ui.press({ key: 'cancel-delay' })
+  expect(m.store.has('delayed:id')).toBe(false)
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
+  await m.clock.advance(AT - NOW + 60_000)
+  expect(log).toEqual([])
+})
+
+test("another chat's wait is left alone", async ($, on) => {
+  const { m, log } = await delayed($, on, 'x', new Map([['delayed:other', { at: 1 }]]))
+  await m.clock.advance(60_000)
+  expect(log).toEqual([])
+  expect(m.store.get('delayed:other')).toEqual({ at: 1 })
+})
+
+test('a wait survives a restart', async ($, on) => {
+  const { m, log, ui } = await delayed($, on, 'продолжаем', new Map([['delayed:id', { at: AT }]]))
+  expect(await texts(ui)).toContain(waitLabel)
+  expect(await buttons(ui)).toEqual(['cancel-delay', 'details'])
+  await m.clock.advance(AT - NOW)
+  expect(log[0]).toBe('/clear')
+})
+
+test('an emptied box at fire time cancels with a toast', async ($, on) => {
+  const { m, log } = await delayed($, on, '', new Map([['delayed:id', { at: AT }]]))
+  await m.clock.advance(AT - NOW)
+  expect(log).toEqual([])
+  expect(m.toasts).toContain(T.toast(T.draftEmpty))
+  expect(m.store.has('delayed:id')).toBe(false)
 })

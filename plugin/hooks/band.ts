@@ -10,7 +10,7 @@ export type Col = { key: string; label: string; value: string; sub: string[]; to
 const usd = (n: number) => `$${n.toFixed(2)}`
 const asRec = (v: unknown) => (v && typeof v === 'object' ? (v as Record<string, any>) : undefined)
 // the clock time of an ISO stamp, local; with the weekday when it is not the day of `now`
-const when = (iso: string, now: number) => {
+export const when = (iso: string, now: number) => {
   const d = new Date(iso)
   if (Number.isNaN(+d)) return '?'
   const time = d.toLocaleTimeString(T.locale, { hour: '2-digit', minute: '2-digit' })

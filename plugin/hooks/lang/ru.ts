@@ -46,6 +46,9 @@ export const ru: Partial<Texts> = {
   cancel: 'Отмена',
   atFilesHint: '@файлы и картинки из черновика не передаются',
   busy: 'Запускаю…',
+  afterReset: (time: string) => `После сброса (${time})`,
+  waitingAt: (time: string) => `⏰ новый работник в ${time}`,
+  cancelWait: 'Отменить ожидание',
 
   // new worker launch: every failure says what was kept and where
   draftEmpty: 'Новый работник: черновик пуст, чат не тронут. Набери сообщение и нажми снова.',

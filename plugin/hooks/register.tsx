@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Savings, Snap } from '../types'
-import { columns, columnsSvg, fitTokens, lineTokens } from './band'
+import { columns, columnsSvg, delayAt, fitTokens, lineTokens, when } from './band'
 import { isStale, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
@@ -320,6 +320,17 @@ const refreshInfo = async ($: EngineInterface, python: string) => {
   }
 }
 
+// The delayed New worker: the wait is a store key of its chat; the 30 s tick starts it once due. The key goes first, so it never fires twice.
+// shortcut: a launch already running when the wait comes due drops the wait; the owner presses again.
+const fireDue = async ($: EngineInterface, python: string, compression: string) => {
+  const [id, now] = await Promise.all([$.session.id(), $.clock.now()])
+  const wait = (await $.store.get(`delayed:${id}`)) as { at: number } | undefined
+  if (wait === undefined || wait.at > now) return
+  await $.store.delete(`delayed:${id}`)
+  await update($, delayedAt, () => null)
+  await startWorker($, python, 'send', compression) // an emptied box ends in launch's own toast
+}
+
 // "Новый работник": binds launch() to the engine through closures made here. One launch at a time.
 const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill', compression: string) => {
   let wasBusy = false
@@ -416,7 +427,10 @@ export const register: Register = (on, options) => {
 
 
     // timers outlive /clear (no session.start after it), so one tick also keeps a new session's figures fresh
-    $.clock.every(30_000, () => void guarded($, 'timer', () => refresh($, python)))
+    $.clock.every(30_000, () => {
+      void guarded($, 'timer', () => refresh($, python))
+      void guarded($, 'delayed', () => fireDue($, python, compression))
+    })
     // a chat open for hours learns of a lesson saved in another chat or brought by the job's sync
     // and the band's data (never awaited together: one slow answer must not hold the other)
     $.clock.every(600_000, () => {
@@ -438,6 +452,8 @@ export const register: Register = (on, options) => {
     await guarded($, 'session.start', async () => {
       const isOpen = (await $.store.get('details')) === true
       await update($, isDetails, () => isOpen)
+      const wait = (await $.store.get(`delayed:${await $.session.id()}`)) as { at: number } | undefined // a wait outlives a restart
+      await update($, delayedAt, () => wait?.at ?? null)
     })
 
     // after the status line and the timers: a refusal of one schema must not leave the owner without the rest
@@ -792,6 +808,7 @@ export const register: Register = (on, options) => {
     const calm = await read($, calmId)
     const armed = await read($, isArmed)
     const busy = await read($, isBusy)
+    const wait = await read($, delayedAt)
     const data = await read($, info)
     const isOpen = await read($, isDetails)
 
@@ -803,6 +820,7 @@ export const register: Register = (on, options) => {
     const isWorking = e.props.isWorking // /clear in the middle of a turn is dangerous: no New worker then
     const isLit = isStale(s, minTokens, idleMinutes) && s.id !== calm
     const title = <Text bold>{T.bandTitle}</Text>
+    const after = delayAt(s.limits, s.now)
 
     if (armed && !isWorking) {
       return (
@@ -813,6 +831,18 @@ export const register: Register = (on, options) => {
             <Box gap={1} flexWrap="wrap">
               <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send', compression)} />
               <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill', compression)} />
+              {after !== null && (
+                <Button
+                  key="after"
+                  label={T.afterReset(when(new Date(after).toISOString(), s.now))}
+                  onPress={async () => {
+                    await update($, isArmed, () => false)
+                    if (!(await $.prompt.read()).text.trim()) return toast($, T.draftEmpty)
+                    await $.store.set(`delayed:${s.id}`, { at: after })
+                    await update($, delayedAt, () => after)
+                  }}
+                />
+              )}
               <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
             </Box>
             <Text dimColor>{T.atFilesHint}</Text>
@@ -825,17 +855,21 @@ export const register: Register = (on, options) => {
     const launchLabel = busy ? T.busy : T.newWorker
     const detailsLabel = isOpen ? T.compact : T.details
     const toggle = () => guarded($, 'band', async () => (await update($, isDetails, () => !isOpen), await $.store.set('details', !isOpen)))
+    const waitText = wait === null ? '' : T.waitingAt(when(new Date(wait).toISOString(), s.now))
+    const cancelWait = () => Promise.all([$.store.delete(`delayed:${s.id}`), update($, delayedAt, () => null)])
     const actions = (wrap: boolean) => (
       <Box gap={1} flexWrap={wrap ? 'wrap' : undefined}>
-        {!isWorking && <Button key="launch" label={launchLabel} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />}
-        {!isWorking && isLit && <Button key="stay" label={T.stayHere} onPress={() => update($, calmId, () => s.id)} />}
+        {wait !== null && <Text color="warning">{waitText}</Text>}
+        {wait !== null && <Button key="cancel-delay" label={T.cancelWait} onPress={cancelWait} />}
+        {wait === null && !isWorking && <Button key="launch" label={launchLabel} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />}
+        {wait === null && !isWorking && isLit && <Button key="stay" label={T.stayHere} onPress={() => update($, calmId, () => s.id)} />}
         <Button key="details" label={detailsLabel} onPress={toggle} />
       </Box>
     )
 
     if (!isOpen) {
       // the terminal counts cells; the desktop draws wider and does not wrap, so only the terminal trims the tokens to the room the buttons leave
-      const buttons = [launchLabel, ...(isLit ? [T.stayHere] : []), detailsLabel].slice(isWorking ? -1 : 0)
+      const buttons = wait !== null ? [waitText, T.cancelWait, detailsLabel] : [launchLabel, ...(isLit ? [T.stayHere] : []), detailsLabel].slice(isWorking ? -1 : 0)
       // the row is the title, the tokens ("· " + text), a spacer and the buttons, one gap between neighbours; a Button is its label plus a cell each side (assumed).
       // The tokens' ' · ' joins in fitTokens are 5 cells short of what they take in the row.
       const room = e.surface === 'terminal' ? e.props.bodyColumns - T.bandTitle.length - buttons.join('').length - 3 * buttons.length - 4 : Infinity
