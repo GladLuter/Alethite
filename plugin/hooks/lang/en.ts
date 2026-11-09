@@ -46,8 +46,7 @@ export const en = {
   atFilesHint: '@files and images in the draft are not passed on',
   busy: 'Starting…',
   afterReset: (time: string) => `After reset (${time})`,
-  waitingAt: (time: string) => `⏰ new worker at ${time}`,
-  cancelWait: 'Cancel the wait',
+  waitingAt: (time: string) => `⏰ worker at ${time}`,
 
   // new worker launch: every failure says what was kept and where
   draftEmpty: 'New worker: the draft is empty, the chat is untouched. Type a message and press again.',

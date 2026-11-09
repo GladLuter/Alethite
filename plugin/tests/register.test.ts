@@ -1731,6 +1731,57 @@ test('an emptied box at fire time cancels with a toast', async ($, on) => {
   const { m, log } = await delayed($, on, '', new Map([['delayed:id', { at: AT }]]))
   await m.clock.advance(AT - NOW)
   expect(log).toEqual([])
-  expect(m.toasts).toContain(T.toast(T.draftEmpty))
+  expect(m.toasts.filter(t => t === T.toast(T.draftEmpty))).toHaveLength(1)
   expect(m.store.has('delayed:id')).toBe(false)
+  await m.clock.advance(120_000)
+  expect(m.toasts.filter(t => t === T.toast(T.draftEmpty))).toHaveLength(1) // the tick does not say it again
+})
+
+test('a wait that falls due during a launch stays and fires after it', async ($, on) => {
+  const log: string[] = []
+  let release!: () => void
+  const state = box(on, 'продолжаем', log, new Promise<void>(r => (release = r)))
+  const m = await started($, on, a => (a[0] === 'handoff' ? ran(JSON.stringify({ text: 'h', path: 'C:/h/id.md' })) : ran('{}')), [], nearLimit(), {}, noTurn)
+  const ui = await $.ui.mount(UI)
+  await ui.press({ key: 'launch' })
+  void ui.press({ key: 'send' }) // held at the submit
+  await m.clock.advance(1)
+  m.store.set('delayed:id', { at: AT })
+  await m.clock.advance(AT - NOW)
+  expect(log.filter(l => l === '/clear')).toHaveLength(1)
+  expect(m.store.get('delayed:id')).toEqual({ at: AT }) // not dropped
+  release()
+  state.text = 'ещё' // the first launch emptied the box; the owner typed again
+  await m.clock.advance(60_000)
+  expect(log.filter(l => l === '/clear')).toHaveLength(2)
+  expect(m.store.has('delayed:id')).toBe(false)
+})
+
+test('a wait that falls due mid-turn waits for the turn to end', async ($, on) => {
+  const { m, log } = await delayed($, on, 'продолжаем', new Map([['delayed:id', { at: AT }]]))
+  await $.ui.mount({ ...(UI as object), props: { ...props, isWorking: true } } as never)
+  await m.clock.advance(AT - NOW + 60_000)
+  expect(log).toEqual([])
+  expect(m.store.get('delayed:id')).toEqual({ at: AT })
+  await $.ui.mount(UI)
+  await m.clock.advance(30_000)
+  expect(log[0]).toBe('/clear')
+  expect(m.store.has('delayed:id')).toBe(false)
+})
+
+for (const bad of [{}, { at: 'x' }, 'x'])
+  test(`a malformed wait (${JSON.stringify(bad)}) is no wait`, async ($, on) => {
+    const { m, log, ui } = await delayed($, on, 'продолжаем', new Map([['delayed:id', bad]]))
+    expect(await buttons(ui)).toEqual(['launch', 'details'])
+    await m.clock.advance(AT - NOW + 60_000)
+    expect(log).toEqual([])
+  })
+
+test('the waiting row stays on one line at 60 columns', async ($, on) => {
+  await delayed($, on, 'продолжаем', new Map([['delayed:id', { at: AT }]]))
+  const ui = await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 60 } } as never)
+  const cells = [...(await texts(ui)).filter((t: string) => t !== 'no band'), ...(await buttons(ui)).map((k: string) => ` ${k === 'cancel-delay' ? T.cancel : T.details} `)]
+  expect(cells.some((t: string) => t === waitLabel)).toBe(true)
+  expect(cells.join(' ').length + 1).toBeLessThanOrEqual(60) // +1: the spacer's gap
+  expect(await buttons(ui)).toContain('cancel-delay')
 })

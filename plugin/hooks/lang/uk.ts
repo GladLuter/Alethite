@@ -47,8 +47,7 @@ export const uk: Partial<Texts> = {
   atFilesHint: '@файли та зображення з чернетки не передаються',
   busy: 'Запускаю…',
   afterReset: (time: string) => `Після скидання (${time})`,
-  waitingAt: (time: string) => `⏰ новий працівник о ${time}`,
-  cancelWait: 'Скасувати очікування',
+  waitingAt: (time: string) => `⏰ працівник о ${time}`,
 
   // new worker launch: every failure says what was kept and where
   draftEmpty: 'Новий працівник: чернетка порожня, чат не зачеплено. Наберіть повідомлення й натисніть знову.',
