@@ -337,21 +337,21 @@ const fireDue = async ($: EngineInterface, python: string, compression: string) 
   if (at === null || at > now || isWorking) return
   await $.store.delete(`delayed:${id}`)
   await update($, delayedAt, () => null)
-  let started = false // an emptied box counts: it ends in launch's own toast
-  try {
-    started = await startWorker($, python, 'send', compression)
-  } finally {
-    if (!started) {
-      await $.store.set(`delayed:${id}`, { at }) // a launch is running, or startWorker threw: back it goes
-      await update($, delayedAt, () => at)
-    }
-  }
+  // false = nothing was launched (busy, or the busy flag could not be set): the wait goes back. A throw from startWorker's tail comes after the launch: no put-back.
+  if (await startWorker($, python, 'send', compression)) return
+  await $.store.set(`delayed:${id}`, { at })
+  await update($, delayedAt, () => at)
 }
 
 // "Новый работник": binds launch() to the engine through closures made here. One launch at a time.
 const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill', compression: string) => {
   let wasBusy = false
-  await update($, isBusy, busy => ((wasBusy = busy), true)) // atomic: a second press before the redraw is refused here
+  try {
+    await update($, isBusy, busy => ((wasBusy = busy), true)) // atomic: a second press before the redraw is refused here
+  } catch (err) {
+    await fail($, 'launch', err)
+    return false
+  }
   if (wasBusy) return false
   try {
     await update($, isArmed, () => false)
