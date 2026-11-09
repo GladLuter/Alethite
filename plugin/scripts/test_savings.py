@@ -9,7 +9,9 @@ import tempfile
 import unittest
 from unittest import mock
 
+import memdb
 import savings
+from transcripts import project_keys
 
 A, B, C = ('%08x-0000-0000-0000-000000000000' % n for n in (0xa, 0xb, 0xc))
 T = '2026-11-09T10:00:00.000Z'
@@ -18,8 +20,8 @@ OPUS = 'claude-opus-5-5'
 OLD = 303258
 
 
-def call(mid, ts, model=OPUS, cc=0, cr=0, inp=0, **kw):
-    u = {'input_tokens': inp, 'cache_creation_input_tokens': cc, 'cache_read_input_tokens': cr, 'output_tokens': 0}
+def call(mid, ts, model=OPUS, cc=0, cr=0, inp=0, out=0, **kw):
+    u = {'input_tokens': inp, 'cache_creation_input_tokens': cc, 'cache_read_input_tokens': cr, 'output_tokens': out}
     return dict(type='assistant', timestamp=ts, message={'id': mid, 'model': model, 'role': 'assistant', 'content': [], 'usage': u}, **kw)
 
 
@@ -157,6 +159,53 @@ class SavingsTest(unittest.TestCase):
                             'savings', '--session', B, '--cwd', self.dir], capture_output=True)
         out = json.loads(p.stdout.decode('utf-8'))
         self.assertEqual((out['worker']['links'], out['project']), (1, None))
+
+    def test_output_is_in_the_window_not_in_the_first_price(self):
+        self.old(A)
+        self.write(B, [user(block(A), HOUR2), call('fb', HOUR2, cc=60586, inp=2, out=500)])
+        r = self.run_savings(B)['last']
+        self.assertEqual(r['new_tokens'], 61088)  # the window the next calls carry
+        self.assertAlmostEqual(r['usd'], OLD * 8e-6 - (60586 * 8e-6 + 2 * 4e-6), 6)  # the first call's output is not in the price
+
+    def test_unparsable_time_counts_as_warm(self):
+        self.old(A, at='no time')
+        self.new(B, A, HOUR2)
+        self.assertAlmostEqual(self.run_savings(B)['last']['usd'], OLD * 0.2e-6 - (60586 * 8e-6 + 2 * 4e-6), 6)
+
+    def test_vanished_transcript_is_skipped(self):
+        self.old(A)
+        self.new(B, A, HOUR2)
+        gone = os.path.join(self.dir, 'p', 'gone.jsonl')
+        real = savings._paths
+        with mock.patch.object(savings, '_paths', lambda p: {**real(p), 'gone': gone}):
+            r = self.run_savings(B, ['gone'])
+        self.assertEqual((r['worker']['links'], r['project']['links']), (1, 1))
+
+    def test_unwritable_cache_costs_nothing(self):
+        self.old(A)
+        self.new(B, A, HOUR2)
+        r = savings.savings(self.dir, B, None, os.path.join(self.dir, 'no', 'such', 'savings-cache.json'))
+        self.assertEqual(r['worker']['links'], 1)
+
+    def test_command_sums_handoffs_of_the_project_from_a_real_index(self):
+        self.old(A)
+        self.new(B, A, HOUR2)
+        self.new(C, B, '2026-11-09T15:00:00.000Z')
+        D, S = ('%08x-0000-0000-0000-000000000000' % n for n in (0xd, 0x5))
+        self.new(D, A, '2026-11-09T16:00:00.000Z')  # a handoff chat outside the current chain
+        self.new(S, A, '2026-11-09T17:00:00.000Z')  # looks like one, but is a subagent of C
+        db = os.path.join(self.dir, 'index.db')
+        conn = memdb.connect(db)
+        key = project_keys(self.dir, {})[0]
+        for conv, parent in ((A, ''), (B, ''), (C, ''), (D, ''), (S, C)):
+            conn.execute('INSERT INTO convs VALUES(?, ?, ?, ?)', (conv, parent, T, T))
+            conn.execute('INSERT INTO conv_projects VALUES(?, ?)', (conv, key))
+        conn.commit()
+        conn.close()
+        p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py'), '--db', db, '--projects', self.dir,
+                            'savings', '--session', C, '--cwd', self.dir], capture_output=True)
+        out = json.loads(p.stdout.decode('utf-8'))
+        self.assertEqual((out['worker']['links'], out['project']['links']), (2, 3))
 
 
 if __name__ == '__main__':

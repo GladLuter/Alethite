@@ -72,13 +72,17 @@ def _cached(cache, path, fn):
 
 def link(paths, new, cache):
     """{new, usd, first, old_tokens, new_tokens, calls} for the chat `new` if it starts with a handoff whose old transcript is still here, else None."""
-    r = new in paths and _cached(cache, paths[new], read_new)
-    old = r and paths.get(r['old'])
-    o = old and _cached(cache, old, last_usage)
+    try:
+        r = new in paths and _cached(cache, paths[new], read_new)
+        old = r and paths.get(r['old'])
+        o = old and _cached(cache, old, last_usage)
+    except OSError:  # a transcript removed or locked meanwhile counts as missing
+        return None
     if not o:
         return None
     t_old, t_new = o['tokens'], r['tokens']
     pi, p_cw5, p_cw1, p_cr, _ = price(o['model'], t_old)[0]
+    # shortcut: tokens are the window size (prompt + output of the last call) on both sides; an unparsable time counts as warm, the cheaper read, so the saving is never overstated
     cold = (minutes(o['at'], r['ts']) or 0) * 60 >= COLD_AFTER
     p = price(r['model'], t_new)[0]
     (i, c5, c1, cr) = r['usage']
@@ -127,13 +131,14 @@ def savings(projects, session, convs, cache_path):
             if c not in links and (ln := link(paths, c, cache)):
                 links[c] = ln
         project = {'usd': sum(ln['usd'] for ln in links.values()), 'links': len(links)}
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(cache_path) or '.', suffix='.tmp')
-    try:
+    tmp = None
+    try:  # a failed cache write costs only speed
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(cache_path) or '.', suffix='.tmp')
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
             json.dump({k: e for k, e in cache.items() if k.split('|', 1)[1] in paths.values()}, f)
         os.replace(tmp, cache_path)
     except OSError:
-        os.path.exists(tmp) and os.remove(tmp)
+        tmp and os.path.exists(tmp) and os.remove(tmp)
     return {'last': chain and {'usd': chain[0]['first'], 'old_tokens': chain[0]['old_tokens'], 'new_tokens': chain[0]['new_tokens']} or None,
             'worker': {'usd': sum(ln['usd'] for ln in chain), 'links': len(chain), 'calls': sum(ln['calls'] for ln in chain)},
             'project': project}

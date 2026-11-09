@@ -274,7 +274,7 @@ def _savings(a):
     try:
         conn = memdb.connect(a.db)  # any trouble with the index leaves the project's figure out, never the rest
         convs = [r[0] for r in conn.execute(
-            'SELECT DISTINCT p.conv FROM conv_projects p JOIN convs c ON c.conv = p.conv WHERE c.parent IS NULL AND p.project IN (SELECT value FROM json_each(?))',
+            "SELECT DISTINCT p.conv FROM conv_projects p JOIN convs c ON c.conv = p.conv WHERE COALESCE(c.parent, '') = '' AND p.project IN (SELECT value FROM json_each(?))",
             (json.dumps(project_keys(a.cwd, _aliases(a))),))]
     except Exception:
         convs = None
