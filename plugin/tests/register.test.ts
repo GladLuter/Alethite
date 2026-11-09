@@ -2,6 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { ru } from '../hooks/lang/ru'
 import { uk } from '../hooks/lang/uk'
 import { notePath, summaryPath } from '../hooks/notes'
+import { price } from '../hooks/guard'
 import { T } from '../hooks/text'
 
 const usage = { context: { tokens: 512_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 7 }] }
@@ -166,6 +167,19 @@ test('a stale chat lights the row and offers to stay; staying lasts to the end o
   expect(await buttons(ui)).toEqual(['launch', 'stay', 'details'])
   await ui.press({ key: 'stay' })
   expect(await buttons(ui)).toEqual(['launch', 'details'])
+  await ($ as any).turn.complete(turn) // a turn must not bring the light back
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
+})
+
+test('a stale chat paints the size and the price as a warning, the price at the cold rate', async ($, on) => {
+  const at = new Date(10_000_000_000 - 2 * 3_600_000).toISOString()
+  wire(on, [], () => ({ value: usage }), () => ran(JSON.stringify({ tokens: 300_000, at, model: 'claude-opus-5-5' })))
+  await $.command.run({ command: 'al-band', args: '' })
+  const ui = await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 140 } } as never)
+  const all = await ui.findAll({ type: 'Text' })
+  const warned = all.filter((t: { props: { color?: string } }) => t.props.color === 'warning').map((t: { text: string }) => t.text)
+  expect(warned).toHaveLength(2)
+  expect(warned.some((t: string) => t.includes(T.sendHere(`$${price('claude-opus-5-5', 512_000, true).toFixed(2)}`)))).toBe(true)
 })
 
 test('Details opens the columns in a frame, remembers it, and the next press brings the row back', async ($, on) => {
@@ -1599,6 +1613,22 @@ test('narrow terminal keeps one row: the savings drop out first', async ($, on) 
   const narrow = await texts(await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 60 } } as never))
   expect(narrow.some((t: string) => t.includes(T.saved('')))).toBe(false)
   expect(narrow[0]).toBe(T.bandTitle)
+})
+
+test('a base alarm stays on the row however narrow; the price goes before it', async ($, on) => {
+  await bandData($, on, ran(JSON.stringify(worker)), { convs: 12, size_mb: 1.5, index_problem: 'broken' })
+  const row = async (bodyColumns: number) => (await texts(await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns } } as never))).join(' ')
+  expect(await row(60)).toContain(T.baseTrouble)
+  expect(await row(60)).not.toContain(T.saved(''))
+  const tight = await row(45)
+  expect(tight).toContain(T.baseTrouble)
+  expect(tight).not.toContain(T.sendHere(''))
+})
+
+test('savings that cost more are drawn as an error', async ($, on) => {
+  await bandData($, on, ran(JSON.stringify({ ...worker, worker: { usd: -2, links: 3, calls: 9 } })))
+  const dear = (await (await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 140 } } as never)).findAll({ type: 'Text' })).filter((t: { props: { color?: string } }) => t.props.color === 'error')
+  expect(dear.map((t: { text: string }) => t.text).join()).toContain(T.dearer('$2.00'))
 })
 
 test('the Base column is filled while savings failed', async ($, on) => {

@@ -825,8 +825,8 @@ export const register: Register = (on, options) => {
     const launchLabel = busy ? T.busy : T.newWorker
     const detailsLabel = isOpen ? T.compact : T.details
     const toggle = () => guarded($, 'band', async () => (await update($, isDetails, () => !isOpen), await $.store.set('details', !isOpen)))
-    const actions = (
-      <Box gap={1}>
+    const actions = (wrap: boolean) => (
+      <Box gap={1} flexWrap={wrap ? 'wrap' : undefined}>
         {!isWorking && <Button key="launch" label={launchLabel} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />}
         {!isWorking && isLit && <Button key="stay" label={T.stayHere} onPress={() => update($, calmId, () => s.id)} />}
         <Button key="details" label={detailsLabel} onPress={toggle} />
@@ -836,7 +836,9 @@ export const register: Register = (on, options) => {
     if (!isOpen) {
       // the terminal counts cells; the desktop draws wider and does not wrap, so only the terminal trims the tokens to the room the buttons leave
       const buttons = [launchLabel, ...(isLit ? [T.stayHere] : []), detailsLabel].slice(isWorking ? -1 : 0)
-      const room = e.surface === 'terminal' ? e.props.bodyColumns - T.bandTitle.length - 2 * buttons.length - buttons.join('').length - 6 : Infinity
+      // the row is the title, the tokens ("· " + text), a spacer and the buttons, one gap between neighbours; a Button is its label plus a cell each side (assumed).
+      // The tokens' ' · ' joins in fitTokens are 5 cells short of what they take in the row.
+      const room = e.surface === 'terminal' ? e.props.bodyColumns - T.bandTitle.length - buttons.join('').length - 3 * buttons.length - 4 : Infinity
       return (
         <Box flexDirection="column">
           <Box gap={1}>
@@ -845,7 +847,7 @@ export const register: Register = (on, options) => {
               <Text key={t.key} color={t.tone}>{`· ${t.text}`}</Text>
             ))}
             <Box flexGrow={1} />
-            {actions}
+            {actions(false)}
           </Box>
           {below}
         </Box>
@@ -860,7 +862,7 @@ export const register: Register = (on, options) => {
             <Text dimColor>{c.label}</Text>
             <Text bold color={c.tone}>{c.value}</Text>
             {c.sub.map(line => (
-              <Text dimColor wrap="truncate-end">{line}</Text>
+              <Text key={line} dimColor wrap="truncate-end">{line}</Text>
             ))}
           </Box>
         ))}
@@ -876,7 +878,7 @@ export const register: Register = (on, options) => {
         <Box borderStyle="round" borderDimColor flexDirection="column" paddingX={1}>
           {title}
           {body}
-          {actions}
+          {actions(true)}
         </Box>
         {below}
       </Box>
