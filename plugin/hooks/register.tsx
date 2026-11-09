@@ -301,22 +301,22 @@ const runStats = async ($: EngineInterface, python: string, days: number, compre
 // What the band's «База» and «сэкономлено» draw from: asked of cg.py when something changes, never while drawing. A field that did not come is null;
 // the first failure of a load goes to /al-health, no toast (a broken index would repeat it every 10 minutes).
 let isInfoNoted = false
+let infoSeq = 0 // an older, slower answer must not replace a newer one
+// The flag goes up before anything is awaited (two failures at once note one); an older error stays, it is the first cause (a broken index fails these too).
+const noteInfoOnce = async ($: EngineInterface, err: unknown) => {
+  if (isInfoNoted) return
+  isInfoNoted = true
+  if ((await $.store.get('lastError')) === undefined) await noteError($, 'band', err)
+}
 const refreshInfo = async ($: EngineInterface, python: string) => {
+  const seq = ++infoSeq
   try {
     const [id, root] = await Promise.all([$.session.id(), $.session.root()])
-    const ask = (args: string[]) =>
-      runCg($, python, args).catch(async (err: unknown) => {
-        // an older error is the first cause (a broken index fails these too): it stays, and this one waits for the next run
-        if (!isInfoNoted && (await $.store.get('lastError')) === undefined) {
-          await noteError($, 'band', err)
-          isInfoNoted = true
-        }
-        return null
-      })
+    const ask = (args: string[]) => runCg($, python, args).catch(async (err: unknown) => (await noteInfoOnce($, err), null))
     const [status, savings] = await Promise.all([ask(['status', `--cwd=${root}`]), ask(['savings', '--session', id, '--cwd', root])])
-    await update($, info, () => ({ status, savings: savings as Savings | null }))
+    if (seq === infoSeq) await update($, info, () => ({ status, savings: savings as Savings | null }))
   } catch (err) {
-    await noteError($, 'band', err)
+    await noteInfoOnce($, err).catch(() => {}) // never throws: callers run it bare
   }
 }
 
@@ -396,6 +396,7 @@ export const register: Register = (on, options) => {
   let isLessonsNoted = false // a lesson search that fails on every message is kept for /al-health once, not on each
 
   on('session.start', async ($, e, next) => {
+    isInfoNoted = false // once per load of the mod
     // first, so the language and every other setting of the file hold before anything is drawn or said; a reload reads it again
     homeDir = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
     if (homeDir !== undefined) {
@@ -417,8 +418,11 @@ export const register: Register = (on, options) => {
     // timers outlive /clear (no session.start after it), so one tick also keeps a new session's figures fresh
     $.clock.every(30_000, () => void guarded($, 'timer', () => refresh($, python)))
     // a chat open for hours learns of a lesson saved in another chat or brought by the job's sync
-    $.clock.every(600_000, () => void lessonsOr($, python, lessonList).then(l => void (lessonList = l)))
-    $.clock.every(600_000, () => void refreshInfo($, python))
+    // and the band's data (never awaited together: one slow answer must not hold the other)
+    $.clock.every(600_000, () => {
+      void lessonsOr($, python, lessonList).then(l => void (lessonList = l))
+      void refreshInfo($, python)
+    })
     // session.end has 1.5 s, too little to index: a closed chat is picked up here, or by the next recall. Never awaited, so session.start is not held.
     $.clock.after(
       3_000,

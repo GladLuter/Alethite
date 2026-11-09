@@ -1390,6 +1390,7 @@ test('/al-index-dir: a run the host stopped at its time limit says so and what t
 
 test('index notice: any answer of cg.py that carries one gives a toast when it differs from the last one shown, and an answer with none forgets it', async ($, on) => {
   let notice: string | undefined = 'the index of the test is not in D:/one'
+  // every answer carries the notice, status and savings too: the band's background calls (refreshInfo, after /al-index) raise index-notice toasts like any other call
   const m = await started($, on, a => (ran(JSON.stringify({ ...(a[0] === 'index' && { files: 0, rows: 0, convs: 0, seconds: 0, errors: [] }), index_notice: notice }))))
   const index = () => ($ as any).command.run({ command: 'al-index', args: '' })
   await index()
@@ -1500,7 +1501,7 @@ test('home_notes: a note beside an error answer is told as well', async ($, on) 
 
 const savingsJson = ran(JSON.stringify({ last: null, worker: { usd: 0, links: 0, calls: 0 }, project: null }))
 
-test('band data: status and savings are asked at the start and after /al-sync', { options: { syncDir: 'D:\s' } }, async ($, on) => {
+test('band data: status and savings are asked at the start and after /al-sync', { options: { syncDir: SHARE } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'savings' ? savingsJson : a[0] === 'sync' ? synced() : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')))
   await m.clock.advance(3_000)
   const asked = () => [ofCg(m, 'status').length, ofCg(m, 'savings').length]
@@ -1521,4 +1522,13 @@ test('band data: a failed savings is noted once, status still arrives', async ($
   expect(ofCg(m, 'status').length).toBeGreaterThanOrEqual(2)
   expect(m.store.get('lastError')).toBeUndefined() // noted once per load
   expect(m.toasts).toEqual([])
+})
+
+test('band data: both calls failing at once note only the first error', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'savings' ? failed('savings down') : a[0] === 'status' ? failed('status down') : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')))
+  await m.clock.advance(3_000)
+  expect(m.store.get('lastError')).toMatchObject({ where: 'band' })
+  const first = m.store.get('lastError')
+  await m.clock.advance(600_000)
+  expect(m.store.get('lastError')).toEqual(first)
 })
