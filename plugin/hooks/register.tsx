@@ -784,12 +784,12 @@ export const register: Register = (on, options) => {
       const size = ((await $.store.get(`turn:${id}`)) as { tokens: number | null } | undefined)?.tokens ?? null
       const { due, mark } = rulesDue(rulesAt.get(id), size, RULES_EVERY)
       const rules = due ? rulesContext(lessonList).block : undefined
+      if (!due || rules !== undefined) rulesAt.set(id, mark) // due with nothing to say yet (the list not read): ask again on the next message
       if (rules !== undefined) {
         blocks.push(rules)
-        await countLessons($, 'rules', 1)
+        await countLessons($, 'rules', 1) // after the mark: a failing counter must not make the rules come again
         await countLessons($, 'rulesChars', rules.length)
       }
-      if (!due || rules !== undefined) rulesAt.set(id, mark) // due with nothing to say yet (the list not read): ask again on the next message
     } catch (err) {
       if (!isLessonsNoted) await noteError($, 'lessons', err)
       isLessonsNoted = true
