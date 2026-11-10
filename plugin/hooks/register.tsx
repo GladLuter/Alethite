@@ -16,7 +16,7 @@ import { healthLines, homeNotesOf, indexProblemOf, message, parseCg } from './py
 import type { LastError } from './py'
 import { jobArgs, jobHealth } from './job'
 import type { JobRun } from './job'
-import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, lessonsMatchArgs, oneLine, START } from './lessons'
+import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, lessonsMatchArgs, oneLine, RULES_EVERY, rulesContext, rulesDue, START } from './lessons'
 import type { Found, Lesson } from './lessons'
 import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
@@ -194,7 +194,7 @@ const lessonsOr = async ($: EngineInterface, python: string, kept: Lesson[]) => 
 }
 
 // How often the lessons came back, on this computer, for /al-health: what they cost and whether they stop anything.
-const countLessons = async ($: EngineInterface, key: 'shown' | 'chars' | 'stopped', n: number) => {
+const countLessons = async ($: EngineInterface, key: 'shown' | 'chars' | 'stopped' | 'rules' | 'rulesChars', n: number) => {
   const all = ((await $.store.get('lessonCounts')) as Record<string, number> | undefined) ?? {}
   await $.store.set('lessonCounts', { ...all, [key]: (all[key] ?? 0) + n })
 }
@@ -437,6 +437,7 @@ export const register: Register = (on, options) => {
   let lessonList: Lesson[] = []
   const shownIn = new Map<string, Set<number>>()
   const stoppedIn = new Map<string, Set<number>>()
+  const rulesAt = new Map<string, number | null>() // the context size at the last reminder of the rules for all projects, by chat (null: it was unknown)
   const setOf = (m: Map<string, Set<number>>, id: string) => m.get(id) ?? m.set(id, new Set()).get(id)!
   let isLessonsNoted = false // a lesson search that fails on every message is kept for /al-health once, not on each
 
@@ -538,6 +539,7 @@ export const register: Register = (on, options) => {
               cause: { type: 'string', description: T.lessonCause },
               fix: { type: 'string', description: T.lessonFix },
               trigger: { type: 'string', description: T.lessonTrigger },
+              scope: { type: 'string', enum: ['project', 'all'], description: T.lessonScope },
             },
             required: ['action', 'symptom', 'cause'],
           },
@@ -595,10 +597,11 @@ export const register: Register = (on, options) => {
       const memory = dir === null ? null : { dir, facts, tokens: autoMemTokens(mem) }
       const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" --lang ${language()} embed --model ${embedModel} --max-seconds 100000`
       const counts = ((await $.store.get('lessonCounts')) as Record<string, number> | undefined) ?? {}
-      const lessons = { count: lessonList.length, shown: counts.shown ?? 0, chars: counts.chars ?? 0, stopped: counts.stopped ?? 0, on: isLessonsOn }
+      const lessons = { count: lessonList.filter(l => !l.global).length, shown: counts.shown ?? 0, chars: counts.chars ?? 0, stopped: counts.stopped ?? 0, on: isLessonsOn }
+      const rules = { global: lessonList.filter(l => l.global).length, rules: counts.rules ?? 0, chars: counts.rulesChars ?? 0, left: rulesContext(lessonList).left }
       if (homeDir !== undefined) settingsFile = await settingsFileOf($, homeDir) // after the status run, which may have moved the folder
       return {
-        text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile, shareCipher, lessons, homeNotes: typeof index === 'string' ? [] : (index.home_notes as string[] | undefined) }).join('\n'),
+        text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile, shareCipher, lessons, rules, homeNotes: typeof index === 'string' ? [] : (index.home_notes as string[] | undefined) }).join('\n'),
       }
     } catch (err) {
       await fail($, 'al-health', err)
@@ -726,6 +729,10 @@ export const register: Register = (on, options) => {
       const r = await runCg($, python, lessonSaveArgs(input, await $.session.root(), embedModel))
       lessonList = await lessonsOr($, python, lessonList)
       if (!r.new) return T.lessonKnown
+      if (input.scope === 'all') {
+        toast($, T.lessonToastGlobal(oneLine(String(r.text)), rulesContext(lessonList).left))
+        return T.lessonSavedGlobal(String(r.text))
+      }
       toast($, T.lessonToast(oneLine(String(r.text))))
       return T.lessonSaved(String(r.text))
     }, T.lessonSaveFailed),
@@ -769,27 +776,47 @@ export const register: Register = (on, options) => {
     const kind = (e.origin as { kind?: string } | undefined)?.kind
     const isOwners = kind === undefined || kind === 'composer' || kind === 'bridge' || kind === 'sdk' || kind === 'unclassified'
     if (isOwners && !e.isMeta) await recheck($, python)
-    if (!isLessonsOn || lessonList.length === 0 || e.command !== undefined || e.isMeta || !isOwners || e.text.trim().length < 12) return next(e)
-    let block: string | undefined
+    if (!isLessonsOn || e.command !== undefined || e.isMeta || !isOwners) return next(e)
+    const blocks: string[] = []
+    // the rules for all projects come first and need no Python and no minimum length; a failure in one part must not stop the other
     try {
-      const [root, id] = await Promise.all([$.session.root(), $.session.id()])
-      const shown = setOf(shownIn, id)
-      // every lesson shown already: no Python; else ask for the shown ones too, so they do not take the places of the fresh ones
-      const found = lessonList.every(l => shown.has(l.id))
-        ? []
-        : ((await runCg($, python, lessonsMatchArgs(e.text, root, embedModel, lessonsMinScore, 2 + shown.size), 8_000)).lessons as Found[])
-      const fresh = found.filter(l => !shown.has(l.id)).slice(0, 2)
-      if (fresh.length) {
-        block = lessonContext(fresh)
-        for (const l of fresh) shown.add(l.id)
-        await countLessons($, 'shown', fresh.length)
-        await countLessons($, 'chars', block.length)
+      const id = await $.session.id()
+      const size = ((await $.store.get(`turn:${id}`)) as { tokens: number | null } | undefined)?.tokens ?? null
+      const { due, mark } = rulesDue(rulesAt.get(id), size, RULES_EVERY)
+      const rules = due ? rulesContext(lessonList).block : undefined
+      if (rules !== undefined) {
+        blocks.push(rules)
+        await countLessons($, 'rules', 1)
+        await countLessons($, 'rulesChars', rules.length)
       }
+      if (!due || rules !== undefined) rulesAt.set(id, mark) // due with nothing to say yet (the list not read): ask again on the next message
     } catch (err) {
       if (!isLessonsNoted) await noteError($, 'lessons', err)
       isLessonsNoted = true
     }
-    return next(block === undefined ? e : { ...e, context: [...(e.context ?? []), block] })
+    const own = lessonList.filter(l => !l.global)
+    if (own.length && e.text.trim().length >= 12) {
+      try {
+        const [root, id] = await Promise.all([$.session.root(), $.session.id()])
+        const shown = setOf(shownIn, id)
+        // every lesson shown already: no Python; else ask for the shown ones too, so they do not take the places of the fresh ones
+        const found = own.every(l => shown.has(l.id))
+          ? []
+          : ((await runCg($, python, lessonsMatchArgs(e.text, root, embedModel, lessonsMinScore, 2 + shown.size), 8_000)).lessons as Found[])
+        const fresh = found.filter(l => !shown.has(l.id)).slice(0, 2)
+        if (fresh.length) {
+          const block = lessonContext(fresh)
+          blocks.push(block)
+          for (const l of fresh) shown.add(l.id)
+          await countLessons($, 'shown', fresh.length)
+          await countLessons($, 'chars', block.length)
+        }
+      } catch (err) {
+        if (!isLessonsNoted) await noteError($, 'lessons', err)
+        isLessonsNoted = true
+      }
+    }
+    return next(blocks.length ? { ...e, context: [...(e.context ?? []), ...blocks] } : e)
   })
 
   // A Bash or PowerShell command that holds a lesson's trigger is stopped once in a chat, with the lesson; the same command again passes.
@@ -808,7 +835,7 @@ export const register: Register = (on, options) => {
       lesson = undefined
     }
     // between the marks: a denial the engine records as an error result must not enter the index as the lesson's text a second time (transcripts.py)
-    return lesson === undefined ? next(e) : { deny: [START, T.lessonGate(oneLine(lesson.text)), END].join('\n') }
+    return lesson === undefined ? next(e) : { deny: [START, (lesson.global ? T.lessonGateGlobal : T.lessonGate)(oneLine(lesson.text)), END].join('\n') }
   })
 
   // After a compaction the model no longer has what it was shown: this chat's lessons may be shown and may stop a command once more.
@@ -821,6 +848,7 @@ export const register: Register = (on, options) => {
         const id = await $.session.id()
         shownIn.delete(id)
         stoppedIn.delete(id)
+        rulesAt.delete(id)
       }
     } catch {}
     return r

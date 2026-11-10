@@ -1281,6 +1281,95 @@ test('/al-health: how many lessons, how often they came back and what that cost'
   expect(text).toContain(T.healthLessons(1, 1, counts.chars!, 1, true))
 })
 
+// ---- lessons for all projects ----
+const rule = { id: 8, conv: 'g', pos: 1792000000001, ts: '2026-10-21T10:00:00.000Z', text: 'Action: a\nSymptom: b\nCause: c\nFix: Answer in Ukrainian', trigger: null, from: null, fix: 'Answer in Ukrainian', global: true }
+const rulesText = () => ['[al-lessons]', T.rulesIntro, '- Answer in Ukrainian', '[/al-lessons]'].join('\n')
+const withSize = (m: { store: Map<string, unknown> }, tokens: number) => m.store.set('turn:id', { at: 1, tokens })
+
+test('global lessons: the first owner message carries the rules, the next one at the same size does not', async ($, on) => {
+  const contexts: string[][] = []
+  const { m } = await lessonRig($, on, [], [rule], { context: contexts })
+  withSize(m, 50_000)
+  await typed($, 'да')
+  await typed($, 'да')
+  expect(contexts).toEqual([[rulesText()], []])
+})
+
+test('global lessons: due again after 20k tokens, after a compaction and after a smaller size', async ($, on) => {
+  const kept = [{ role: 'user', text: 'summary', toolUses: [] }]
+  on('session.compact', () => ({ messages: kept }))
+  const contexts: string[][] = []
+  const { m } = await lessonRig($, on, [], [rule], { context: contexts })
+  const got = async (tokens: number) => (withSize(m, tokens), await typed($, 'да'), contexts.at(-1)!.length)
+  expect(await got(50_000)).toBe(1)
+  expect(await got(69_999)).toBe(0)
+  expect(await got(70_000)).toBe(1) // 20k since the last reminder
+  expect(await got(80_000)).toBe(0)
+  expect(await got(30_000)).toBe(1) // smaller: the chat was cut
+  expect(await got(30_000)).toBe(0)
+  await ($ as any).session.compact({ messages: kept })
+  expect(await got(31_000)).toBe(1) // a compaction
+})
+
+test('global lessons: a new session id gets the rules', async ($, on) => {
+  const contexts: string[][] = []
+  const { m } = await lessonRig($, on, [], [rule], { context: contexts })
+  withSize(m, 50_000)
+  await typed($, 'да')
+  await typed($, 'да')
+  ids.now = 'other' // /clear changes the id without session.start
+  m.store.set('turn:other', { at: 1, tokens: 50_000 })
+  await typed($, 'да')
+  expect(contexts.map(c => c.length)).toEqual([1, 0, 1])
+})
+
+test('global lessons: only globals means no Python on a message', async ($, on) => {
+  const { m } = await lessonRig($, on, [], [rule])
+  await typed($, 'опять 429 на сборке, что делать?')
+  expect(ofCg(m, 'lessons-match')).toEqual([])
+})
+
+test('global lessons: a short message gets the rules but no lesson search', async ($, on) => {
+  const contexts: string[][] = []
+  const { m } = await lessonRig($, on, [{ ...lesson, score: 0.9 }], [lesson, rule], { context: contexts })
+  await typed($, 'да')
+  expect(contexts).toEqual([[rulesText()]])
+  expect(ofCg(m, 'lessons-match')).toEqual([])
+})
+
+test('global lessons: off switch stops the rules', { options: { lessons: false } }, async ($, on) => {
+  const contexts: string[][] = []
+  await lessonRig($, on, [], [rule], { context: contexts })
+  await typed($, 'да')
+  expect(contexts).toEqual([[]])
+})
+
+test('global lessons: the trigger stops a command in any project, with the global text', async ($, on) => {
+  await lessonRig($, on, [], [{ ...rule, trigger: 'gh api /repos' }])
+  const stop = await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })
+  expect(stop).toEqual({ deny: ['[al-lessons]', T.lessonGateGlobal('Action: a | Symptom: b | Cause: c | Fix: Answer in Ukrainian'), '[/al-lessons]'].join('\n') })
+  expect(await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })).toEqual({ result: 'ran' })
+})
+
+test('lesson_save scope all: the answer, the toast and the args', async ($, on) => {
+  const { m } = await lessonRig($, on, [], [rule])
+  const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
+  expect(ofCg(m, 'lesson-save')[0]!.argv).toEqual(['lesson-save', '--cwd', 'C:/w', '--model', 'embeddinggemma', '--action=x', '--symptom=y', '--cause=z', '--fix=f', '--scope=all'])
+  expect(r).toEqual({ result: T.lessonSavedGlobal('Action: x\nSymptom: y\nCause: z') })
+  expect(m.toasts).toEqual([T.toast(T.lessonToastGlobal('Action: x | Symptom: y | Cause: z', 0))])
+})
+
+test('/al-health shows the rules line', async ($, on) => {
+  const { m } = await lessonRig($, on, [], [rule])
+  await typed($, 'да')
+  const counts = m.store.get('lessonCounts') as Record<string, number>
+  expect(counts.rules).toBe(1)
+  expect(counts.rulesChars).toBeGreaterThan(0)
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
+  expect(text).toContain(T.healthRules(1, 1, counts.rulesChars!, 0))
+  expect(text).toContain(T.healthLessons(0, 0, 0, 0, true))
+})
+
 // ---- the background job (stage 4) ----
 const lastRun = { at: '2026-10-20T10:00:00Z', index: { rows: 3, errors: 0 }, embed: { skipped: 'battery' }, sync: { pushed: 2, pulled: 5, errors: 1 }, errors: [{ where: 'sync', error: 'batch 4 is broken' }] }
 
