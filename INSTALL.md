@@ -148,7 +148,7 @@ Turn it on on each computer: in a chat, `/al-job on` (or `/al-job on 15` for eve
 
 ### Lessons
 
-Lessons work by themselves. Claude saves an understood error with `lesson_save`. `/al-lessons` lists the project's lessons, `/al-lessons forget <pos>` deletes one.
+Lessons work by themselves. Claude saves an understood error with `lesson_save`. `/al-lessons` lists the project's lessons and the lessons for all projects (marked), `/al-lessons forget <pos>` deletes one.
 - A lesson comes beside a message close in meaning and stops once a command that holds its trigger.
 - To keep a rule for all projects, ask Claude to save it for all projects. Those rules come in every chat, so they cost tokens everywhere. `/al-health` shows how many there are and what they cost.
 - If lessons come where they do not belong, raise `lessonsMinScore` in `settings.json` to `0.55`. If they never come, lower it to `0.4`. To turn them off: `"lessons": false`.

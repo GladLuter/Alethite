@@ -38,7 +38,7 @@ The money goes on coming back to a big idle chat. Alethite shows you the price b
 | 🆕 **New worker** | A button that starts a clean chat with a handoff of the old one (no model calls) and the message you already typed. The After reset button does the same once the limit resets. It shows up after you press New worker, when a limit is 90% used or more. | buttons in the band |
 | 📝 **Short memory** | One short rule for Claude: write decisions down at once, save an understood error as a lesson, check memory before proposing. A toast shows each saved fact. | |
 | 🔎 **Long memory** | Every past conversation of every project, subagents included, in a local SQLite index with vectors from a local Ollama model. Claude searches it with `recall`, by words and by meaning. Secrets are hidden before indexing. Nothing that got into the index is ever lost, and tool errors are indexed too. | `/al-index` |
-| 🎓 **Lessons** | An understood error is saved as a lesson and comes back only where it fits. A command that holds a lesson's trigger is stopped once with it, and at most 2 lessons come per message. No fitting lesson, zero tokens. A lesson can also be for all projects (`scope: all`). It comes as a short reminder about every ~20k tokens of chat and costs those tokens in every project. `/al-lessons` marks them. | `/al-lessons` |
+| 🎓 **Lessons** | An understood error is saved as a lesson and comes back only where it fits. A command that holds a lesson's trigger is stopped once with it, and at most 2 lessons come per message. No fitting lesson, zero tokens. A lesson can also be for all projects (`scope: all`). That kind is the exception: it comes as a short reminder every ~20k tokens of chat and costs those tokens in every project. The reminder holds at most 1000 characters, newest first, and older rules that do not fit are dropped. `/al-lessons` marks them. | `/al-lessons` |
 | 🔄 **Sync between computers** | A shared folder on a network drive carries the index, the vectors and the memory facts. Without it everything works locally. | `/al-sync` |
 | 🗜️ **Memory compression** | What the plugin hands to the model is squeezed mechanically, in four levels. Code, paths and negations are never touched. | `/al-stats` |
 | ⏱️ **Background job** | A Task Scheduler task keeps the index, the vectors and the sync fresh with no chat open. Windows only. | `/al-job` |
@@ -82,7 +82,7 @@ Type `/al-health` in a new chat to check it. Computing the vectors (it takes hou
 | `/al-index [rebuild]` | Updates the index. `rebuild` re-reads everything and adds what is missing |
 | `/al-sync [skip <computer> <N>]` | Syncs with the other computers now |
 | `/al-stats [days]` | Measures the cost and writes it to Obsidian |
-| `/al-lessons [forget <pos>]` | Lists the lessons of this project, or deletes one |
+| `/al-lessons [forget <pos>]` | Lists the lessons of this project and for all projects, or deletes one |
 | `/al-job [on [minutes] \| off]` | The background job (Windows): on, off, its state |
 | `/al-encrypt [on \| join \| off \| status]` | Encryption of the index and the sync folder (Windows) |
 | `/al-index-dir [folder]` | Moves the index to another local disk (Windows). Without a folder, a window asks for one |
