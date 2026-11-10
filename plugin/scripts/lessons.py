@@ -14,6 +14,7 @@ from redact import redact
 from texts import t
 
 KIND = 'lesson'
+GLOBAL = '*'  # the project key of a lesson for every project; no real key looks like this
 FIELDS = ('action', 'symptom', 'cause', 'fix', 'trigger')
 _LABELS = {'action': 'Action', 'symptom': 'Symptom', 'cause': 'Cause', 'fix': 'Fix', 'trigger': 'Trigger'}  # one language on every computer
 _LINE = re.compile(r'^(%s): (.*)$' % '|'.join(_LABELS.values()), re.M)
@@ -60,7 +61,10 @@ def _clean(fields):
 
 def save(conn, project, fields, now=None):
     """Keep a lesson of `project`: {'id', 'conv', 'pos', 'text', 'new'}. The same text again changes nothing (new: False)."""
-    text = redact(text_of(_clean(fields)))
+    fields = _clean(fields)
+    if project == GLOBAL and 'fix' not in fields:
+        raise ValueError(t('lesson_global_fix'))  # the mod shows its fix line as a rule, with no model call
+    text = redact(text_of(fields))
     conv = conv_of(project)
     stamp = now or datetime.datetime.now(datetime.timezone.utc)
     ts = stamp.strftime('%Y-%m-%dT%H:%M:%S.') + '%03dZ' % (stamp.microsecond // 1000)
@@ -84,9 +88,10 @@ def save(conn, project, fields, now=None):
 
 
 def listing(conn, project):
-    """The lessons of `project` (None: all; else a list of project keys), newest first: {'id', 'conv', 'pos', 'ts', 'text', 'trigger', 'from'}."""
+    """The lessons of `project` (None: all; else a list of project keys), newest first: {'id', 'conv', 'pos', 'ts', 'text', 'trigger', 'fix', 'global', 'from'}."""
     rows = conn.execute(_SELECT + ' ORDER BY pos DESC', {'p': json.dumps(project)}).fetchall()  # not ts: two lessons of one millisecond tie
-    return [{'id': rid, 'conv': conv, 'pos': pos, 'ts': ts, 'text': text, 'trigger': fields_of(text).get('trigger'), 'from': origin}
+    return [{'id': rid, 'conv': conv, 'pos': pos, 'ts': ts, 'text': text, 'trigger': fields_of(text).get('trigger'), 'fix': fields_of(text).get('fix'),
+             'global': conv == conv_of(GLOBAL), 'from': origin}
             for rid, conv, pos, ts, text, origin in rows]
 
 

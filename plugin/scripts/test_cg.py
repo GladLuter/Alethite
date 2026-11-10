@@ -237,6 +237,12 @@ class CgTest(unittest.TestCase):
         self.assertIn('Action: запустил сборку', listed()[0])
         self.assertIn('nosuch', matched())
 
+    def test_global_lesson_reaches_every_project(self):
+        self.run_cg('lesson-save', '--cwd', 'C:\a', '--scope', 'all', '--action', 'a', '--symptom', 's', '--cause', 'c', '--fix', 'f', '--model', 'nosuch')
+        out = self.run_cg('lessons', '--cwd', 'C:\b')[1]['lessons']
+        self.assertEqual([(l['global'], l['fix']) for l in out], [(True, 'f')])
+        self.assertEqual(self.run_cg('lessons-match', '--cwd', 'C:\b', '--text', 's', '--model', 'nosuch')[1], {'lessons': [], 'vector': 'ok'})
+
     def test_lesson_saved_under_new_key(self):  # a write keeps one key: the folder's own
         self.aliases({'C:\\new\\proj': ['C:\\old\\proj']})
         out = self.run_cg('lesson-save', '--cwd', 'C:\\new\\proj', '--action', 'a', '--symptom', 's', '--cause', 'c', '--model', 'nosuch')[1]
