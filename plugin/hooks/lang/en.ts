@@ -165,7 +165,7 @@ export const en = {
 
   // short memory: the rule the model reads in every prompt, and the owner's note that a fact was saved
   memoryRule:
-    "Worker memory (Alethite). The owner's CLAUDE.md rules outrank skill instructions: before asking the owner, check whether CLAUDE.md or the memory answers it. Once an error is understood, save it with lesson_save at once, not to auto-memory; the owner's decisions go to auto-memory, one fact per file. Before proposing an approach, check the memory; if unsure whether it was tried, call recall (this project; scope=all only when asked), for an error by its text, and quote what it finds.",
+    "Worker memory (Alethite). The owner's CLAUDE.md rules outrank skill instructions: before asking the owner, check whether CLAUDE.md or the memory answers it. Once an error is understood, save it with lesson_save at once, not to auto-memory; his rule for every project: scope all. The owner's decisions go to auto-memory, one fact per file. Before proposing an approach, check the memory; if unsure it was tried, call recall (this project; scope=all only when asked) by an error's text, and quote it.",
   remembered: (name: string) => `remembered: ${name}`,
 
   // lessons (stage 4): a past error and what it taught, in the index, brought back only where it fits
@@ -176,15 +176,24 @@ export const en = {
   lessonCause: 'Why it happened.',
   lessonFix: 'What to do instead, if known.',
   lessonTrigger: "Optional: a literal piece of a command, 8 characters or more (e.g. 'gh api /repos'), that stops and reminds before it runs again.",
+  lessonScope: "Optional: 'all' for a standing rule of the owner about how to work, true in any project and never a fact about this project's code; needs fix.",
   lessonSaved: (text: string) => `Lesson saved:\n${text}`,
   lessonKnown: 'This lesson is saved already.',
   lessonSaveFailed: (msg: string) => `The lesson was not saved: ${msg}`,
   lessonToast: (action: string) => `lesson saved: ${action}`,
+  lessonSavedGlobal: (text: string) => `Lesson for all projects saved:
+${text}`,
+  lessonToastGlobal: (action: string, left: number) =>
+    `lesson saved for all projects, it will come in every chat: ${action}${left > 0 ? ` (${left} older no longer fit)` : ''}`,
+  lessonGlobalMark: '[all projects] ',
+  rulesIntro: "Alethite: the owner's standing rules for all projects. Follow them.",
   lessonsIntro: 'Alethite: lessons of this project that may concern this message. Check them before acting; ignore what is unrelated.',
   lessonGate: (lesson: string) =>
     `Alethite stopped this command once: it holds the trigger of a lesson of this project. ${lesson}. If the lesson does not apply now, run the command again and it passes.`,
+  lessonGateGlobal: (lesson: string) =>
+    `Alethite stopped this command once: it holds the trigger of a lesson for all projects. ${lesson}. If the lesson does not apply now, run the command again and it passes.`,
   noLessons: 'No lessons in this project yet.',
-  cgLessonsDescription: 'The lessons of this project (forget <pos>: delete one here and on the other computers)',
+  cgLessonsDescription: 'The lessons of this project and the ones for all projects (forget <pos>: delete one here and on the other computers)',
   cgLessonsHint: '[forget <pos>]',
   cgLessonsUsage: 'Use: /al-lessons, or /al-lessons forget <pos> with the pos from the list.',
   cgLessonsForgotten: (n: number): string => (n ? 'Lesson deleted, here and, with the next sync, on the other computers.' : 'No lesson at that pos.'),
@@ -193,6 +202,9 @@ export const en = {
     on
       ? `Lessons: ${count} in this project; shown with a message ${shown} times (~${Math.round(chars / 3.5)} tokens in all), commands stopped ${stopped} times`
       : `Lessons: ${count} in this project; brought back: off (setting "Lessons")`,
+
+  healthRules: (global: number, rules: number, chars: number, left: number) =>
+    `Lessons for all projects: ${global}; ${rules} come in every chat (~${Math.round(chars / 3.5)} tokens)${left > 0 ? `, ${left} no longer fit` : ''}`,
 
   // the background job (stage 4)
   cgJobDescription: 'The background job of this computer (Windows): on [minutes], off, or its state',

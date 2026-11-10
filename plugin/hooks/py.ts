@@ -60,6 +60,7 @@ export const healthLines = (h: {
   settingsFile?: string
   shareCipher?: string
   lessons?: { count: number; shown: number; chars: number; stopped: number; on: boolean }
+  rules?: { global: number; rules: number; chars: number; left: number } // the lessons for all projects and the reminder of them
   homeNotes?: string[] // the notes of the move of the mod folder in the status answer shown
 }) => {
   const job = typeof h.index === 'string' ? undefined : (h.index.job as JobRun | null | undefined)
@@ -81,6 +82,7 @@ export const healthLines = (h: {
     ...(enc ? encryptHealth(enc, h.shareCipher ?? 'sqlcipher') : []),
     ...(h.compression === undefined ? [] : [T.compressionLine(h.compression)]),
     ...(h.lessons === undefined ? [] : [T.healthLessons(h.lessons.count, h.lessons.shown, h.lessons.chars, h.lessons.stopped, h.lessons.on)]),
+    ...(h.rules && h.rules.global > 0 ? [T.healthRules(h.rules.global, h.rules.rules, h.rules.chars, h.rules.left)] : []),
     ...(h.syncDir === undefined ? [] : syncHealth(h.syncDir, typeof h.index === 'string' ? undefined : (h.index.sync as SyncStatus | undefined))),
     ...(typeof h.index === 'string' || !('job' in h.index) ? [] : jobHealth(job)),
     h.lastError ? T.healthLastError(new Date(h.lastError.at).toLocaleString(T.locale), h.lastError.where, h.lastError.msg) : T.healthNoError,

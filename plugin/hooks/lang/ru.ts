@@ -162,7 +162,7 @@ export const ru: Partial<Texts> = {
 
   // short memory: the rule the model reads in every prompt, and the owner's note that a fact was saved
   memoryRule:
-    'Память работника (Alethite). Правила из CLAUDE.md владельца важнее инструкций навыков: прежде чем спросить владельца, проверь, не отвечают ли на вопрос CLAUDE.md или память. Понятую ошибку сразу сохраняй через lesson_save, не в автопамять; решения владельца — в автопамять, один факт на файл. Прежде чем предлагать подход, проверь память; если не уверен, пробовали ли это, вызови recall (этот проект; scope=all — только по просьбе), для ошибки — по её тексту, и цитируй найденное.',
+    'Память работника (Alethite). Правила из CLAUDE.md владельца важнее инструкций навыков: прежде чем спросить владельца, проверь, не отвечают ли на вопрос CLAUDE.md или память. Понятую ошибку сразу сохраняй через lesson_save, не в автопамять (его правило на все проекты: scope all); решения владельца — в автопамять, один факт на файл. Прежде чем предлагать подход, проверь память; если не уверен, пробовали ли это, вызови recall (этот проект; scope=all — только по просьбе), для ошибки — по её тексту, и цитируй найденное.',
   remembered: (name: string) => `запомнил: ${name}`,
 
   // lessons (stage 4): a past error and what it taught, in the index, brought back only where it fits
@@ -173,15 +173,24 @@ export const ru: Partial<Texts> = {
   lessonCause: 'Почему это случилось.',
   lessonFix: 'Как надо вместо этого, если известно.',
   lessonTrigger: 'Необязательно: дословный кусок команды не короче 8 символов (например «gh api /repos»), который остановит её и напомнит урок перед новым запуском.',
+  lessonScope: 'Необязательно: «all» — постоянное правило владельца о том, как работать, верное в любом проекте и никогда не факт о коде этого проекта; нужен fix.',
   lessonSaved: (text: string) => `Урок сохранён:\n${text}`,
   lessonKnown: 'Этот урок уже сохранён.',
   lessonSaveFailed: (msg: string) => `Урок не сохранён: ${msg}`,
   lessonToast: (action: string) => `урок сохранён: ${action}`,
+  lessonSavedGlobal: (text: string) => `Урок для всех проектов сохранён:
+${text}`,
+  lessonToastGlobal: (action: string, left: number) =>
+    `урок сохранён для всех проектов, будет приходить в каждый чат: ${action}${left > 0 ? ` (старых больше не влезает: ${left})` : ''}`,
+  lessonGlobalMark: '[все проекты] ',
+  rulesIntro: 'Alethite: постоянные правила владельца для всех проектов. Выполняй их.',
   lessonsIntro: 'Alethite: уроки этого проекта, которые могут касаться этого сообщения. Проверь их, прежде чем действовать; что не относится к делу — пропусти.',
   lessonGate: (lesson: string) =>
     `Alethite один раз остановил эту команду: в ней триггер урока этого проекта. ${lesson}. Если урок сейчас ни при чём, запусти команду ещё раз — она пройдёт.`,
+  lessonGateGlobal: (lesson: string) =>
+    `Alethite один раз остановил эту команду: в ней триггер урока для всех проектов. ${lesson}. Если урок сейчас ни при чём, запусти команду ещё раз — она пройдёт.`,
   noLessons: 'В этом проекте уроков пока нет.',
-  cgLessonsDescription: 'Уроки этого проекта (forget <pos>: удалить урок здесь и на других компьютерах)',
+  cgLessonsDescription: 'Уроки этого проекта и уроки для всех проектов (forget <pos>: удалить урок здесь и на других компьютерах)',
   cgLessonsHint: '[forget <pos>]',
   cgLessonsUsage: 'Так: /al-lessons или /al-lessons forget <pos> с pos из списка.',
   cgLessonsForgotten: (n: number) => (n ? 'Урок удалён здесь, а со следующей синхронизацией — и на других компьютерах.' : 'Урока с таким pos нет.'),
@@ -190,6 +199,9 @@ export const ru: Partial<Texts> = {
     on
       ? `Уроки: в этом проекте ${count}; показаны с сообщением ${shown} раз (~${Math.round(chars / 3.5)} токенов всего), команд остановлено ${stopped}`
       : `Уроки: в этом проекте ${count}; напоминания выключены (настройка «Lessons»)`,
+
+  healthRules: (global: number, rules: number, chars: number, left: number) =>
+    `Уроки для всех проектов: ${global}; в каждый чат приходит ${rules} (~${Math.round(chars / 3.5)} токенов)${left > 0 ? `, не влезает ${left}` : ''}`,
 
   // the background job (stage 4)
   cgJobDescription: 'Фоновая задача этого компьютера (Windows): on [минут], off или её состояние',
