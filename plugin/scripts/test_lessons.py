@@ -121,9 +121,13 @@ class LessonsTest(unittest.TestCase):
         bare = {k: v for k, v in RATE.items() if k != 'fix'}
         with self.assertRaisesRegex(ValueError, 'fix'):
             lessons.save(self.conn, lessons.GLOBAL, bare)
+        with self.assertRaisesRegex(ValueError, 'fix'):  # a blank fix is no fix
+            lessons.save(self.conn, lessons.GLOBAL, dict(RATE, fix='  '))
         self.assertEqual(self.conn.execute('SELECT count(*) FROM chunks').fetchone(), (0,))
         out = lessons.save(self.conn, lessons.GLOBAL, RATE)
         self.assertEqual(out['conv'], lessons.conv_of('*'))
+        (text,) = self.conn.execute('SELECT text FROM chunks WHERE conv = ?', (out['conv'],)).fetchone()
+        self.assertEqual(lessons.fields_of(text)['fix'], RATE['fix'])
 
     def test_listing_marks_global_and_fix(self):
         lessons.save(self.conn, A, dict(RATE, fix=None))

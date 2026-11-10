@@ -90,9 +90,9 @@ def save(conn, project, fields, now=None):
 def listing(conn, project):
     """The lessons of `project` (None: all; else a list of project keys), newest first: {'id', 'conv', 'pos', 'ts', 'text', 'trigger', 'fix', 'global', 'from'}."""
     rows = conn.execute(_SELECT + ' ORDER BY pos DESC', {'p': json.dumps(project)}).fetchall()  # not ts: two lessons of one millisecond tie
-    return [{'id': rid, 'conv': conv, 'pos': pos, 'ts': ts, 'text': text, 'trigger': fields_of(text).get('trigger'), 'fix': fields_of(text).get('fix'),
+    return [{'id': rid, 'conv': conv, 'pos': pos, 'ts': ts, 'text': text, 'trigger': f.get('trigger'), 'fix': f.get('fix'),
              'global': conv == conv_of(GLOBAL), 'from': origin}
-            for rid, conv, pos, ts, text, origin in rows]
+            for rid, conv, pos, ts, text, origin in rows if (f := fields_of(text)) is not None]
 
 
 def embed_one(conn, rowid, model, embed_fn=vectors.ollama_embed):
