@@ -2,7 +2,6 @@ import builtins
 import json
 import os
 import shutil
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -206,6 +205,57 @@ class SavingsTest(unittest.TestCase):
                             'savings', '--session', C, '--cwd', self.dir], capture_output=True)
         out = json.loads(p.stdout.decode('utf-8'))
         self.assertEqual((out['worker']['links'], out['project']['links']), (2, 3))
+
+    def test_cache_of_another_shape_is_empty(self):
+        self.old(A)
+        self.new(B, A, HOUR2)
+        for bad in ('{"stray": 1}', '{"v": 2, "files": {}}', '[]', '{"v": 1, "files": {"nobar": {"size": 1}, "read_new|x": {"size": 1, "mtime": 1}}}'):
+            with open(self.cache, 'w') as f:
+                f.write(bad)
+            self.assertEqual(self.run_savings(B)['worker']['links'], 1, bad)
+            with open(self.cache, encoding='utf-8') as f:
+                self.assertEqual(json.load(f)['v'], 1)  # and the next write replaces it
+
+    def test_first_call_5m_write_is_priced_at_the_5m_rate(self):
+        self.old(A)
+        with open(os.path.join(self.dir, 'p', B + '.jsonl'), 'w', encoding='utf-8') as f:
+            for o in (user(block(A), HOUR2), call('fb', HOUR2, cc=60586, inp=2)):
+                if o['type'] == 'assistant':
+                    o['message']['usage']['cache_creation'] = {'ephemeral_5m_input_tokens': 60586, 'ephemeral_1h_input_tokens': 0}
+                f.write(json.dumps(o) + chr(10))
+        self.assertAlmostEqual(self.run_savings(B)['last']['usd'], OLD * 8e-6 - (60586 * 5e-6 + 2 * 4e-6), 6)
+
+    def cg(self, *args, home=None):
+        code = 'import sys, crypto, cg; crypto.HOME_DIR = sys.argv[1]; crypto.OLD_HOME_DIR = sys.argv[1] + "-old"; cg.main(sys.argv[2:])'
+        here = os.path.dirname(os.path.abspath(__file__))
+        p = subprocess.run([sys.executable, '-c', code, home, *args], capture_output=True, cwd=here)
+        return json.loads(p.stdout.decode('utf-8'))
+
+    def test_command_without_a_findable_index_still_answers(self):
+        self.old(A)
+        self.new(B, A, HOUR2)
+        home = os.path.join(self.dir, 'home')
+        os.makedirs(home)
+        with open(os.path.join(home, 'settings.json'), 'w') as f:
+            f.write('{broken')
+        out = self.cg('--projects', self.dir, 'savings', '--session', B, '--cwd', self.dir, home=home)
+        self.assertEqual((out['worker']['links'], out['project'], 'error' in out), (1, None, False))
+        self.assertFalse(os.path.exists(os.path.join(home, 'index.db')))
+        self.assertTrue(os.path.exists(os.path.join(home, 'savings-cache.json')))
+
+    def test_cache_lies_with_the_settings_not_beside_an_index_folder(self):
+        self.old(A)
+        self.new(B, A, HOUR2)
+        home, idx = os.path.join(self.dir, 'home'), os.path.join(self.dir, 'idx')
+        os.makedirs(home)
+        os.makedirs(idx)
+        memdb.connect(os.path.join(idx, 'index.db')).close()
+        with open(os.path.join(home, 'settings.json'), 'w') as f:
+            json.dump({'indexDir': idx}, f)
+        out = self.cg('--projects', self.dir, 'savings', '--session', B, '--cwd', self.dir, home=home)
+        self.assertEqual(out['worker']['links'], 1)
+        self.assertEqual(sorted(n for n in os.listdir(idx) if not n.startswith('index.')), [])
+        self.assertTrue(os.path.exists(os.path.join(home, 'savings-cache.json')))
 
 
 if __name__ == '__main__':

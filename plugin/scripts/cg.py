@@ -20,7 +20,7 @@ from compress import LEVELS, compress
 from transcripts import find_session, last_usage, project_key, project_keys
 
 
-INDEX_FREE = ('last-turn', 'compress', 'handoff')  # the commands that read no index: no merge waits for them, and they still work when the index cannot be used
+INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings')  # the commands that read no index: no merge waits for them, and they still work when the index cannot be used
 SHORT = (*INDEX_FREE, 'lessons-match', 'savings')  # the runs that do not merge, nor open the index again to keep forgets (lessons-match reads it and writes no forget)
 
 
@@ -272,13 +272,13 @@ def _last_turn(a):
 def _savings(a):
     import savings
     try:
-        conn = memdb.connect(a.db)  # any trouble with the index leaves the project's figure out, never the rest
+        conn = memdb.connect(a.db) if os.path.isfile(a.db) else None  # no index to open (or its place unknown): the project's figure is left out
         convs = [r[0] for r in conn.execute(
             "SELECT DISTINCT p.conv FROM conv_projects p JOIN convs c ON c.conv = p.conv WHERE COALESCE(c.parent, '') = '' AND p.project IN (SELECT value FROM json_each(?))",
             (json.dumps(project_keys(a.cwd, _aliases(a))),))]
     except Exception:
         convs = None
-    return savings.savings(a.projects, _session(a.session), convs, os.path.join(os.path.dirname(a.db), 'savings-cache.json'))
+    return savings.savings(a.projects, _session(a.session), convs, os.path.join(os.path.dirname(crypto.settings_path(a.db)), 'savings-cache.json'))
 
 
 def _handoff(a):

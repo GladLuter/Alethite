@@ -7,6 +7,7 @@ import tempfile
 from cc_token_audit import minutes, price
 from transcripts import HANDOFF_BLOCK, INJECTED, _USAGE, _blocks, _load, last_usage, lp
 
+CACHE_VERSION = 1  # raise it when read_new or last_usage return something else: old entries are then dropped
 COLD_AFTER = 3600  # seconds: the cache of a chat that was silent this long is gone
 _UUID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 # shortcut: every cache write is priced as the 1h write (what Claude Code sends); a 5m write in the first call is split off when the usage names it
@@ -29,6 +30,8 @@ def read_new(path):
     seen, tail = set(), {}
     with open(lp(path), 'rb') as f:
         for n, raw in enumerate(f):
+            if old is not None and b'assistant' not in raw:  # the tail is only assistant calls: no parse of the big tool results
+                continue
             o = _load(raw)
             if not o:
                 continue
@@ -49,7 +52,7 @@ def read_new(path):
             if not c or c[0] in seen:
                 continue
             seen.add(c[0] or n)
-            mid, model, u = c
+            _, model, u = c
             cc = _num(u, 'cache_creation_input_tokens')
             if first is None:
                 cc5 = min(cc, _num(u.get('cache_creation') if isinstance(u.get('cache_creation'), dict) else {}, 'ephemeral_5m_input_tokens'))
@@ -81,7 +84,7 @@ def link(paths, new, cache):
     if not o:
         return None
     t_old, t_new = o['tokens'], r['tokens']
-    pi, p_cw5, p_cw1, p_cr, _ = price(o['model'], t_old)[0]
+    _, _, p_cw1, p_cr, _ = price(o['model'], t_old)[0]
     # shortcut: tokens are the window size (prompt + output of the last call) on both sides; an unparsable time counts as warm, the cheaper read, so the saving is never overstated
     cold = (minutes(o['at'], r['ts']) or 0) * 60 >= COLD_AFTER
     p = price(r['model'], t_new)[0]
@@ -114,9 +117,10 @@ def savings(projects, session, convs, cache_path):
     """{last, worker, project}; `convs` are the project's conversations from the index, None if it could not be read."""
     try:
         with open(cache_path, encoding='utf-8') as f:
-            cache = json.load(f)
-        cache = cache if isinstance(cache, dict) else {}
-    except (OSError, ValueError):
+            data = json.load(f)
+        files = data['files'] if data['v'] == CACHE_VERSION else {}  # another version: the numbers may mean something else
+        cache = {k: e for k, e in files.items() if isinstance(k, str) and '|' in k and isinstance(e, dict) and {'size', 'mtime', 'value'} <= e.keys()}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):  # an unreadable or foreign file reads as empty
         cache = {}
     paths = _paths(projects)
     chain, seen, cur = [], set(), session
@@ -135,7 +139,8 @@ def savings(projects, session, convs, cache_path):
     try:  # a failed cache write costs only speed
         fd, tmp = tempfile.mkstemp(dir=os.path.dirname(cache_path) or '.', suffix='.tmp')
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            json.dump({k: e for k, e in cache.items() if k.split('|', 1)[1] in paths.values()}, f)
+            keep = set(paths.values())
+            json.dump({'v': CACHE_VERSION, 'files': {k: e for k, e in cache.items() if k.split('|', 1)[1] in keep}}, f)
         os.replace(tmp, cache_path)
     except OSError:
         tmp and os.path.exists(tmp) and os.remove(tmp)
