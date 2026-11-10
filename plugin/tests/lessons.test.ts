@@ -46,6 +46,16 @@ test('rules: the budget stops at the first rule that does not fit; left counts t
   expect(rulesContext([rule(1, 'a', false)])).toEqual({ block: undefined, left: 0 })
 })
 
+test('rules: a short rule after one that did not fit stays out', () => {
+  const r = rulesContext([400, 400, 600, 10].map((n, i) => rule(i + 1, 'x'.repeat(n))))
+  expect(r.block!.split('\n').length).toBe(3 + 2) // the marks, the intro, 2 rules
+  expect(r.left).toBe(2)
+})
+
+test('rules: a global lesson without a fix is skipped', () => {
+  expect(rulesContext([{ ...rule(1, 'x'), fix: null }])).toEqual({ block: undefined, left: 0 })
+})
+
 test('rulesDue: the six branches', () => {
   expect(RULES_EVERY).toBe(20_000)
   expect(rulesDue(undefined, 50_000, 20_000)).toEqual({ due: true, mark: 50_000 })

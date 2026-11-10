@@ -55,8 +55,13 @@ export const lessonContext = (found: Found[]) => [START, T.lessonsIntro, ...foun
 // The lessons for all projects, as the one-line rules they carry (`fix`), newest first, while they fit RULES_CHARS; `left` did not fit.
 export const rulesContext = (lessons: readonly Lesson[]) => {
   const all = lessons.filter(l => l.global && l.fix !== null).map(l => `- ${l.fix}`)
+  const lines: string[] = []
   let used = 0
-  const lines = all.filter(line => (used += line.length) <= RULES_CHARS)
+  for (const line of all) {
+    if (used + line.length > RULES_CHARS) break // the first that does not fit ends the list: a later short one must not jump the queue
+    used += line.length
+    lines.push(line)
+  }
   return { block: lines.length ? [START, T.rulesIntro, ...lines, END].join('\n') : undefined, left: all.length - lines.length }
 }
 

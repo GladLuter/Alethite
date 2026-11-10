@@ -181,8 +181,7 @@ export const en = {
   lessonKnown: 'This lesson is saved already.',
   lessonSaveFailed: (msg: string) => `The lesson was not saved: ${msg}`,
   lessonToast: (action: string) => `lesson saved: ${action}`,
-  lessonSavedGlobal: (text: string) => `Lesson for all projects saved:
-${text}`,
+  lessonSavedGlobal: (text: string) => `Lesson for all projects saved:\n${text}`,
   lessonToastGlobal: (action: string, left: number) =>
     `lesson saved for all projects, it will come in every chat: ${action}${left > 0 ? ` (${left} older no longer fit)` : ''}`,
   lessonGlobalMark: '[all projects] ',

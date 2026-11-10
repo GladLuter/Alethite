@@ -181,8 +181,7 @@ export const uk: Partial<Texts> = {
   lessonKnown: 'Цей урок уже збережено.',
   lessonSaveFailed: (msg: string) => `Урок не збережено: ${msg}`,
   lessonToast: (action: string) => `урок збережено: ${action}`,
-  lessonSavedGlobal: (text: string) => `Урок для всіх проєктів збережено:
-${text}`,
+  lessonSavedGlobal: (text: string) => `Урок для всіх проєктів збережено:\n${text}`,
   lessonToastGlobal: (action: string, left: number) =>
     `урок збережено для всіх проєктів, приходитиме в кожен чат: ${action}${left > 0 ? ` (старих більше не вміщується: ${left})` : ''}`,
   lessonGlobalMark: '[усі проєкти] ',
