@@ -1,10 +1,11 @@
-// What refresh() last measured, kept in $.state so the band draws from it alone.
+// What refresh() last measured, kept in $.state; the band draws from it and from Info.
 export type Snap = {
   id: string
   model: string
   now: number
   tokens: number | null
   at: number | null
+  cost: number | null // USD spent in this chat, when the engine says
   limits: { kind: string; percentUsed: number; resetsAt?: string }[]
 }
 
@@ -16,7 +17,7 @@ export type Savings = {
 }
 
 // The band's other source: `cg.py status` as it came, and the savings; null where the answer did not come.
-export type Info = { status: Record<string, unknown> | null; savings: Savings | null }
+export type Info = { status: Record<string, unknown> | null; savings: Savings | null; isSyncOn: boolean }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -24,7 +25,7 @@ declare module 'claude-code' {
       snap: Snap | null
       // session id the band is hidden for (/al-band off); a /clear changes the id and ends it
       hiddenId: string
-      // the band is showing the model picker instead of its two buttons
+      // the band is showing the model picker instead of its row
       isArmed: boolean
       // a new-worker launch is running: the band shows T.busy and ignores presses
       isBusy: boolean

@@ -15,7 +15,7 @@ export const ru: Partial<Texts> = {
   toast: (text: string) => `Alethite: ${text}`,
 
   // band
-  bandCache: { expired: 'кэш истёк', warm: 'кэш тёплый', unknown: 'кэш ?' },
+  bandCache: { expired: 'кэш истёк', unknown: 'кэш ?' },
   limitNames: { five_hour: '5 ч', seven_day: 'неделя' } as Record<string, string>,
   limit: (name: string, percent: number) => `${name}: ${percent}%`,
   // band, new
@@ -28,9 +28,10 @@ export const ru: Partial<Texts> = {
   upTo: (usd: string) => `до ${usd}`,
   baseTrouble: 'база !',
   col: { chat: 'Этот чат', last: 'Последняя передача', worker: 'Весь работник', limits: 'Лимиты', base: 'База' },
+  spent: (usd: string) => `потрачено ${usd}`,
   coldPrice: (cost: string) => `холодно ${cost}`,
   workerSub: (links: number, calls: number) => `передач: ${links} · вызовов: ${calls}`,
-  projectSub: (usd: string, links: number) => `проект: до ${usd} (${links})`,
+  projectSub: (usd: string, links: number) => `проект: ${usd} (${links})`,
   resets: (when: string) => `сброс ${when}`,
   baseConvs: (n: number) => `разговоров: ${n}`,
   baseVectors: (done: number, total: number) => `векторы ${done}/${total}`,
@@ -67,7 +68,7 @@ export const ru: Partial<Texts> = {
   // /al-band
   cgBandDescription: 'Скрыть полосу в этом чате (off) или вернуть',
   cgBandOn: 'al-band: полоса снова на месте.',
-  cgBandOff: 'al-band: полоса скрыта в этом чате; /al-band вернёт её.',
+  cgBandOff: 'al-band: полоса скрыта в этом чате. /al-band вернёт её.',
   cgBandFailed: 'al-band: не вышло, причина в строке состояния.',
 
   // errors: the toast of an owner-started action; cg.py could not be started at all

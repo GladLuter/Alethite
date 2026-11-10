@@ -15,7 +15,7 @@ export const uk: Partial<Texts> = {
   toast: (text: string) => `Alethite: ${text}`,
 
   // band
-  bandCache: { expired: 'кеш сплив', warm: 'кеш теплий', unknown: 'кеш ?' },
+  bandCache: { expired: 'кеш сплив', unknown: 'кеш ?' },
   limitNames: { five_hour: '5 год', seven_day: 'тиждень' } as Record<string, string>,
   limit: (name: string, percent: number) => `${name}: ${percent}%`,
   // band, new
@@ -28,9 +28,10 @@ export const uk: Partial<Texts> = {
   upTo: (usd: string) => `до ${usd}`,
   baseTrouble: 'база !',
   col: { chat: 'Цей чат', last: 'Остання передача', worker: 'Весь працівник', limits: 'Ліміти', base: 'База' },
+  spent: (usd: string) => `витрачено ${usd}`,
   coldPrice: (cost: string) => `холодно ${cost}`,
   workerSub: (links: number, calls: number) => `передач: ${links} · викликів: ${calls}`,
-  projectSub: (usd: string, links: number) => `проєкт: до ${usd} (${links})`,
+  projectSub: (usd: string, links: number) => `проєкт: ${usd} (${links})`,
   resets: (when: string) => `скидання ${when}`,
   baseConvs: (n: number) => `розмов: ${n}`,
   baseVectors: (done: number, total: number) => `вектори ${done}/${total}`,
@@ -47,7 +48,7 @@ export const uk: Partial<Texts> = {
   atFilesHint: '@файли та зображення з чернетки не передаються',
   busy: 'Запускаю…',
   afterReset: (time: string) => `Після скидання (${time})`,
-  waitingAt: (time: string) => `⏰ працівник о ${time}`,
+  waitingAt: (time: string) => `⏰ працівник: ${time}`,
 
   // new worker launch: every failure says what was kept and where
   draftEmpty: 'Новий працівник: чернетка порожня, чат не зачеплено. Наберіть повідомлення й натисніть знову.',
@@ -68,7 +69,7 @@ export const uk: Partial<Texts> = {
   // /al-band
   cgBandDescription: 'Сховати смугу в цьому чаті (off) або повернути',
   cgBandOn: 'al-band: смуга знову на місці.',
-  cgBandOff: 'al-band: смугу сховано в цьому чаті; /al-band поверне її.',
+  cgBandOff: 'al-band: смугу сховано в цьому чаті. /al-band поверне її.',
   cgBandFailed: 'al-band: не вийшло, причина в рядку стану.',
 
   // errors: the toast of an owner-started action; cg.py could not be started at all

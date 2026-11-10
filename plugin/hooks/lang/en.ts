@@ -14,7 +14,7 @@ export const en = {
   toast: (text: string) => `Alethite: ${text}`,
 
   // band
-  bandCache: { expired: 'cache expired', warm: 'cache warm', unknown: 'cache ?' },
+  bandCache: { expired: 'cache expired', unknown: 'cache ?' },
   limitNames: { five_hour: '5 h', seven_day: 'week' } as Record<string, string>,
   limit: (name: string, percent: number) => `${name}: ${percent}%`,
   // band, new
@@ -27,9 +27,10 @@ export const en = {
   upTo: (usd: string) => `up to ${usd}`,
   baseTrouble: 'base !',
   col: { chat: 'This chat', last: 'Last handoff', worker: 'Whole worker', limits: 'Limits', base: 'Base' },
+  spent: (usd: string) => `spent ${usd}`,
   coldPrice: (cost: string) => `cold ${cost}`,
   workerSub: (links: number, calls: number) => `handoffs: ${links} · calls: ${calls}`,
-  projectSub: (usd: string, links: number) => `project: up to ${usd} (${links})`,
+  projectSub: (usd: string, links: number) => `project: ${usd} (${links})`,
   resets: (when: string) => `resets ${when}`,
   baseConvs: (n: number) => `conversations: ${n}`,
   baseVectors: (done: number, total: number) => `vectors ${done}/${total}`,
@@ -68,7 +69,7 @@ export const en = {
   // /al-band
   cgBandDescription: 'Hide the band in this chat (off) or bring it back',
   cgBandOn: 'al-band: the band is back.',
-  cgBandOff: 'al-band: the band is hidden in this chat; /al-band brings it back.',
+  cgBandOff: 'al-band: the band is hidden in this chat. /al-band brings it back.',
   cgBandFailed: 'al-band: did not work, the reason is on the status line.',
 
   // errors: the toast of an owner-started action; cg.py could not be started at all

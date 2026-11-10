@@ -26,13 +26,13 @@ export const price = (model: string, tokens: number, isExpired: boolean) => {
 export const cacheState = (at: number | null, now: number) =>
   at === null ? 'unknown' : now - at >= CACHE_MS ? 'expired' : 'warm'
 
-const k = (tokens: number | null) => (tokens === null ? '?' : String(Math.round(tokens / 1000)))
-export const size = (tokens: number | null) => (tokens === null ? '?' : `${k(tokens)}k`)
+export const size = (tokens: number | null) => (tokens === null ? '?' : `${Math.round(tokens / 1000)}k`)
+// whole minutes the cache still lasts; the status line and the band both say it
+export const minutesLeft = (at: number | null, now: number) => Math.ceil((CACHE_MS - (now - (at ?? now))) / 60_000)
 
 export const statusText = (tokens: number | null, at: number | null, now: number) => {
   const state = cacheState(at, now)
-  const left = Math.ceil((CACHE_MS - (now - (at ?? now))) / 60_000)
-  const cache = state === 'warm' ? T.cacheLeft(left) : state === 'expired' ? T.cacheExpired : T.cacheUnknown
+  const cache = state === 'warm' ? T.cacheLeft(minutesLeft(at, now)) : state === 'expired' ? T.cacheExpired : T.cacheUnknown
   return T.ctx(size(tokens), cache)
 }
 

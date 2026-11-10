@@ -1,12 +1,13 @@
 // Pure side of the band: the one line, the Details columns, the time for the delayed worker. No `$`, so the tests call it directly.
 import type { Info, Snap } from '../types'
-import { cacheState, CACHE_MS, price, size } from './guard'
+import { cacheState, minutesLeft, price, size } from './guard'
 import { T } from './text'
 
-export type Tone = 'error' | 'warning' | 'success'
+export type Tone = 'error' | 'warning'
 export type Token = { key: 'size' | 'cache' | 'send' | 'saved' | 'base'; text: string; tone?: Tone }
 export type Col = { key: string; label: string; value: string; sub: string[]; tone?: Tone }
 
+export const SHIELD = '🛡' // the title shortened to this when the row is tight
 const usd = (n: number) => `$${n.toFixed(2)}`
 const asRec = (v: unknown) => (v && typeof v === 'object' ? (v as Record<string, any>) : undefined)
 // the clock time of an ISO stamp, local; with the weekday when it is not the day of `now`
@@ -19,22 +20,22 @@ export const when = (iso: string, now: number) => {
 
 const cacheText = (s: Snap) => {
   const state = cacheState(s.at, s.now)
-  return state === 'warm' ? T.bandWarm(Math.ceil((CACHE_MS - (s.now - (s.at ?? s.now))) / 60_000)) : T.bandCache[state]
+  return state === 'warm' ? T.bandWarm(minutesLeft(s.at, s.now)) : T.bandCache[state]
 }
 
 export const money = (n: number): { text: string; tone?: Tone } => (n >= 0 ? { text: usd(n) } : { text: T.dearer(usd(-n)), tone: 'error' })
 
-// Something to look at in the base: an unusable index, a key that is not ok, vectors missing or failed, errors of the last sync or of the background job.
-export const baseTrouble = (status: Record<string, unknown> | null) => {
+// Something the owner must act on in the base: an unusable or broken index, a key that is not ok, a real error of the last sync or of the background job.
+// Pending vectors, failed-record sentinels and the job's in-progress marker are normal and stay out (the Base column shows N/M); a stored sync error counts only while the sync is on.
+export const baseTrouble = (status: Record<string, unknown> | null, isSyncOn: boolean) => {
   const s = asRec(status)
   if (!s) return false
-  const v = asRec(s.vectors)
+  const jobErrors = Array.isArray(s.job?.errors) ? s.job.errors.filter((e: any) => e?.where !== 'job' && (isSyncOn || e?.where !== 'sync')) : []
   return (
     (typeof s.index_problem === 'string' && s.index_problem !== '') ||
     (s.encryption?.on === true && s.encryption.key !== 'ok') ||
-    (v !== undefined && (v.failed > 0 || v.with_vectors < v.total)) ||
-    s.sync?.last?.errors > 0 ||
-    (Array.isArray(s.job?.errors) && s.job.errors.length > 0)
+    (isSyncOn && s.sync?.last?.errors > 0) ||
+    jobErrors.length > 0
   )
 }
 
@@ -48,24 +49,31 @@ export const lineTokens = (s: Snap, info: Info | null, isStaleLit: boolean): Tok
     { key: 'cache', text: cacheText(s) },
     ...(s.tokens === null ? [] : [{ key: 'send' as const, text: T.sendHere(usd(price(s.model, s.tokens, state === 'expired' || isStaleLit))), tone: warn }]),
     ...(saved ? [{ key: 'saved' as const, text: saved.tone ? saved.text : T.saved(saved.text), tone: saved.tone }] : []),
-    ...(baseTrouble(info?.status ?? null) ? [{ key: 'base' as const, text: T.baseTrouble, tone: 'warning' as const }] : []),
+    ...(baseTrouble(info?.status ?? null, info?.isSyncOn ?? false) ? [{ key: 'base' as const, text: T.baseTrouble, tone: 'warning' as const }] : []),
   ]
 }
 
-// Drops the savings, then the price, until the line fits; the base alarm stays.
+// The cells the tokens take once joined with " · ".
+export const tokensWidth = (tokens: Token[]) => tokens.map(x => x.text).join(' · ').length
+
+// Drops the savings, the price, the cache and the size, in that order, until the line fits; the base alarm stays.
 export const fitTokens = (tokens: Token[], budget: number) => {
-  const long = (t: Token[]) => t.map(x => x.text).join(' · ').length > budget
   let out = tokens
-  for (const key of ['saved', 'send']) if (long(out)) out = out.filter(t => t.key !== key)
+  for (const key of ['saved', 'send', 'cache', 'size']) if (tokensWidth(out) > budget) out = out.filter(t => t.key !== key)
   return out
 }
 
-// No "spent $X" under the chat: Snap carries no cost, so the design's optional line is dropped.
+// "up to $X" for a saving, the dearer form (an error) as it is
+const upTo = (m: { text: string; tone?: Tone }) => (m.tone ? m.text : T.upTo(m.text))
+
 export const columns = (s: Snap, info: Info | null, showLimits: boolean): Col[] => {
   const state = cacheState(s.at, s.now)
   const chat: Col = {
     key: 'chat', label: T.col.chat, value: `${size(s.tokens)} · ${cacheText(s)}`,
-    sub: s.tokens === null ? [] : [`${T.sendHere(usd(price(s.model, s.tokens, false)))} / ${T.coldPrice(usd(price(s.model, s.tokens, true)))}`],
+    sub: [
+      ...(s.tokens === null ? [] : [`${T.sendHere(usd(price(s.model, s.tokens, false)))} / ${T.coldPrice(usd(price(s.model, s.tokens, true)))}`]),
+      ...(s.cost === null ? [] : [T.spent(usd(s.cost))]),
+    ],
   }
 
   const sv = info?.savings
@@ -78,8 +86,8 @@ export const columns = (s: Snap, info: Info | null, showLimits: boolean): Col[] 
   const w = sv?.worker
   const wm = w && w.links > 0 ? money(w.usd) : undefined
   const workerCol: Col = {
-    key: 'worker', label: T.col.worker, value: sv ? (wm ? (wm.tone ? wm.text : T.upTo(wm.text)) : '—') : '?', tone: wm?.tone,
-    sub: sv ? [...(w && w.links > 0 ? [T.workerSub(w.links, w.calls)] : []), ...(sv.project ? [T.projectSub(usd(sv.project.usd), sv.project.links)] : [])] : [],
+    key: 'worker', label: T.col.worker, value: sv ? (wm ? upTo(wm) : '—') : '?', tone: wm?.tone,
+    sub: sv ? [...(w && w.links > 0 ? [T.workerSub(w.links, w.calls)] : []), ...(sv.project ? [T.projectSub(upTo(money(sv.project.usd)), sv.project.links)] : [])] : [],
   }
 
   const [first, ...rest] = s.limits
@@ -97,9 +105,10 @@ export const columns = (s: Snap, info: Info | null, showLimits: boolean): Col[] 
   const v = asRec(st?.vectors)
   const enc = asRec(st?.encryption)
   const at = (iso: unknown) => (typeof iso === 'string' ? when(iso, s.now) : '—')
+  const isRead = st !== undefined && typeof st.convs === 'number' // a failed status carries only the reason
   const baseCol: Col = {
-    key: 'base', label: T.col.base, value: st ? T.baseConvs(st.convs) : '?', tone: baseTrouble(info?.status ?? null) ? 'warning' : undefined,
-    sub: st
+    key: 'base', label: T.col.base, value: isRead ? T.baseConvs(st.convs) : '?', tone: baseTrouble(info?.status ?? null, info?.isSyncOn ?? false) ? 'warning' : undefined,
+    sub: isRead
       ? [
           ...(v ? [T.baseVectors(v.with_vectors, v.total)] : []),
           T.baseSize(Math.round(st.size_mb), enc?.on ? (enc.db === 'sqlcipher' ? 'SQLCipher' : enc.db === 'efs' ? 'EFS' : '—') : '—'),
@@ -123,11 +132,14 @@ const fit = (s: string, max: number) => (s.length > max ? `${s.slice(0, Math.max
 const FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
 // The image cannot read the app's theme, so it follows the system's.
 // shortcut: an app theme that differs from the system theme gets the wrong text color; pass the theme in if that bites.
-const STYLE = `.l,.s{fill:#87867f;font:12px ${FONT}}.v{fill:#1f1e1d;font:600 16px ${FONT}}.d{stroke:#1f1e1d;stroke-opacity:.12}.warning{fill:#a86400}.success{fill:#2e7d32}.error{fill:#c62828}@media (prefers-color-scheme:dark){.v{fill:#ecebe6}.d{stroke:#fff;stroke-opacity:.14}.warning{fill:#e3a03d}.success{fill:#6abf69}.error{fill:#ef6a5a}}`
+const STYLE = `.l,.s{fill:#87867f;font:12px ${FONT}}.v{fill:#1f1e1d;font:600 16px ${FONT}}.d{stroke:#1f1e1d;stroke-opacity:.12}.warning{fill:#a86400}.error{fill:#c62828}@media (prefers-color-scheme:dark){.v{fill:#ecebe6}.d{stroke:#fff;stroke-opacity:.14}.warning{fill:#e3a03d}.error{fill:#ef6a5a}}`
 
 // The Details columns as one SVG for the desktop, where box characters break in a proportional font.
-// `width` is the band's real width; columns share it by how much text they hold, and text that still does not fit is cut with "…".
-export const columnsSvg = (cols: Col[], width = 900) => {
+// Columns share the width by how much text they hold, and text that still does not fit is cut with "…".
+// shortcut: always laid out for 900 px and the image scales to the band; pass the band's real width if a narrow desktop band cuts too much.
+const WIDTH = 900
+export const columnsSvg = (cols: Col[]) => {
+  const width = WIDTH
   const need = cols.map(c => Math.max(c.label.length * 7, c.value.length * 9, ...c.sub.map(l => l.length * 6.2)) + 28)
   const total = need.reduce((a, b) => a + b, 0)
   const edge = need.map((_, i) => (need.slice(0, i).reduce((a, b) => a + b, 0) * width) / total)
