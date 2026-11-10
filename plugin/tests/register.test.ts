@@ -14,13 +14,15 @@ const ran = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isS
 const noTurn = () => ran('{"tokens":null,"at":null,"model":null}')
 
 // stands for the engine beneath the plugin; `statuses` collects what the status line was set to, `answerRun` answers cg.py
+const ids = { now: 'id' }
 const wire = (on: any, statuses: (string | undefined)[], answerUsage: () => unknown, answerRun: (_: unknown, e: { argv: string[] }) => unknown = noTurn, store = new Map<string, unknown>()) => {
+  ids.now = 'id'
   const clock = mock.clock(on, { now: 10_000_000_000 })
   on('store.get', (_: unknown, e: { key: string }) => ({ value: store.get(e.key) }))
   on('store.set', (_: unknown, e: { key: string; value: unknown }) => (store.set(e.key, e.value), { value: undefined }))
   on('store.keys', () => ({ value: [...store.keys()] }))
   on('store.delete', (_: unknown, e: { key: string }) => (store.delete(e.key), { value: undefined }))
-  on('session.id', () => ({ value: 'id' }))
+  on('session.id', () => ({ value: ids.now }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('session.usage', answerUsage)
   on('session.version', () => ({ value: { version: '2.1.295' } }))
@@ -133,8 +135,8 @@ test('/al-health: a project that matches no conversation is said so', async ($, 
 
 // The engine beneath a launch: the prompt box (`refuse` makes a fill fail), /clear, and the first message. `gate` holds the submit until released.
 const box = (on: any, draft: string, log: string[], gate: Promise<unknown> = Promise.resolve()) => {
-  const state = { text: draft, refuse: undefined as string | undefined }
-  on('prompt.read', () => ({ value: { text: state.text, cursor: 0 } }))
+  const state = { text: draft, refuse: undefined as string | undefined, broken: false }
+  on('prompt.read', () => (state.broken ? { deny: 'boom' } : { value: { text: state.text, cursor: 0 } }))
   on('prompt.fill', (_: unknown, e: { text: string }) => (state.refuse ? { isFilled: false, refusal: state.refuse } : ((state.text = e.text), { isFilled: true })))
   on('prompt.submit', async (_: unknown, e: { text: string }) => (log.push(`submit ${e.text}`), await gate, { text: e.text }))
   on('command.run', (_: unknown, e: { command: string; args: string }) => (log.push(`/${e.command} ${e.args}`.trim()), { text: '' }))
@@ -1576,6 +1578,7 @@ test('band data: status and savings are asked at the start and after /al-sync', 
   expect(ofCg(m, 'status')[0]!.argv).toEqual(['status', '--cwd=C:/w'])
   const [s0, v0] = asked()
   await ($ as any).command.run({ command: 'al-sync', args: '' })
+  await m.clock.advance(0) // the refresh is not awaited by the reply
   expect(asked()).toEqual([s0 + 1, v0 + 1])
 })
 
@@ -1591,6 +1594,13 @@ test('band data: a failed savings is noted once, status still arrives', async ($
   expect(m.toasts).toEqual([])
 })
 
+test("band data: an older lastError in the store does not hide this load's band failure", async ($, on) => {
+  const store = new Map<string, unknown>([['lastError', { at: 5, where: 'sync', msg: 'last week' }]])
+  const m = await started($, on, a => (a[0] === 'savings' ? failed('boom') : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')), [], undefined, {}, noTurn, store)
+  await m.clock.advance(3_000)
+  expect(store.get('lastError')).toMatchObject({ where: 'band', msg: 'boom' })
+})
+
 test('band data: both calls failing at once note only the first error', async ($, on) => {
   const m = await started($, on, a => (a[0] === 'savings' ? failed('savings down') : a[0] === 'status' ? failed('status down') : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')))
   await m.clock.advance(3_000)
@@ -1601,35 +1611,85 @@ test('band data: both calls failing at once note only the first error', async ($
 })
 
 const worker = { last: null, worker: { usd: 18.7, links: 7, calls: 400 }, project: null }
-const bandData = async ($: any, on: any, savings: unknown, status: object = { convs: 12, size_mb: 1.5 }) => {
-  const m = await started($, on, a => (a[0] === 'savings' ? savings : a[0] === 'status' ? ran(JSON.stringify(status)) : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')))
+const bandData = async ($: any, on: any, savings: unknown, status: object = { convs: 12, size_mb: 1.5 }, statusAnswer: unknown = ran(JSON.stringify(status))) => {
+  const m = await started($, on, a => (a[0] === 'savings' ? savings : a[0] === 'status' ? statusAnswer : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')))
   await m.clock.advance(3_000)
   return m
 }
 
-test('narrow terminal keeps one row: the savings drop out first', async ($, on) => {
+// cells the collapsed row takes in the terminal: every Text, every Button as `[ label ]`, one gap between neighbours and one for the spacer
+const rowWidth = async (ui: any) => {
+  const t: string[] = (await texts(ui)).filter((x: string) => x !== 'no band')
+  const b: { text: string }[] = await ui.findAll({ type: 'Button' })
+  return t.reduce((n, x) => n + x.length + (x.includes('⏰') ? 1 : 0), 0) + b.reduce((n, x) => n + x.text.length + 4, 0) + t.length + b.length
+}
+const atColumns = ($: any, bodyColumns: number) => $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns } } as never)
+
+test('narrow terminal keeps one row: the savings drop out first, the row fits', async ($, on) => {
   await bandData($, on, ran(JSON.stringify(worker)))
-  const wide = await texts(await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 120 } } as never))
+  const wide = await texts(await atColumns($, 120))
   expect(wide.some((t: string) => t.includes(T.saved('$18.70')))).toBe(true)
-  const narrow = await texts(await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 60 } } as never))
+  for (const cols of [120, 80, 60]) expect(await rowWidth(await atColumns($, cols))).toBeLessThanOrEqual(cols)
+  const narrow = await texts(await atColumns($, 60))
   expect(narrow.some((t: string) => t.includes(T.saved('')))).toBe(false)
   expect(narrow[0]).toBe(T.bandTitle)
 })
 
+const STALE = new Date(10_000_000_000 - 2 * 3_600_000).toISOString()
+test('a stale row with Stay here fits 60 columns', async ($, on) => {
+  wire(on, [], () => ({ value: usage }), () => ran(JSON.stringify({ tokens: 300_000, at: STALE, model: 'm' })))
+  await $.command.run({ command: 'al-band', args: '' })
+  const ui = await atColumns($, 60)
+  expect(await buttons(ui)).toEqual(['launch', 'stay', 'details'])
+  expect(await rowWidth(ui)).toBeLessThanOrEqual(60)
+})
+
+test('the same in Russian: the name shortens to the shield when the buttons leave no room', { options: { language: 'ru' } }, async ($, on) => {
+  wire(on, [], () => ({ value: usage }), () => ran(JSON.stringify({ tokens: 300_000, at: STALE, model: 'm' })))
+  await $.command.run({ command: 'al-band', args: '' })
+  const ui = await atColumns($, 60)
+  expect(await buttons(ui)).toEqual(['launch', 'stay', 'details'])
+  expect(await rowWidth(ui)).toBeLessThanOrEqual(60)
+  expect((await texts(ui))[0]).toBe('🛡')
+})
+
+// cg.py exits 1 with {error, index_problem} for an index it cannot use: status then never answers ok
+const refusedStatus = ran('{}')
+refusedStatus.value.exitCode = 1
+refusedStatus.value.stdout = JSON.stringify({ error: 'ValueError: broken', index_problem: 'broken' })
+
 test('a base alarm stays on the row however narrow; the price goes before it', async ($, on) => {
-  await bandData($, on, ran(JSON.stringify(worker)), { convs: 12, size_mb: 1.5, index_problem: 'broken' })
-  const row = async (bodyColumns: number) => (await texts(await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns } } as never))).join(' ')
+  await bandData($, on, ran(JSON.stringify(worker)), undefined, refusedStatus)
+  const row = async (bodyColumns: number) => (await texts(await atColumns($, bodyColumns))).join(' ')
+  expect(await row(120)).toContain(T.baseTrouble)
   expect(await row(60)).toContain(T.baseTrouble)
   expect(await row(60)).not.toContain(T.saved(''))
   const tight = await row(45)
   expect(tight).toContain(T.baseTrouble)
   expect(tight).not.toContain(T.sendHere(''))
+  expect(await rowWidth(await atColumns($, 45))).toBeLessThanOrEqual(45)
+})
+
+test('an index that cannot be used: the Base column says ? and the alarm is on', async ($, on) => {
+  await bandData($, on, ran(JSON.stringify(worker)), undefined, refusedStatus)
+  const ui = await $.ui.mount(UI)
+  await ui.press({ key: 'details' })
+  const all = await texts(ui)
+  expect(all).toContain('?')
+  expect(all).not.toContain(T.baseConvs(12))
 })
 
 test('savings that cost more are drawn as an error', async ($, on) => {
   await bandData($, on, ran(JSON.stringify({ ...worker, worker: { usd: -2, links: 3, calls: 9 } })))
   const dear = (await (await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 140 } } as never)).findAll({ type: 'Text' })).filter((t: { props: { color?: string } }) => t.props.color === 'error')
   expect(dear.map((t: { text: string }) => t.text).join()).toContain(T.dearer('$2.00'))
+})
+
+test('Details shows what the chat has spent when the engine says', async ($, on) => {
+  wire(on, [], () => ({ value: { ...usage, cost: { usd: 3.2 } } }))
+  const ui = await mountBand($)
+  await ui.press({ key: 'details' })
+  expect(await texts(ui)).toContain(T.spent('$3.20'))
 })
 
 test('the Base column is filled while savings failed', async ($, on) => {
@@ -1690,9 +1750,14 @@ test('after-reset needs a draft and waits', async ($, on) => {
   expect(await buttons(ui)).toEqual(['cancel-delay', 'details'])
 })
 
+// a wait that comes due within a minute: the same paths as the hour-long one in 2-3 ticks of 30 s
+const SOON = NOW + 60_000
+const soonLabel = T.waitingAt(when(new Date(SOON).toISOString(), NOW))
+const dueSoon = () => new Map<string, unknown>([['delayed:id', { at: SOON }]])
+
 test('a wait fires once when due: the key goes before the launch', async ($, on) => {
-  const { m, log, gone } = await delayed($, on, 'продолжаем', new Map([['delayed:id', { at: AT }]]))
-  await m.clock.advance(AT - NOW - 30_000)
+  const { m, log, gone } = await delayed($, on, 'продолжаем', dueSoon())
+  await m.clock.advance(SOON - NOW - 30_000)
   expect(log).toEqual([])
   await m.clock.advance(30_000)
   expect(log).toEqual(['/clear', 'submit h' + String.fromCharCode(10, 10) + 'продолжаем'])
@@ -1702,13 +1767,11 @@ test('a wait fires once when due: the key goes before the launch', async ($, on)
 })
 
 test('cancel-delay removes the wait', async ($, on) => {
-  const { m, log, ui } = await delayed($, on)
-  await ui.press({ key: 'launch' })
-  await ui.press({ key: 'after' })
+  const { m, log, ui } = await delayed($, on, 'продолжаем', dueSoon())
   await ui.press({ key: 'cancel-delay' })
   expect(m.store.has('delayed:id')).toBe(false)
   expect(await buttons(ui)).toEqual(['launch', 'details'])
-  await m.clock.advance(AT - NOW + 60_000)
+  await m.clock.advance(120_000)
   expect(log).toEqual([])
 })
 
@@ -1720,16 +1783,16 @@ test("another chat's wait is left alone", async ($, on) => {
 })
 
 test('a wait survives a restart', async ($, on) => {
-  const { m, log, ui } = await delayed($, on, 'продолжаем', new Map([['delayed:id', { at: AT }]]))
-  expect(await texts(ui)).toContain(waitLabel)
+  const { m, log, ui } = await delayed($, on, 'продолжаем', dueSoon())
+  expect(await texts(ui)).toContain(soonLabel)
   expect(await buttons(ui)).toEqual(['cancel-delay', 'details'])
-  await m.clock.advance(AT - NOW)
+  await m.clock.advance(SOON - NOW)
   expect(log[0]).toBe('/clear')
 })
 
 test('an emptied box at fire time cancels with a toast', async ($, on) => {
-  const { m, log } = await delayed($, on, '', new Map([['delayed:id', { at: AT }]]))
-  await m.clock.advance(AT - NOW)
+  const { m, log } = await delayed($, on, '', dueSoon())
+  await m.clock.advance(SOON - NOW)
   expect(log).toEqual([])
   expect(m.toasts.filter(t => t === T.toast(T.draftEmpty))).toHaveLength(1)
   expect(m.store.has('delayed:id')).toBe(false)
@@ -1746,10 +1809,10 @@ test('a wait that falls due during a launch stays and fires after it', async ($,
   await ui.press({ key: 'launch' })
   void ui.press({ key: 'send' }) // held at the submit
   await m.clock.advance(1)
-  m.store.set('delayed:id', { at: AT })
-  await m.clock.advance(AT - NOW)
+  m.store.set('delayed:id', { at: SOON })
+  await m.clock.advance(60_000)
   expect(log.filter(l => l === '/clear')).toHaveLength(1)
-  expect(m.store.get('delayed:id')).toEqual({ at: AT }) // not dropped
+  expect(m.store.get('delayed:id')).toEqual({ at: SOON }) // not dropped
   release()
   state.text = 'ещё' // the first launch emptied the box; the owner typed again
   await m.clock.advance(60_000)
@@ -1758,30 +1821,106 @@ test('a wait that falls due during a launch stays and fires after it', async ($,
 })
 
 test('a wait that falls due mid-turn waits for the turn to end', async ($, on) => {
-  const { m, log } = await delayed($, on, 'продолжаем', new Map([['delayed:id', { at: AT }]]))
+  const { m, log } = await delayed($, on, 'продолжаем', dueSoon())
   await $.ui.mount({ ...(UI as object), props: { ...props, isWorking: true } } as never)
-  await m.clock.advance(AT - NOW + 60_000)
+  await m.clock.advance(120_000)
   expect(log).toEqual([])
-  expect(m.store.get('delayed:id')).toEqual({ at: AT })
+  expect(m.store.get('delayed:id')).toEqual({ at: SOON })
   await $.ui.mount(UI)
   await m.clock.advance(30_000)
   expect(log[0]).toBe('/clear')
   expect(m.store.has('delayed:id')).toBe(false)
 })
 
-for (const bad of [{}, { at: 'x' }, 'x'])
+for (const bad of [{}, { at: 'x' }, { at: 1e16 }, 'x'])
   test(`a malformed wait (${JSON.stringify(bad)}) is no wait`, async ($, on) => {
     const { m, log, ui } = await delayed($, on, 'продолжаем', new Map([['delayed:id', bad]]))
     expect(await buttons(ui)).toEqual(['launch', 'details'])
-    await m.clock.advance(AT - NOW + 60_000)
+    await m.clock.advance(120_000)
     expect(log).toEqual([])
   })
 
-test('the waiting row stays on one line at 60 columns', async ($, on) => {
-  await delayed($, on, 'продолжаем', new Map([['delayed:id', { at: AT }]]))
-  const ui = await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 60 } } as never)
-  const cells = [...(await texts(ui)).filter((t: string) => t !== 'no band'), ...(await buttons(ui)).map((k: string) => ` ${k === 'cancel-delay' ? T.cancel : T.details} `)]
-  expect(cells.some((t: string) => t === waitLabel)).toBe(true)
-  expect(cells.join(' ').length + 1).toBeLessThanOrEqual(60) // +1: the spacer's gap
+test('a throw before anything is launched puts the wait back', async ($, on) => {
+  const { m, log, state } = await delayed($, on, 'продолжаем', dueSoon())
+  state.broken = true // the draft cannot be read: startWorker throws before /clear
+  await m.clock.advance(SOON - NOW)
+  expect(log).toEqual([])
+  expect(m.store.get('delayed:id')).toEqual({ at: SOON })
+  state.broken = false
+  await m.clock.advance(30_000)
+  expect(log[0]).toBe('/clear')
+  expect(m.store.has('delayed:id')).toBe(false)
+})
+
+test('a /clear while a wait is pending: the new chat shows no wait, and the old chat keeps it', async ($, on) => {
+  const { m, log, ui } = await delayed($, on, 'продолжаем', dueSoon())
+  expect(await buttons(ui)).toEqual(['cancel-delay', 'details'])
+  ids.now = 'other'
+  await m.clock.advance(30_000)
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
+  await m.clock.advance(120_000)
+  expect(log).toEqual([])
+  expect(m.store.get('delayed:id')).toEqual({ at: SOON })
+})
+
+test('a /resume into a chat with a due wait shows it for a tick before it goes', async ($, on) => {
+  const { m, log, ui } = await delayed($, on, 'продолжаем', new Map([['delayed:other', { at: NOW }]]))
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
+  ids.now = 'other'
+  await m.clock.advance(30_000)
+  expect(log).toEqual([])
+  expect(await buttons(ui)).toEqual(['cancel-delay', 'details'])
+  await m.clock.advance(30_000)
+  expect(log[0]).toBe('/clear')
+})
+
+test('After reset and its Cancel act on the chat that is open now, with the time on the button', async ($, on) => {
+  const { m, ui } = await delayed($, on)
+  await ui.press({ key: 'launch' })
+  ids.now = 'other'
+  await ui.press({ key: 'after' })
+  expect(m.store.get('delayed:other')).toEqual({ at: AT })
+  expect(m.store.has('delayed:id')).toBe(false)
+  await ui.press({ key: 'cancel-delay' })
+  expect(m.store.has('delayed:other')).toBe(false)
+})
+
+test('the first reply of a new chat refreshes the savings, not the launch before it', async ($, on) => {
+  const log: string[] = []
+  let release!: () => void
+  box(on, 'продолжаем', log, new Promise<void>(r => (release = r)))
+  const answer = (a: string[]) =>
+    a[0] === 'handoff' ? ran(JSON.stringify({ text: 'h', path: 'C:/h/id.md' }))
+    : a[0] === 'savings' ? ran(JSON.stringify(a[2] === 'new' ? worker : { last: null, worker: { usd: 0, links: 0, calls: 0 }, project: null }))
+    : ran('{}')
+  const m = await started($, on, answer)
+  await m.clock.advance(3_000)
+  const ui = await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 140 } } as never)
+  await ui.press({ key: 'launch' })
+  const pressed = ui.press({ key: 'send' })
+  while (!log.some(l => l.startsWith('submit'))) await m.clock.advance(1)
+  ids.now = 'new' // /clear has changed the id
+  release()
+  await pressed
+  await m.clock.advance(0)
+  expect(ofCg(m, 'savings').filter(r => r.argv[2] === 'new')).toHaveLength(0)
+  expect((await texts(ui)).some((t: string) => t.includes(T.saved('$18.70')))).toBe(false)
+  await ($ as any).turn.complete(turn)
+  await m.clock.advance(0)
+  expect(ofCg(m, 'savings').filter(r => r.argv[2] === 'new')).toHaveLength(1)
+  expect((await texts(ui)).some((t: string) => t.includes(T.saved('$18.70')))).toBe(true)
+  await ($ as any).turn.complete(turn)
+  await m.clock.advance(0)
+  expect(ofCg(m, 'savings').filter(r => r.argv[2] === 'new')).toHaveLength(1) // only the first reply
+})
+
+test('the waiting row stays on one line at 60 columns and keeps its tokens', async ($, on) => {
+  await delayed($, on, 'продолжаем', dueSoon())
+  const ui = await atColumns($, 60)
+  expect(await texts(ui)).toContain(soonLabel)
   expect(await buttons(ui)).toContain('cancel-delay')
+  expect(await rowWidth(ui)).toBeLessThanOrEqual(60)
+  const wide = await texts(await atColumns($, 140))
+  expect(wide).toContain(soonLabel)
+  expect(wide.some((t: string) => t.includes('512k'))).toBe(true) // the numbers stay while a worker waits
 })
