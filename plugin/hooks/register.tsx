@@ -337,6 +337,7 @@ const waitOf = async ($: EngineInterface, id: string) => {
 // The delayed New worker: the wait is a store key of its chat; the 30 s tick starts it once due. The key goes first, so it never fires twice.
 // A turn or a launch in progress leaves the wait where it is for the next tick. The band shows the wait of the chat that is open (a /clear or /resume
 // changes the id without a session.start), so a wait goes only after the band has shown it for a tick.
+let threwAt = 0
 const fireDue = async ($: EngineInterface, python: string, compression: string) => {
   const [id, now] = await Promise.all([$.session.id(), $.clock.now()])
   const at = await waitOf($, id)
@@ -345,8 +346,13 @@ const fireDue = async ($: EngineInterface, python: string, compression: string) 
   if (at === null || at > now || isWorking || shown !== at) return
   await $.store.delete(`delayed:${id}`)
   await update($, delayedAt, () => null)
-  // false = nothing was launched (busy, or the busy flag could not be set): the wait goes back. A throw from startWorker's tail comes after the launch: no put-back.
-  if (await startWorker($, python, 'send', compression)) return
+  // false = nothing was launched (busy, the busy flag could not be set, or a step before /clear threw): the wait goes back. A throw from startWorker's tail comes after the launch: no put-back.
+  const r = await startWorker($, python, 'send', compression)
+  if (r) return
+  if (r === null) {
+    if (threwAt === at) return // a step before /clear keeps throwing: one put-back per wait, not a toast every tick
+    threwAt = at
+  }
   await $.store.set(`delayed:${id}`, { at })
   await update($, delayedAt, () => at)
 }
@@ -399,7 +405,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
     await update($, isBusy, () => false)
     await guarded($, 'launch', () => refresh($, python))
   }
-  return outcome !== undefined || isCleared // a throw before /clear launched nothing: the delayed wait goes back
+  return outcome !== undefined || isCleared ? true : null // null: a throw before /clear launched nothing, the delayed wait goes back
 }
 
 export const register: Register = (on, options) => {
@@ -556,7 +562,6 @@ export const register: Register = (on, options) => {
         await pruneTurns($)
         await refresh($, python)
         if (!prev?.at) void refreshInfo($, python) // the first reply of a chat (a new worker's): only now has its transcript a call for the savings to read
-
       })
     }
 
@@ -890,7 +895,7 @@ export const register: Register = (on, options) => {
     const detailsLabel = isOpen ? T.compact : T.details
     const toggle = () => guarded($, 'band', async () => (await update($, isDetails, () => !isOpen), await $.store.set('details', !isOpen)))
     const waitText = wait === null ? '' : T.waitingAt(when(new Date(wait).toISOString(), s.now))
-    const cancelWait = () => guarded($, 'band', async () => (await $.store.delete(`delayed:${await $.session.id()}`), await update($, delayedAt, () => null)))
+    const cancelWait = () => guarded($, 'band', async () => (await Promise.all([$.store.delete(`delayed:${s.id}`), $.store.delete(`delayed:${await $.session.id()}`)]), await update($, delayedAt, () => null)))
     const actions = (wrap: boolean, hasDetails = true) => (
       <Box gap={1} flexWrap={wrap ? 'wrap' : undefined}>
         {wait !== null && <Text color="warning">{waitText}</Text>}
@@ -929,13 +934,13 @@ export const register: Register = (on, options) => {
 
     const cols = columns(s, data, showLimits)
     let body = (
-      <Box gap={2} flexWrap="wrap">
+      <Box columnGap={2} flexWrap="wrap">
         {cols.map(c => (
           <Box key={c.key} flexDirection="column">
             <Text dimColor>{c.label}</Text>
             <Text bold color={c.tone}>{c.value}</Text>
-            {c.sub.map(line => (
-              <Text key={line} dimColor wrap="truncate-end">{line}</Text>
+            {c.sub.map((line, j) => (
+              <Text key={line} dimColor={!c.subTone?.[j]} color={c.subTone?.[j]} wrap="truncate-end">{line}</Text>
             ))}
           </Box>
         ))}

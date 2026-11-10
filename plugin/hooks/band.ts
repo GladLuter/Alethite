@@ -5,7 +5,7 @@ import { T } from './text'
 
 export type Tone = 'error' | 'warning'
 export type Token = { key: 'size' | 'cache' | 'send' | 'saved' | 'base'; text: string; tone?: Tone }
-export type Col = { key: string; label: string; value: string; sub: string[]; tone?: Tone }
+export type Col = { key: string; label: string; value: string; sub: string[]; subTone?: Record<number, Tone>; tone?: Tone }
 
 export const SHIELD = '🛡' // the title shortened to this when the row is tight
 const usd = (n: number) => `$${n.toFixed(2)}`
@@ -89,6 +89,7 @@ export const columns = (s: Snap, info: Info | null, showLimits: boolean): Col[] 
     key: 'worker', label: T.col.worker, value: sv ? (wm ? upTo(wm) : '—') : '?', tone: wm?.tone,
     sub: sv ? [...(w && w.links > 0 ? [T.workerSub(w.links, w.calls)] : []), ...(sv.project ? [T.projectSub(upTo(money(sv.project.usd)), sv.project.links)] : [])] : [],
   }
+  if (sv?.project && money(sv.project.usd).tone) workerCol.subTone = { [workerCol.sub.length - 1]: 'error' } // the project line is the last one
 
   const [first, ...rest] = s.limits
   const limitsCol: Col[] = showLimits && first
@@ -139,19 +140,18 @@ const STYLE = `.l,.s{fill:#87867f;font:12px ${FONT}}.v{fill:#1f1e1d;font:600 16p
 // shortcut: always laid out for 900 px and the image scales to the band; pass the band's real width if a narrow desktop band cuts too much.
 const WIDTH = 900
 export const columnsSvg = (cols: Col[]) => {
-  const width = WIDTH
   const need = cols.map(c => Math.max(c.label.length * 7, c.value.length * 9, ...c.sub.map(l => l.length * 6.2)) + 28)
   const total = need.reduce((a, b) => a + b, 0)
-  const edge = need.map((_, i) => (need.slice(0, i).reduce((a, b) => a + b, 0) * width) / total)
+  const edge = need.map((_, i) => (need.slice(0, i).reduce((a, b) => a + b, 0) * WIDTH) / total)
   const height = 52 + 15 * Math.max(1, ...cols.map(c => c.sub.length))
-  let body = `<line class="d" x1="0" y1="0.5" x2="${width}" y2="0.5"/>`
+  let body = `<line class="d" x1="0" y1="0.5" x2="${WIDTH}" y2="0.5"/>`
   cols.forEach((c, i) => {
-    const colW = (need[i] * width) / total
+    const colW = (need[i] * WIDTH) / total
     const x = edge[i] + (i === 0 ? 0 : 12)
     if (i > 0) body += `<line class="d" x1="${edge[i]}" y1="14" x2="${edge[i]}" y2="${height - 2}"/>`
     body += `<text class="l" x="${x}" y="24">${esc(c.label)}</text>`
     body += `<text class="v${c.tone ? ` ${c.tone}` : ''}" x="${x}" y="44">${esc(fit(c.value, Math.floor((colW - 16) / 9)))}</text>`
-    c.sub.forEach((line, j) => (body += `<text class="s" x="${x}" y="${61 + 15 * j}">${esc(fit(line, Math.floor((colW - 16) / 6.2)))}</text>`))
+    c.sub.forEach((line, j) => (body += `<text class="s${c.subTone?.[j] ? ` ${c.subTone[j]}` : ''}" x="${x}" y="${61 + 15 * j}">${esc(fit(line, Math.floor((colW - 16) / 6.2)))}</text>`))
   })
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><style>${STYLE}</style>${body}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${height}" viewBox="0 0 ${WIDTH} ${height}"><style>${STYLE}</style>${body}</svg>`
 }

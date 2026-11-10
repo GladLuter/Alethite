@@ -94,8 +94,10 @@ test('columns: sub-lines, project null, reset times, base facts', () => {
   expect(col(columns(snap({ tokens: null, cost: 0 }), info(), true), 'chat').sub).toEqual(['потрачено $0.00'])
 })
 test('columns: a negative project sum is the dearer form, not "up to $-0.40"', () => {
-  const sub = columns(snap(), info({ savings: savings({ project: { usd: -0.4, links: 4 } }) }), true).find(x => x.key === 'worker')!.sub
-  expect(sub[1]).toBe('проект: дороже на $0.40 (4)')
+  const w = columns(snap(), info({ savings: savings({ project: { usd: -0.4, links: 4 } }) }), true).find(x => x.key === 'worker')!
+  expect(w.sub[1]).toBe('проект: дороже на $0.40 (4)')
+  expect(w.subTone).toEqual({ 1: 'error' })
+  expect(columnsSvg([w])).toContain('class="s error"')
 })
 test('columns: a reset on another day carries the weekday; a bad stamp is ?', () => {
   const far = columns(snap({ limits: [{ kind: 'seven_day', percentUsed: 50, resetsAt: new Date(now + 3 * 86_400_000).toISOString() }] }), info(), true)

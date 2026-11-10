@@ -20,8 +20,8 @@ from compress import LEVELS, compress
 from transcripts import find_session, last_usage, project_key, project_keys
 
 
-INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings')  # the commands that read no index: no merge waits for them, and they still work when the index cannot be used
-SHORT = (*INDEX_FREE, 'lessons-match', 'savings')  # the runs that do not merge, nor open the index again to keep forgets (lessons-match reads it and writes no forget)
+INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
+SHORT = (*INDEX_FREE, 'lessons-match')  # the runs that do not merge, nor open the index again to keep forgets (lessons-match reads it and writes no forget)
 
 
 class _Help(Exception):

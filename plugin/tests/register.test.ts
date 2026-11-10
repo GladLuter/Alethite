@@ -1852,6 +1852,22 @@ test('a throw before anything is launched puts the wait back', async ($, on) => 
   expect(m.store.has('delayed:id')).toBe(false)
 })
 
+test('a launch that keeps throwing before /clear is retried once, then the wait is dropped', async ($, on) => {
+  const { m, log, state } = await delayed($, on, 'продолжаем', dueSoon())
+  state.broken = true
+  await m.clock.advance(SOON - NOW + 3 * 30_000)
+  expect(log).toEqual([])
+  expect(m.toasts.filter(t => t.includes('launch'))).toHaveLength(2)
+  expect(m.store.has('delayed:id')).toBe(false)
+})
+
+test('Cancel in the gap after /clear also removes the wait of the chat the row was drawn for', async ($, on) => {
+  const { m, ui } = await delayed($, on, 'продолжаем', dueSoon())
+  ids.now = 'other' // /clear has run no hook: the row still shows the old wait
+  await ui.press({ key: 'cancel-delay' })
+  expect(m.store.has('delayed:id')).toBe(false)
+})
+
 test('a /clear while a wait is pending: the new chat shows no wait, and the old chat keeps it', async ($, on) => {
   const { m, log, ui } = await delayed($, on, 'продолжаем', dueSoon())
   expect(await buttons(ui)).toEqual(['cancel-delay', 'details'])
