@@ -1,5 +1,7 @@
 // Pure side of the bridge to scripts/cg.py: one JSON object on stdout, {"error": "..."} and exit 1 on failure.
 // Everything that touches `$` (runCg, fail, memoryDir) lives in register.tsx: the loader follows `$` only inside its own file.
+import { cleanupHealth } from './cleanup'
+import type { CleanupStatus } from './cleanup'
 import { encryptHealth } from './encrypt'
 import type { EncryptStatus } from './encrypt'
 import type { IndexDirStatus } from './indexdir'
@@ -67,6 +69,7 @@ export const healthLines = (h: {
   const v = typeof h.index === 'string' ? undefined : (h.index.vectors as Vectors | undefined)
   const p = typeof h.index === 'string' ? undefined : (h.index.project as Project | undefined)
   const enc = typeof h.index === 'string' ? undefined : (h.index.encryption as EncryptStatus | undefined)
+  const cleanup = typeof h.index === 'string' ? undefined : (h.index.cleanup as CleanupStatus | undefined)
   const dir = typeof h.index === 'string' ? undefined : (h.index.index_dir as IndexDirStatus | undefined)
   return [
     T.healthVersion(h.version),
@@ -83,6 +86,7 @@ export const healthLines = (h: {
     ...(h.compression === undefined ? [] : [T.compressionLine(h.compression)]),
     ...(h.lessons === undefined ? [] : [T.healthLessons(h.lessons.count, h.lessons.shown, h.lessons.chars, h.lessons.stopped, h.lessons.on)]),
     ...(h.rules && h.rules.global > 0 ? [T.healthRules(h.rules.global, h.rules.rules, h.rules.chars, h.rules.left, h.lessons?.on ?? true)] : []),
+    ...(cleanup ? [cleanupHealth(cleanup)] : []),
     ...(h.syncDir === undefined ? [] : syncHealth(h.syncDir, typeof h.index === 'string' ? undefined : (h.index.sync as SyncStatus | undefined))),
     ...(typeof h.index === 'string' || !('job' in h.index) ? [] : jobHealth(job)),
     h.lastError ? T.healthLastError(new Date(h.lastError.at).toLocaleString(T.locale), h.lastError.where, h.lastError.msg) : T.healthNoError,

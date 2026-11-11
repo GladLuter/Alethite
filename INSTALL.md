@@ -300,6 +300,14 @@ What else to know:
 - **Moving the index back to C:** from the working folder is done by the same command, `/al-index-dir C:\Users\<name>\.claude\alethite`. If C: holds an old copy that is not byte for byte the same as the index, the command refuses. Then first repeat `/al-index-dir` with the working folder and answer Yes to the question about deleting. An old copy that is byte for byte the same does not stop the move.
 - **The merge keeps failing.** `/al-health` shows the reason in its line, and `/al-index-dir` refuses while the merge is not done. If the same reason comes back every time, delete `index.db` in `C:\Users\<name>\.claude\alethite` by hand, but only once the records saved there are not needed. The index in the working folder stays as it is.
 
+### Deleting old chats
+
+Off by default. `/al-cleanup on` turns it on, `/al-cleanup off` turns it off, `/al-cleanup` shows the state and how many chats (and MB) are waiting.
+
+- When on, the background job deletes from disk the transcript of an old chat after a New worker handoff, once everything from it is in the index (and synced, if sync is set) and the chat has not been touched for 60 minutes. Its statistics stay in the index. The current chat is never deleted.
+- Deletion is permanent. An old chat reopened with `claude --resume` and left idle for an hour is deleted too; its text stays in the long memory.
+- `/al-health` shows the state and how many chats were deleted.
+
 ## Only if you used an older build
 
 New users: ignore this section.

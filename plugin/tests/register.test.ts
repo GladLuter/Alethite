@@ -528,7 +528,7 @@ test('toasts start with the mod name, once; status lines do not (the engine adds
   for (const t of m.toasts) expect(t).toMatch(/^Alethite: (?!.*Alethite)/s)
 })
 
-test('exactly nine commands are registered, all al-*, none cg-*', async ($, on) => {
+test('exactly ten commands are registered, all al-*, none cg-*', async ($, on) => {
   const names: string[] = []
   on('command.register', (_: unknown, e: { name: string }) => (names.push(e.name), { value: { command: e.name } }))
   on('tool.register', () => ({ value: { tool: 'x' } }))
@@ -536,7 +536,7 @@ test('exactly nine commands are registered, all al-*, none cg-*', async ($, on) 
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   wire(on, [], () => ({ value: usage }))
   await $.session.start({ cwd: 'C:/w', surface: null, isInteractive: false })
-  expect(names).toEqual(['al-band', 'al-health', 'al-index', 'al-stats', 'al-sync', 'al-lessons', 'al-job', 'al-encrypt', 'al-index-dir'])
+  expect(names).toEqual(['al-band', 'al-health', 'al-index', 'al-stats', 'al-sync', 'al-lessons', 'al-job', 'al-encrypt', 'al-index-dir', 'al-cleanup'])
   expect(names.filter(n => n.startsWith('cg-'))).toEqual([])
 })
 
@@ -565,7 +565,7 @@ test('session.start: a refused registration leaves the status line, the timers a
   expect(statuses.at(-1)!.startsWith(T.statusError(''))).toBe(true) // ...and the refusal is the last word
   expect(statuses.at(-1)).toContain('schema refused')
   expect(store.get('lastError')).toMatchObject({ where: 'register', msg: expect.stringContaining('schema refused') })
-  expect(names).toEqual({ commands: ['al-band', 'al-health', 'al-index', 'al-stats', 'al-sync', 'al-lessons', 'al-job', 'al-encrypt', 'al-index-dir'], tools: ['recall', 'recall_more', 'lesson_save'] }) // every tool was tried, the commands went through
+  expect(names).toEqual({ commands: ['al-band', 'al-health', 'al-index', 'al-stats', 'al-sync', 'al-lessons', 'al-job', 'al-encrypt', 'al-index-dir', 'al-cleanup'], tools: ['recall', 'recall_more', 'lesson_save'] }) // every tool was tried, the commands went through
   await clock.advance(30_000) // the timers run
   expect(statuses.at(-1)).toMatch(/^ctx /)
 })
@@ -2167,4 +2167,27 @@ test('the waiting row stays on one line at 60 columns and keeps its tokens', asy
   const wide = await texts(await atColumns($, 140))
   expect(wide).toContain(soonLabel)
   expect(wide.some((t: string) => t.includes('512k'))).toBe(true) // the numbers stay while a worker waits
+})
+
+// ---- deleting the old chats (/al-cleanup) ----
+const cleanupAnswer = (on: boolean) => ran(JSON.stringify({ on, preview: { chats: 2, mb: 4.56 } }))
+
+test('/al-cleanup: on, off and no word go to cg.py as cleanup on|off|status and the reply has the chats and megabytes', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'cleanup' ? cleanupAnswer(a[1] === 'on') : ran('{}')))
+  const run = async (args: string) => (await ($ as any).command.run({ command: 'al-cleanup', args })).text
+  expect(await run('on')).toBe(T.cleanupState(true, 2, 4.6))
+  expect(await run('')).toBe(T.cleanupState(false, 2, 4.6))
+  expect(await run('off')).toBe(T.cleanupState(false, 2, 4.6))
+  expect(ofCg(m, 'cleanup').map(c => c.argv)).toEqual([['cleanup', 'on'], ['cleanup', 'status'], ['cleanup', 'off']])
+})
+
+test('/al-cleanup: a wrong word gets the hint and cg.py is not run; a failure goes to a toast', async ($, on) => {
+  let fail = false
+  const m = await started($, on, a => (a[0] === 'cleanup' ? (fail ? failed('ValueError: boom') : cleanupAnswer(true)) : ran('{}')))
+  const run = async (args: string) => (await ($ as any).command.run({ command: 'al-cleanup', args })).text
+  expect(await run('maybe')).toBe(T.cgCleanupUsage)
+  expect(ofCg(m, 'cleanup')).toEqual([])
+  fail = true
+  expect(await run('on')).toBe(T.cgCleanupFailed)
+  expect(m.toasts).toEqual([T.toast(T.failed('al-cleanup', 'ValueError: boom'))])
 })

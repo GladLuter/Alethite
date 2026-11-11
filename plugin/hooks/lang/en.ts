@@ -251,6 +251,15 @@ export const en = {
   indexDirDone: (dir: string) => `The index is in ${dir} now.`,
   indexDirUnfinished: 'al-index-dir: not finished.',
   indexDirTimeout: 'did not finish in 10 minutes and was stopped. /al-health shows where the index is now. If it is not where you want it, run /al-index-dir again.',
+
+  // deleting the old chat after a New worker handoff (/al-cleanup)
+  cgCleanupDescription: 'Delete the old chat from disk after a New worker handoff, once all of it is in the index. Off by default; deletion is permanent',
+  cgCleanupHint: '[on | off]',
+  cgCleanupUsage: 'Use: /al-cleanup, /al-cleanup on or /al-cleanup off.',
+  cleanupState: (on: boolean, chats: number, mb: number) =>
+    `${on ? 'Deleting old chats: on' : 'Deleting old chats: off'}. Waiting to be deleted now: ${chats} (${mb} MB). A chat is deleted only after a New worker handoff, when all of it is in the index (and synced, if sync is set) and it has been untouched for 60 minutes. The current chat is never deleted. Deletion is permanent, its text stays in the long memory.`,
+  cgCleanupFailed: 'al-cleanup: did not work, the reason is in the toast.',
+  healthCleanup: (on: boolean, removed: number) => (on ? `Deleting old chats: on, deleted ${removed}` : `Deleting old chats: off (deleted ${removed})`),
 }
 
 export type Texts = typeof en
