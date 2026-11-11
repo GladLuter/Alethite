@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Savings, Snap } from '../types'
-import { columns, columnsSvg, delayAt, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
+import { columns, delayAt, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
 import { isStale, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
@@ -912,7 +912,8 @@ export const register: Register = (on, options) => {
     isWorking = e.props.isWorking // /clear in the middle of a turn is dangerous: no New worker then, and no waiting one either
     if (s === null || e.props.hasSurvey || s.id === hidden) return next(e)
 
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const { Box, Button, Svg, Text } = $.ui.resolve(e)
+    const rule = e.surface === 'desktop' ? <Svg source={RULE_SVG} alt="—" /> : null
     // the band above the prompt is one area for every mod: ours is a row or a frame of its own, and what the mods beneath draw stays under it
     const below = await next(e)
     const isLit = isStale(s, minTokens, idleMinutes) && s.id !== calm
@@ -922,6 +923,7 @@ export const register: Register = (on, options) => {
     if (armed && !isWorking) {
       return (
         <Box flexDirection="column">
+          {rule}
           <Box borderStyle="round" borderDimColor flexDirection="column" paddingX={1}>
             {title}
             <Text>{T.willClear}</Text>
@@ -979,6 +981,7 @@ export const register: Register = (on, options) => {
       // Details goes too when a waiting row still cannot hold it (the row stays one line)
       return (
         <Box flexDirection="column">
+          {rule}
           <Box gap={1}>
             <Text bold>{rowTitle}</Text>
             {tokens.map(t => (
@@ -993,7 +996,7 @@ export const register: Register = (on, options) => {
     }
 
     const cols = columns(s, data, showLimits)
-    let body = (
+    const body = (
       <Box columnGap={2} flexWrap="wrap">
         {cols.map(c => (
           <Box key={c.key} flexDirection="column">
@@ -1006,13 +1009,9 @@ export const register: Register = (on, options) => {
         ))}
       </Box>
     )
-    // box characters break in the desktop's proportional font: one image there
-    if (e.surface === 'desktop') {
-      const { Svg } = $.ui.resolve(e)
-      body = <Svg source={columnsSvg(cols)} alt={cols.map(c => `${c.label} ${c.value}`).join(', ')} />
-    }
     return (
       <Box flexDirection="column">
+        {rule}
         <Box borderStyle="round" borderDimColor flexDirection="column" paddingX={1}>
           {title}
           {body}

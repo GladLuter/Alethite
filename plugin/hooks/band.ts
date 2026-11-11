@@ -128,30 +128,5 @@ export const delayAt = (limits: Snap['limits'], now: number) => {
   return at > now ? at : null
 }
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-const fit = (s: string, max: number) => (s.length > max ? `${s.slice(0, Math.max(1, max - 1))}…` : s)
-const FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
-// The image cannot read the app's theme, so it follows the system's.
-// shortcut: an app theme that differs from the system theme gets the wrong text color; pass the theme in if that bites.
-const STYLE = `.l,.s{fill:#87867f;font:12px ${FONT}}.v{fill:#1f1e1d;font:600 16px ${FONT}}.d{stroke:#1f1e1d;stroke-opacity:.12}.warning{fill:#a86400}.error{fill:#c62828}@media (prefers-color-scheme:dark){.v{fill:#ecebe6}.d{stroke:#fff;stroke-opacity:.14}.warning{fill:#e3a03d}.error{fill:#ef6a5a}}`
-
-// The Details columns as one SVG for the desktop, where box characters break in a proportional font.
-// Columns share the width by how much text they hold, and text that still does not fit is cut with "…".
-// shortcut: always laid out for 900 px and the image scales to the band; pass the band's real width if a narrow desktop band cuts too much.
-const WIDTH = 900
-export const columnsSvg = (cols: Col[]) => {
-  const need = cols.map(c => Math.max(c.label.length * 7, c.value.length * 9, ...c.sub.map(l => l.length * 6.2)) + 28)
-  const total = need.reduce((a, b) => a + b, 0)
-  const edge = need.map((_, i) => (need.slice(0, i).reduce((a, b) => a + b, 0) * WIDTH) / total)
-  const height = 52 + 15 * Math.max(1, ...cols.map(c => c.sub.length))
-  let body = `<line class="d" x1="0" y1="0.5" x2="${WIDTH}" y2="0.5"/>`
-  cols.forEach((c, i) => {
-    const colW = (need[i] * WIDTH) / total
-    const x = edge[i] + (i === 0 ? 0 : 12)
-    if (i > 0) body += `<line class="d" x1="${edge[i]}" y1="14" x2="${edge[i]}" y2="${height - 2}"/>`
-    body += `<text class="l" x="${x}" y="24">${esc(c.label)}</text>`
-    body += `<text class="v${c.tone ? ` ${c.tone}` : ''}" x="${x}" y="44">${esc(fit(c.value, Math.floor((colW - 16) / 9)))}</text>`
-    c.sub.forEach((line, j) => (body += `<text class="s${c.subTone?.[j] ? ` ${c.subTone[j]}` : ''}" x="${x}" y="${61 + 15 * j}">${esc(fit(line, Math.floor((colW - 16) / 6.2)))}</text>`))
-  })
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${height}" viewBox="0 0 ${WIDTH} ${height}"><style>${STYLE}</style>${body}</svg>`
-}
+// A thin line the desktop draws above our band so it does not merge with the band drawn above it. It cannot read the app's theme, so it follows the system's.
+export const RULE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="12" viewBox="0 0 1200 12"><style>.d{stroke:#1f1e1d;stroke-opacity:.12}@media (prefers-color-scheme:dark){.d{stroke:#fff;stroke-opacity:.14}}</style><line class="d" x1="0" y1="6" x2="1200" y2="6" stroke-width="2"/></svg>'
