@@ -10,6 +10,7 @@ import handoff
 import transcripts
 from handoff import build_handoff
 from test_texts import use_lang
+from texts import t
 from test_transcripts import a, jsonl, text, tool, u
 from transcripts import find_session, read_records, strip_handoff
 
@@ -54,6 +55,13 @@ class HandoffTest(unittest.TestCase):
         for i in range(untracked):
             open(os.path.join(repo, 'f%02d' % i + 'n' * 100), 'w').close()
         return os.path.realpath(repo)
+
+    def test_resume_line_replaced_when_cleanup(self):
+        self.write('P/S.jsonl', [u('вопрос'), a([text('ответ')])])
+        self.assertIn('claude --resume', self.build())
+        out = self.build(None, 'off', True)
+        self.assertNotIn('claude --resume', out)
+        self.assertIn(t('handoff_removed'), out)
 
     def test_owner_messages_survive_long_replies(self):
         objs = []

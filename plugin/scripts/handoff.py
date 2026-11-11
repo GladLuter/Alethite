@@ -60,8 +60,9 @@ def changed_files(recs, subs):
     return list(dict.fromkeys(r['edit'] for r in reversed(edits)))[:30]
 
 
-def build_handoff(projects, session_id, today, memory_dir=None, level='off'):
-    """The handoff text; the quotes of the conversation are compressed at `level` (stage 3), the rest is left as it is."""
+def build_handoff(projects, session_id, today, memory_dir=None, level='off', cleanup=False):
+    """The handoff text; the quotes of the conversation are compressed at `level` (stage 3), the rest is left as it is. With `cleanup`
+    the old chat is going to be removed from the disk: the text says so instead of how to resume it."""
     main, subs = find_session(projects, session_id)
     if not main:
         raise ValueError(t('session_not_found', id=session_id, dir=projects))
@@ -104,7 +105,7 @@ def build_handoff(projects, session_id, today, memory_dir=None, level='off'):
         n = sum(os.path.basename(f) != 'MEMORY.md' for f in glob.glob(os.path.join(glob.escape(memory_dir), '*.md')))
         head.append(t('handoff_memory' if n else 'handoff_no_memory', dir=memory_dir, n=n))
     head += [t('handoff_recall', id=session_id),
-             t('handoff_resume', cwd=next((r['cwd'] for r in recs if r['cwd']), ''), id=session_id)]
+             t('handoff_removed') if cleanup else t('handoff_resume', cwd=next((r['cwd'] for r in recs if r['cwd']), ''), id=session_id)]
 
     def render():
         parts = ['\n'.join(head), stopped(fixed + early)] + ([t('handoff_state') + '\n' + '\n\n'.join(git)] if git else [])

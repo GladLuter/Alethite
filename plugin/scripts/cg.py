@@ -58,6 +58,7 @@ def _status(a):
         out['encryption']['notes'].append(texts.t(note))
     out['job'] = json.loads(memdb.meta(conn, 'job_last') or 'null')  # the background job's last run (stage 4), for /al-health
     out['index_dir'] = indexdir.status(conn, a.where)
+    out['cleanup'] = {'on': _cleanup_on(a), 'removed_total': conn.execute('SELECT count(*) FROM removed').fetchone()[0]}
     if a.cwd:  # the scope of «в этом проекте»: a key that matches no conversation makes the project search find nothing
         keys = project_keys(a.cwd, _aliases(a))
         out['project'] = {'key': keys[0], 'convs': conn.execute('SELECT count(*) FROM convs WHERE ' + memdb.IN_PROJECT, {'p': json.dumps(keys)}).fetchone()[0]}
@@ -188,7 +189,7 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
     is set). Each step under the lock a chat takes for it, so a chat and the job never do one thing twice at a time; a step that fails
     does not stop the next. The result is kept in meta.job_last for /al-health. The short memory waits for a chat: only a chat knows its
     project's auto-memory folder."""
-    import job, sync
+    import cleanup, job, sync
     battery, digest = battery or job.on_battery, digest or sync.ollama_digest
     try:
         conn = memdb.connect(a.db)  # first: it also makes the folder the lock files lie in
@@ -206,7 +207,7 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
     model = s.get('embedModel') if isinstance(s.get('embedModel'), str) and s['embedModel'].strip() else vectors.MODEL
     sync_dir = _sync_dir(s)
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    out = {'at': stamp, 'index': None, 'embed': None, 'sync': None, 'errors': []}
+    out = {'at': stamp, 'index': None, 'embed': None, 'sync': None, 'cleanup': None, 'errors': []}
     fault = lambda where, e: out['errors'].append({'where': where, 'error': '%s: %s' % (type(e).__name__, e)})
     # a run cut off (the task's 30-minute limit) never gets to the end: /al-health must not show the run before it as all well
     conn.execute("INSERT OR REPLACE INTO meta VALUES('job_last', ?)", (json.dumps(dict(out, errors=[{'where': 'job', 'error': texts.t('job_unfinished')}]), ensure_ascii=False),))
@@ -250,6 +251,24 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
                 out['errors'].append({'where': 'sync', 'error': r['errors'][0]['error']})
         except Exception as e:
             fault('sync', e)
+    if s.get('deleteOldChats') is True:
+        try:
+            held = memdb.lock(a.db, 'cleanup', 0)
+        except sqlite3.OperationalError as e:
+            if 'locked' in str(e):
+                out['cleanup'] = {'skipped': 'busy'}
+            else:
+                fault('cleanup', e)
+        else:
+            try:  # what the share does not hold yet is not removed: the chat's text must be on the other computers first
+                r = cleanup.run(conn, a.projects, not (sync_dir and sync.pending(conn)), os.path.join(os.path.dirname(a.db), 'handoffs'))
+                out['cleanup'] = {k: r[k] for k in ('removed', 'mb', 'waiting')} | {'errors': len(r['errors'])}
+                if r['errors']:
+                    out['errors'].append({'where': 'cleanup', 'error': '%s: %s' % (r['errors'][0]['path'], r['errors'][0]['error'])})
+            except Exception as e:
+                fault('cleanup', e)
+            finally:
+                held.close()
     conn.execute("INSERT OR REPLACE INTO meta VALUES('job_last', ?)", (json.dumps(out, ensure_ascii=False),))
     return out
 
@@ -283,9 +302,21 @@ def _savings(a):
     return savings.savings(a.projects, _session(a.session), convs, os.path.join(os.path.dirname(crypto.settings_path(a.db)), 'savings-cache.json'), gone)
 
 
+def _cleanup_on(a):
+    return _settings(crypto.settings_path(a.db))[0].get('deleteOldChats') is True
+
+
+def _cleanup(a):
+    """/al-cleanup: `on` and `off` write deleteOldChats; the answer says what is set and what `on` would remove at the first pass."""
+    import cleanup
+    if a.action != 'status':
+        crypto.set_fields(crypto.settings_path(a.db), {'deleteOldChats': True if a.action == 'on' else None})
+    return {'on': _cleanup_on(a), 'preview': cleanup.preview(memdb.connect(a.db), a.projects)}
+
+
 def _handoff(a):
     from handoff import build_handoff
-    text = build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress)
+    text = build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress, _cleanup_on(a))
     folder = os.path.join(os.path.dirname(a.db), 'handoffs')  # next to the index: ~/.claude/alethite/handoffs by default
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, a.session + '.md')
@@ -495,6 +526,7 @@ def _parser():
     s = add('job', _job)
     s.add_argument('action', choices=('install', 'remove', 'status'))
     s.add_argument('--minutes', type=int, default=None)  # job.MINUTES
+    add('cleanup', _cleanup).add_argument('action', choices=('on', 'off', 'status'))
     s = add('forget', _forget)
     s.add_argument('--conv', required=True)
     s.add_argument('--pos', type=int, required=True)

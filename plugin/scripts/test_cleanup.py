@@ -1,10 +1,16 @@
+import gc
 import json
 import os
 import shutil
 import tempfile
+import time
 import unittest
+from unittest import mock
 
+import cg
 import cleanup
+import crypto
+import memdb
 import savings
 import stats
 from memdb import connect
@@ -23,7 +29,8 @@ class CleanupTest(unittest.TestCase):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         self.projects, self.cache = os.path.join(d, 'projects'), os.path.join(d, 'savings-cache.json')
-        self.conn = connect(os.path.join(d, 'db', 'index.db'))
+        self.db, self.handoffs = os.path.join(d, 'db', 'index.db'), os.path.join(d, 'db', 'handoffs')
+        self.conn = connect(self.db)
         self.addCleanup(self.conn.close)
 
     def path(self, sid):
@@ -85,6 +92,121 @@ class CleanupTest(unittest.TestCase):
         self.assertEqual(len([e for e in main['ev'] if e[0] == 'c']), 3)
         self.assertEqual(len(cleanup.saved_chains(self.conn)), 2)  # the main chat and its subagent
         self.assertEqual(self.conn.execute('SELECT path FROM removed').fetchone()[0], 'P/%s.jsonl' % A)
+
+    # the job's removal
+
+    def ready(self):
+        """A (with a subagent) handed off to B, everything indexed, A's handoff text beside the index."""
+        self.chat_a()
+        self.write('P/%s.jsonl' % B, [user(block(A), HOUR2), call('b1', HOUR2, cc=60586, inp=2)])
+        os.makedirs(self.handoffs)
+        with open(os.path.join(self.handoffs, A + '.md'), 'w') as f:
+            f.write('quotes')
+        memdb.update(self.conn, self.projects)
+
+    def run_cleanup(self, synced=True):
+        """cleanup.run two hours from now: the chat is cold."""
+        return cleanup.run(self.conn, self.projects, synced, self.handoffs, now=lambda: time.time() + 7200)
+
+    def test_run_removes_old_chat_and_folder(self):
+        self.ready()
+        out = self.run_cleanup()
+        self.assertEqual((out['removed'], out['waiting'], out['errors']), (1, 0, []))
+        self.assertFalse(os.path.exists(self.path(A)))
+        self.assertFalse(os.path.exists(os.path.join(self.projects, 'P', A)))
+        self.assertFalse(os.path.exists(os.path.join(self.handoffs, A + '.md')))
+        self.assertTrue(os.path.exists(self.path(B)))
+        self.assertEqual(self.conn.execute('SELECT conv FROM removed').fetchall(), [(A,)])
+
+    def test_run_waits_when_not_indexed(self):
+        self.ready()
+        self.write('P/%s.jsonl' % A, [call('a3', T, cr=OLD)], 'a')
+        self.assertEqual(self.run_cleanup()['waiting'], 1)
+        self.assertTrue(os.path.exists(self.path(A)))
+
+    def test_run_waits_when_subagent_not_indexed(self):
+        self.ready()
+        self.write('P/%s/subagents/agent-1.jsonl' % A, [call('s2', T, cr=1000)], 'a')
+        self.assertEqual(self.run_cleanup()['waiting'], 1)
+        self.assertTrue(os.path.exists(self.path(A)))
+
+    def test_run_waits_when_sync_pending(self):
+        self.ready()
+        self.assertEqual(self.run_cleanup(synced=False)['waiting'], 1)
+        self.assertTrue(os.path.exists(self.path(A)))
+
+    def test_run_waits_when_touched_recently(self):
+        self.ready()
+        newest = max(os.path.getmtime(p) for p in (self.path(A), os.path.join(self.projects, 'P', A, 'subagents', 'agent-1.jsonl')))
+        for ago, removed in ((59 * 60, 0), (60 * 60, 1)):
+            out = cleanup.run(self.conn, self.projects, True, self.handoffs, now=lambda: newest + ago)
+            self.assertEqual(out['removed'], removed)
+        self.assertFalse(os.path.exists(self.path(A)))
+
+    def test_current_chat_never_candidate(self):
+        self.ready()
+        self.assertEqual(cleanup.candidates(self.conn, self.projects), [self.path(A)])
+
+    def test_candidates_follow_removed_rows(self):
+        """A removed, B (handed off from A) removed later: A's row still names its own old chat Z, whose file is still there."""
+        Z = '%08x-0000-0000-0000-000000000000' % 0xd
+        self.write('P/%s.jsonl' % Z, [call('z1', T, cr=OLD)])
+        self.write('P/%s.jsonl' % A, [user(block(Z), T), call('a1', T, cr=OLD)])
+        cleanup.snapshot(self.conn, self.projects, self.path(A))
+        self.remove(A)
+        self.assertEqual(cleanup.candidates(self.conn, self.projects), [self.path(Z)])
+
+    def test_locked_file_reported_and_retried(self):
+        self.ready()
+        with mock.patch('os.remove', side_effect=PermissionError('locked')):
+            out = self.run_cleanup()
+        self.assertEqual((out['removed'], len(out['errors']), out['errors'][0]['path']), (0, 1, self.path(A)))
+        self.assertTrue(os.path.exists(self.path(A)))
+        self.assertEqual(self.run_cleanup()['removed'], 1)
+
+    def test_rebuild_keeps_removed_chat(self):
+        self.chat_a()
+        self.write('P/%s.jsonl' % A, [user('хомяк ёжик', T)], 'a')
+        self.write('P/%s.jsonl' % B, [user(block(A), HOUR2), call('b1', HOUR2, cc=60586, inp=2)])
+        memdb.update(self.conn, self.projects)
+        self.assertEqual(self.run_cleanup()['removed'], 1)
+        memdb.update(self.conn, self.projects, rebuild=True)
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM chunks WHERE chunks MATCH ? AND conv = ?', ('ёжик', A)).fetchone()[0], 1)
+
+    def test_preview_counts_without_conditions(self):
+        self.ready()
+        self.write('P/%s.jsonl' % A, [call('a3', T, cr=OLD)], 'a')  # not indexed, not cold: still counted
+        p = cleanup.preview(self.conn, self.projects)
+        self.assertEqual(p['chats'], 1)
+        self.assertGreater(p['mb'], 0)
+
+    def maintain(self):
+        self.addCleanup(gc.collect)  # maintain never closes its connection
+        a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'maintain'])
+        return cg.maintain(a, battery=lambda: True, digest=lambda m: None)
+
+    def test_maintain_skips_cleanup_when_off(self):
+        self.ready()
+        out = self.maintain()
+        self.assertIsNone(out['cleanup'])
+        self.assertTrue(os.path.exists(self.path(A)))
+
+    def test_maintain_runs_cleanup_when_on(self):
+        self.ready()
+        crypto.set_fields(crypto.settings_path(self.db), {'deleteOldChats': True})
+        out = self.maintain()
+        self.assertEqual((out['cleanup']['waiting'], out['errors']), (1, []))  # the files are fresh: not cold yet
+
+    def test_cli_on_off_writes_setting(self):
+        self.ready()
+        settings = crypto.settings_path(self.db)
+        for word, want in (('on', True), ('off', None)):
+            a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'cleanup', word])
+            out = a.fn(a)
+            self.assertEqual(crypto._read(settings).get('deleteOldChats'), want)
+            self.assertEqual((out['on'], out['preview']['chats']), (want is True, 1))
+        a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'status'])
+        self.assertEqual(a.fn(a)['cleanup'], {'on': False, 'removed_total': 0})
 
 
 if __name__ == '__main__':

@@ -24,6 +24,31 @@ def _num(u, k):
     return u.get(k) if isinstance(u.get(k), int) else 0
 
 
+def _start(o):
+    """What a parsed line says of the chat's start: None while it is not the owner's first text, () when that text holds no handoff,
+    else (the old chat's id, the time)."""
+    if o.get('type') != 'user' or o.get('isMeta'):
+        return None
+    texts = [b['text'] for b in _blocks(o.get('message', {}).get('content') if isinstance(o.get('message'), dict) else None)
+             if b.get('type') == 'text' and isinstance(b.get('text'), str) and b['text'].strip() and not INJECTED.match(b['text'])]
+    if not texts:
+        return None
+    block = HANDOFF_BLOCK.match(texts[0].lstrip())
+    uid = block and _UUID.search(block.group())
+    return (uid.group(), o.get('timestamp') or '') if uid else ()
+
+
+def old_of(path):
+    """The id of the chat a transcript is the handoff of, else None; reads the head up to the owner's first text only."""
+    with open(lp(path), 'rb') as f:
+        for raw in f:
+            o = _load(raw)
+            s = _start(o) if o else None
+            if s is not None:
+                return s[0] if s else None
+    return None
+
+
 def read_new(path):
     """The handoff a transcript starts with: {old, ts, model, tokens, usage: [input, cw5m, cw1h, cache_read], tail: [[model, cold, n], ...]}, else None."""
     old = ts = first = None
@@ -36,17 +61,12 @@ def read_new(path):
             if not o:
                 continue
             if old is None:
-                if o.get('type') != 'user' or o.get('isMeta'):
+                s = _start(o)
+                if s is None:
                     continue
-                texts = [b['text'] for b in _blocks(o.get('message', {}).get('content') if isinstance(o.get('message'), dict) else None)
-                         if b.get('type') == 'text' and isinstance(b.get('text'), str) and b['text'].strip() and not INJECTED.match(b['text'])]
-                if not texts:
-                    continue
-                block = HANDOFF_BLOCK.match(texts[0].lstrip())
-                uid = block and _UUID.search(block.group())
-                if not uid:
+                if not s:
                     return None
-                old, ts = uid.group(), o.get('timestamp') or ''
+                old, ts = s
                 continue
             c = _call(o)
             if not c or c[0] in seen:
