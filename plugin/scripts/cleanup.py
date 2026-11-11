@@ -25,6 +25,9 @@ def snapshot(conn, projects, path):
         ev, ch = cc_token_audit.read_chain(p, Counter(), lambda q, o: mem.extend(stats._mem_event(q, o, ours)))
         chains.append({'rel': os.path.relpath(lp(p), root).replace(os.sep, '/'), 'kind': 'main' if p == path else 'subagent',
                        'mtime': os.path.getmtime(lp(p)), 'ev': ev, 'ch': dict(ch), 'mem': mem})
+    row = conn.execute('SELECT chains FROM removed WHERE conv = ?', (conv,)).fetchone()
+    # a pass that failed half-way left files gone: their chains are only in the old row
+    chains += [c for c in json.loads(row[0]) if not os.path.exists(lp(os.path.join(projects, c['rel'])))] if row else []
     conn.execute('INSERT OR REPLACE INTO removed VALUES(?,?,?,?,?,?)',
                  (conv, chains[0]['rel'], datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'),
                   json.dumps(last_usage(path)), json.dumps(savings.read_new(path)), json.dumps(chains)))
@@ -88,8 +91,9 @@ def run(conn, projects, synced, handoffs_dir=None, now=time.time):
                 continue
             mb = _mb(path)
             snapshot(conn, projects, path)
-            os.remove(lp(path))  # first: a locked transcript leaves everything as it was, and the snapshot is rewritten by the next pass
-            shutil.rmtree(lp(path[:-6]), ignore_errors=True)  # shortcut: a locked subagent file stays on the disk (indexed, harmless); no pass looks for it
+            if os.path.isdir(lp(path[:-6])):
+                shutil.rmtree(lp(path[:-6]))  # first: a folder that fails to go keeps the transcript, so the next pass is a candidate again
+            os.remove(lp(path))
             if handoffs_dir:
                 with contextlib.suppress(FileNotFoundError):
                     os.remove(os.path.join(handoffs_dir, os.path.basename(path)[:-6] + '.md'))

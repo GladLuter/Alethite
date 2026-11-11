@@ -164,6 +164,28 @@ class CleanupTest(unittest.TestCase):
         self.assertTrue(os.path.exists(self.path(A)))
         self.assertEqual(self.run_cleanup()['removed'], 1)
 
+    def test_failed_folder_keeps_chat_for_next_pass(self):
+        self.ready()
+        sub = os.path.join(self.projects, 'P', A, 'subagents')
+        self.write('P/%s/subagents/agent-2.jsonl' % A, [call('s2', T, cr=500, out=1)])
+        memdb.update(self.conn, self.projects)
+        before = self.metrics()
+
+        def half(path, *a, **kw):  # one subagent file goes, the other is locked
+            os.remove(os.path.join(sub, 'agent-1.jsonl'))
+            raise PermissionError('locked')
+
+        with mock.patch('shutil.rmtree', half):
+            out = self.run_cleanup()
+        self.assertEqual((out['removed'], len(out['errors']), out['errors'][0]['path']), (0, 1, self.path(A)))
+        self.assertTrue(os.path.exists(self.path(A)))
+        self.assertTrue(os.path.exists(os.path.join(self.handoffs, A + '.md')))
+        out = self.run_cleanup()
+        self.assertEqual((out['removed'], out['errors']), (1, []))
+        self.assertFalse(os.path.exists(os.path.join(self.projects, 'P', A)))
+        self.assertFalse(os.path.exists(self.path(A)))
+        self.assertEqual(self.metrics(cleanup.saved_chains(self.conn)), before)
+
     def test_rebuild_keeps_removed_chat(self):
         self.chat_a()
         self.write('P/%s.jsonl' % A, [user('хомяк ёжик', T)], 'a')
