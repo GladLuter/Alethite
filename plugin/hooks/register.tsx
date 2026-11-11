@@ -16,7 +16,7 @@ import { healthLines, homeNotesOf, indexProblemOf, message, parseCg } from './py
 import type { LastError } from './py'
 import { jobArgs, jobHealth } from './job'
 import type { JobRun } from './job'
-import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, lessonsMatchArgs, oneLine, START } from './lessons'
+import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, lessonsMatchArgs, oneLine, plain, RULES_EVERY, rulesContext, rulesDue, START } from './lessons'
 import type { Found, Lesson } from './lessons'
 import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
@@ -193,8 +193,28 @@ const lessonsOr = async ($: EngineInterface, python: string, kept: Lesson[]) => 
   }
 }
 
+// A rule for all projects that this computer has not seen yet (the other computer's, brought by the sync, maybe while no chat was open) is
+// toasted: it becomes a standing order in every chat here and must not arrive silently. The positions seen are kept in the store, for all
+// chats; the first run after the update only stores them. `own` is the rule a save has just toasted itself.
+const noteRules = async ($: EngineInterface, list: Lesson[], on: boolean, own?: number) => {
+  try {
+    const seen = (await $.store.get('rulesSeen')) as number[] | undefined
+    const fresh = list.filter(l => l.global && !seen?.includes(l.pos))
+    const { left } = rulesContext(list)
+    if (seen !== undefined) for (const l of fresh) if (l.pos !== own) toast($, T.lessonToast(oneLine(l.text), { left, on, stale: false }))
+    if (seen === undefined || fresh.length) await $.store.set('rulesSeen', [...(seen ?? []), ...fresh.map(l => l.pos)])
+  } catch {} // the list matters more than the notice
+}
+
+// The same, with the notice of new rules.
+const reloadLessons = async ($: EngineInterface, python: string, kept: Lesson[], on: boolean) => {
+  const list = await lessonsOr($, python, kept)
+  await noteRules($, list, on)
+  return list
+}
+
 // How often the lessons came back, on this computer, for /al-health: what they cost and whether they stop anything.
-const countLessons = async ($: EngineInterface, key: 'shown' | 'chars' | 'stopped', n: number) => {
+const countLessons = async ($: EngineInterface, key: 'shown' | 'chars' | 'stopped' | 'rules' | 'rulesChars', n: number) => {
   const all = ((await $.store.get('lessonCounts')) as Record<string, number> | undefined) ?? {}
   await $.store.set('lessonCounts', { ...all, [key]: (all[key] ?? 0) + n })
 }
@@ -437,6 +457,7 @@ export const register: Register = (on, options) => {
   let lessonList: Lesson[] = []
   const shownIn = new Map<string, Set<number>>()
   const stoppedIn = new Map<string, Set<number>>()
+  const rulesAt = new Map<string, number | null>() // the context size at the last reminder of the rules for all projects, by chat (null: it was unknown)
   const setOf = (m: Map<string, Set<number>>, id: string) => m.get(id) ?? m.set(id, new Set()).get(id)!
   let isLessonsNoted = false // a lesson search that fails on every message is kept for /al-health once, not on each
 
@@ -469,7 +490,7 @@ export const register: Register = (on, options) => {
     // a chat open for hours learns of a lesson saved in another chat or brought by the job's sync
     // and the band's data (never awaited together: one slow answer must not hold the other)
     $.clock.every(600_000, () => {
-      void lessonsOr($, python, lessonList).then(l => void (lessonList = l))
+      void reloadLessons($, python, lessonList, isLessonsOn).then(l => void (lessonList = l))
       void refreshInfo($, python)
     })
     // session.end has 1.5 s, too little to index: a closed chat is picked up here, or by the next recall. Never awaited, so session.start is not held.
@@ -479,7 +500,7 @@ export const register: Register = (on, options) => {
         void catchUp($, python, embedModel, syncDir, shareCipher).then(async failed => {
           if (failed && !isCatchUpToasted) toast($, T.catchUpFailed(failed))
           if (failed) isCatchUpToasted = true
-          lessonList = await lessonsOr($, python, lessonList) // the sync may have brought the other computer's
+          lessonList = await reloadLessons($, python, lessonList, isLessonsOn) // the sync may have brought the other computer's
           await refreshInfo($, python)
         }),
     )
@@ -538,6 +559,7 @@ export const register: Register = (on, options) => {
               cause: { type: 'string', description: T.lessonCause },
               fix: { type: 'string', description: T.lessonFix },
               trigger: { type: 'string', description: T.lessonTrigger },
+              scope: { type: 'string', enum: ['project', 'all'], description: T.lessonScope },
             },
             required: ['action', 'symptom', 'cause'],
           },
@@ -545,7 +567,7 @@ export const register: Register = (on, options) => {
         }),
     ]
     for (const work of registrations) await guarded($, 'register', work)
-    void lessonsOr($, python, lessonList).then(l => void (lessonList = l)) // never awaited: a slow Python must not hold session.start
+    void reloadLessons($, python, lessonList, isLessonsOn).then(l => void (lessonList = l)) // never awaited: a slow Python must not hold session.start
 
     return next(e)
   })
@@ -595,10 +617,11 @@ export const register: Register = (on, options) => {
       const memory = dir === null ? null : { dir, facts, tokens: autoMemTokens(mem) }
       const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" --lang ${language()} embed --model ${embedModel} --max-seconds 100000`
       const counts = ((await $.store.get('lessonCounts')) as Record<string, number> | undefined) ?? {}
-      const lessons = { count: lessonList.length, shown: counts.shown ?? 0, chars: counts.chars ?? 0, stopped: counts.stopped ?? 0, on: isLessonsOn }
+      const lessons = { count: lessonList.filter(l => !l.global).length, shown: counts.shown ?? 0, chars: counts.chars ?? 0, stopped: counts.stopped ?? 0, on: isLessonsOn }
+      const rules = { global: lessonList.filter(l => l.global).length, rules: counts.rules ?? 0, chars: counts.rulesChars ?? 0, left: rulesContext(lessonList).left }
       if (homeDir !== undefined) settingsFile = await settingsFileOf($, homeDir) // after the status run, which may have moved the folder
       return {
-        text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile, shareCipher, lessons, homeNotes: typeof index === 'string' ? [] : (index.home_notes as string[] | undefined) }).join('\n'),
+        text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile, shareCipher, lessons, rules, homeNotes: typeof index === 'string' ? [] : (index.home_notes as string[] | undefined) }).join('\n'),
       }
     } catch (err) {
       await fail($, 'al-health', err)
@@ -624,7 +647,7 @@ export const register: Register = (on, options) => {
     if (skip === null) return { text: T.cgSyncSkipUsage }
     try {
       const r = await runSync($, python, syncDir, embedModel, shareCipher, skip)
-      lessonList = await lessonsOr($, python, lessonList) // the other computer's lessons, if it brought any
+      lessonList = await reloadLessons($, python, lessonList, isLessonsOn) // the other computer's lessons, if it brought any
       void refreshInfo($, python)
       if (r.errors.length) {
         // the reply lists them all; the toast and /al-health keep the first one for when the reply has scrolled away
@@ -724,8 +747,19 @@ export const register: Register = (on, options) => {
     served($, 'lesson_save', async () => {
       const input = e as unknown as Record<string, unknown>
       const r = await runCg($, python, lessonSaveArgs(input, await $.session.root(), embedModel))
-      lessonList = await lessonsOr($, python, lessonList)
+      let stale = false // the list could not be re-read: the new rule is missing from it and the count of rules that do not fit is without it
+      try {
+        lessonList = await lessonsOf($, python)
+      } catch {
+        stale = true
+      }
       if (!r.new) return T.lessonKnown
+      if (input.scope === 'all') {
+        if (!stale) await noteRules($, lessonList, isLessonsOn, r.pos as number)
+        const g = { left: rulesContext(lessonList).left, on: isLessonsOn, stale }
+        toast($, T.lessonToast(oneLine(String(r.text)), g))
+        return T.lessonSaved(String(r.text), g)
+      }
       toast($, T.lessonToast(oneLine(String(r.text))))
       return T.lessonSaved(String(r.text))
     }, T.lessonSaveFailed),
@@ -750,6 +784,7 @@ export const register: Register = (on, options) => {
     if (pos === undefined) return { text: T.cgLessonsUsage }
     try {
       lessonList = await lessonsOf($, python)
+      await noteRules($, lessonList, isLessonsOn)
       if (pos === null) return { text: formatLessons(lessonList) }
       const lesson = lessonList.find(l => l.pos === pos)
       const n = lesson ? ((await runCg($, python, ['forget', `--conv=${lesson.conv}`, `--pos=${pos}`])).forgotten as number) : 0
@@ -769,27 +804,47 @@ export const register: Register = (on, options) => {
     const kind = (e.origin as { kind?: string } | undefined)?.kind
     const isOwners = kind === undefined || kind === 'composer' || kind === 'bridge' || kind === 'sdk' || kind === 'unclassified'
     if (isOwners && !e.isMeta) await recheck($, python)
-    if (!isLessonsOn || lessonList.length === 0 || e.command !== undefined || e.isMeta || !isOwners || e.text.trim().length < 12) return next(e)
-    let block: string | undefined
+    if (!isLessonsOn || e.command !== undefined || e.isMeta || !isOwners) return next(e)
+    const blocks: string[] = []
+    // the rules for all projects come first and need no Python and no minimum length; a failure in one part must not stop the other
     try {
-      const [root, id] = await Promise.all([$.session.root(), $.session.id()])
-      const shown = setOf(shownIn, id)
-      // every lesson shown already: no Python; else ask for the shown ones too, so they do not take the places of the fresh ones
-      const found = lessonList.every(l => shown.has(l.id))
-        ? []
-        : ((await runCg($, python, lessonsMatchArgs(e.text, root, embedModel, lessonsMinScore, 2 + shown.size), 8_000)).lessons as Found[])
-      const fresh = found.filter(l => !shown.has(l.id)).slice(0, 2)
-      if (fresh.length) {
-        block = lessonContext(fresh)
-        for (const l of fresh) shown.add(l.id)
-        await countLessons($, 'shown', fresh.length)
-        await countLessons($, 'chars', block.length)
+      const id = await $.session.id()
+      const size = ((await $.store.get(`turn:${id}`)) as { tokens: number | null } | undefined)?.tokens ?? null
+      const { due, mark } = rulesDue(rulesAt.get(id), size, RULES_EVERY)
+      const rules = due ? rulesContext(lessonList).block : undefined
+      if (!due || rules !== undefined) rulesAt.set(id, mark) // due with nothing to say yet (the list not read): ask again on the next message
+      if (rules !== undefined) {
+        blocks.push(rules)
+        await countLessons($, 'rules', 1) // after the mark: a failing counter must not make the rules come again
+        await countLessons($, 'rulesChars', rules.length)
       }
     } catch (err) {
       if (!isLessonsNoted) await noteError($, 'lessons', err)
       isLessonsNoted = true
     }
-    return next(block === undefined ? e : { ...e, context: [...(e.context ?? []), block] })
+    const own = lessonList.filter(l => !l.global)
+    if (own.length && e.text.trim().length >= 12) {
+      try {
+        const [root, id] = await Promise.all([$.session.root(), $.session.id()])
+        const shown = setOf(shownIn, id)
+        // every lesson shown already: no Python; else ask for the shown ones too, so they do not take the places of the fresh ones
+        const found = own.every(l => shown.has(l.id))
+          ? []
+          : ((await runCg($, python, lessonsMatchArgs(e.text, root, embedModel, lessonsMinScore, 2 + shown.size), 8_000)).lessons as Found[])
+        const fresh = found.filter(l => !shown.has(l.id)).slice(0, 2)
+        if (fresh.length) {
+          const block = lessonContext(fresh)
+          blocks.push(block)
+          for (const l of fresh) shown.add(l.id)
+          await countLessons($, 'shown', fresh.length)
+          await countLessons($, 'chars', block.length)
+        }
+      } catch (err) {
+        if (!isLessonsNoted) await noteError($, 'lessons', err)
+        isLessonsNoted = true
+      }
+    }
+    return next(blocks.length ? { ...e, context: [...(e.context ?? []), ...blocks] } : e)
   })
 
   // A Bash or PowerShell command that holds a lesson's trigger is stopped once in a chat, with the lesson; the same command again passes.
@@ -808,7 +863,7 @@ export const register: Register = (on, options) => {
       lesson = undefined
     }
     // between the marks: a denial the engine records as an error result must not enter the index as the lesson's text a second time (transcripts.py)
-    return lesson === undefined ? next(e) : { deny: [START, T.lessonGate(oneLine(lesson.text)), END].join('\n') }
+    return lesson === undefined ? next(e) : { deny: [START, T.lessonGate(plain(lesson.text), lesson.global), END].join('\n') }
   })
 
   // After a compaction the model no longer has what it was shown: this chat's lessons may be shown and may stop a command once more.
@@ -821,6 +876,11 @@ export const register: Register = (on, options) => {
         const id = await $.session.id()
         shownIn.delete(id)
         stoppedIn.delete(id)
+        rulesAt.delete(id)
+        // turn:<id> is written by a finished turn only: an interrupted first turn would leave the size from before the compaction there; the
+        // rules then come once, with the mark unknown, and the first size measured afterwards is the mark
+        const rec = (await $.store.get(`turn:${id}`)) as { at: number | null } | undefined
+        if (rec !== undefined) await $.store.set(`turn:${id}`, { at: rec.at, tokens: null })
       }
     } catch {}
     return r

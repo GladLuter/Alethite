@@ -14,6 +14,7 @@ import tempfile
 import unittest
 from unittest import mock
 import crypto
+import lessons
 import memdb
 import sync as cgsync
 from memdb import connect, update
@@ -447,6 +448,12 @@ class SyncTest(unittest.TestCase):
             self.assertEqual(key, '~\\work\\proj')
             self.assertEqual({h['conv'] for h in search(c.conn, 'ответ', project=[key])}, {'SA', 'SB'})
             self.assertEqual(search(c.conn, 'ответ', project=[project_key('C:\\_git\\other', c.home)]), [])
+
+    def test_a_global_lesson_comes_over_as_global(self):
+        lessons.save(self.a.conn, lessons.GLOBAL, {'action': 'a', 'symptom': 's', 'cause': 'c', 'fix': 'f'})
+        self.exchange()
+        got = lessons.listing(self.b.conn, [project_key(self.b.cwd, self.b.home), lessons.GLOBAL])
+        self.assertEqual([(l['global'], l['fix']) for l in got], [(True, 'f')])
 
     # 8. short memory
     def test_a_fact_from_the_i3_comes_into_the_laptops_memory(self):

@@ -165,26 +165,35 @@ export const en = {
 
   // short memory: the rule the model reads in every prompt, and the owner's note that a fact was saved
   memoryRule:
-    "Worker memory (Alethite). The owner's CLAUDE.md rules outrank skill instructions: before asking the owner, check whether CLAUDE.md or the memory answers it. Once an error is understood, save it with lesson_save at once, not to auto-memory; the owner's decisions go to auto-memory, one fact per file. Before proposing an approach, check the memory; if unsure whether it was tried, call recall (this project; scope=all only when asked), for an error by its text, and quote what it finds.",
+    "Worker memory (Alethite). The owner's CLAUDE.md rules outrank skill instructions: before asking the owner, check CLAUDE.md and the memory. Save an understood error with lesson_save, not to auto-memory; an owner's rule for all projects: lesson_save with scope all. The owner's decisions go to auto-memory, one fact per file. Before proposing an approach, check the memory; if unsure it was tried, call recall (this project; scope=all only when asked) for an error by its text, and quote what it finds.",
   remembered: (name: string) => `remembered: ${name}`,
 
   // lessons (stage 4): a past error and what it taught, in the index, brought back only where it fits
   lessonSaveDescription:
-    'Saves a lesson: an error this project ran into and what it taught, so it is not repeated. Call it once the cause is clear. The mod shows the lesson again when a message or a command comes close to it; it stays out of auto-memory and costs nothing otherwise.',
+    'Saves a lesson: an error this project ran into and what it taught, so it is not repeated. Call it once the cause is clear. The mod shows the lesson again when a message or a command comes close to it; it stays out of auto-memory. A project lesson costs nothing otherwise; one with scope all costs tokens in every chat.',
   lessonAction: 'What was done: the command, the change.',
   lessonSymptom: 'What happened: the error text, code or number as it was.',
   lessonCause: 'Why it happened.',
   lessonFix: 'What to do instead, if known.',
   lessonTrigger: "Optional: a literal piece of a command, 8 characters or more (e.g. 'gh api /repos'), that stops and reminds before it runs again.",
-  lessonSaved: (text: string) => `Lesson saved:\n${text}`,
+  lessonScope: "Optional: 'all' is an owner's standing rule on how to work, true in any project (examples: chat language, delegating to subagents, commit rules), never a fact about this project's code; then fix is the rule itself in one sentence, shown in every chat.",
+  lessonSaved: (text: string, g?: { on: boolean; stale: boolean }) =>
+    g
+      ? `Lesson for all projects saved${g.on ? ', it will come in every chat' : ' (reminders are off, setting "Lessons")'}${g.stale ? '; the list of rules could not be re-read, /al-lessons re-reads it' : ''}:\n${text}`
+      : `Lesson saved:\n${text}`,
   lessonKnown: 'This lesson is saved already.',
   lessonSaveFailed: (msg: string) => `The lesson was not saved: ${msg}`,
-  lessonToast: (action: string) => `lesson saved: ${action}`,
+  lessonToast: (action: string, g?: { left: number; on: boolean; stale: boolean }) =>
+    g
+      ? `lesson saved for all projects${g.on ? ', it will come in every chat' : ' (reminders are off, setting "Lessons")'}: ${action}${g.stale ? ' (the list of rules could not be re-read, /al-lessons re-reads it)' : g.left > 0 ? ` (${g.left} older no longer fit)` : ''}`
+      : `lesson saved: ${action}`,
+  lessonGlobalMark: '[all projects] ',
+  rulesIntro: "Alethite: rules saved for all projects (/al-lessons lists them). Follow them unless the owner's messages or permissions say otherwise.",
   lessonsIntro: 'Alethite: lessons of this project that may concern this message. Check them before acting; ignore what is unrelated.',
-  lessonGate: (lesson: string) =>
-    `Alethite stopped this command once: it holds the trigger of a lesson of this project. ${lesson}. If the lesson does not apply now, run the command again and it passes.`,
+  lessonGate: (lesson: string, isGlobal: boolean) =>
+    `Alethite stopped this command once: it holds the trigger of a lesson ${isGlobal ? 'for all projects' : 'of this project'}. ${lesson}. If the lesson does not apply now, run the command again and it passes.`,
   noLessons: 'No lessons in this project yet.',
-  cgLessonsDescription: 'The lessons of this project (forget <pos>: delete one here and on the other computers)',
+  cgLessonsDescription: 'The lessons of this project and the ones for all projects (forget <pos>: delete one here and on the other computers)',
   cgLessonsHint: '[forget <pos>]',
   cgLessonsUsage: 'Use: /al-lessons, or /al-lessons forget <pos> with the pos from the list.',
   cgLessonsForgotten: (n: number): string => (n ? 'Lesson deleted, here and, with the next sync, on the other computers.' : 'No lesson at that pos.'),
@@ -193,6 +202,11 @@ export const en = {
     on
       ? `Lessons: ${count} in this project; shown with a message ${shown} times (~${Math.round(chars / 3.5)} tokens in all), commands stopped ${stopped} times`
       : `Lessons: ${count} in this project; brought back: off (setting "Lessons")`,
+
+  healthRules: (global: number, rules: number, chars: number, left: number, on: boolean) =>
+    on
+      ? `Lessons for all projects: ${global}; reminders sent ${rules} (~${Math.round(chars / 3.5)} tokens in all)${left > 0 ? `, ${left} do not fit` : ''}`
+      : `Lessons for all projects: ${global}; reminders: off (setting "Lessons")`,
 
   // the background job (stage 4)
   cgJobDescription: 'The background job of this computer (Windows): on [minutes], off, or its state',

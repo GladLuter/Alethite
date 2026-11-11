@@ -377,13 +377,13 @@ def _forget(a):
 def _lesson_save(a):
     conn = memdb.connect(a.db)
     fields = {k: getattr(a, k) for k in lessons.FIELDS}
-    out = lessons.save(conn, project_key(a.cwd), fields)
+    out = lessons.save(conn, lessons.GLOBAL if a.scope == 'all' else project_key(a.cwd), fields)
     out['vector'] = lessons.embed_one(conn, out['id'], a.model) if out['new'] else 'ok'
     return out
 
 
 def _lessons(a):
-    return {'lessons': lessons.listing(memdb.connect(a.db), None if a.all else project_keys(a.cwd, _aliases(a)))}
+    return {'lessons': lessons.listing(memdb.connect(a.db), None if a.all else [*project_keys(a.cwd, _aliases(a)), lessons.GLOBAL])}
 
 
 def _lessons_match(a):
@@ -471,6 +471,7 @@ def _parser():
     s = add('lesson-save', _lesson_save)
     s.add_argument('--cwd', default=os.getcwd())
     s.add_argument('--model', default=vectors.MODEL)
+    s.add_argument('--scope', choices=('project', 'all'), default='project')
     for k in lessons.FIELDS:
         s.add_argument('--' + k, required=k in lessons.REQUIRED)
     s = add('lessons', _lessons)

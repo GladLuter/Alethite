@@ -117,6 +117,35 @@ class LessonsTest(unittest.TestCase):
         self.assertIn(gone['id'], [l['id'] for l in lessons.match(self.conn, text, [A, old], MODEL, 0.25, embed_fn=fake)[0]])
         self.assertNotIn(gone['id'], [l['id'] for l in lessons.match(self.conn, text, [A], MODEL, 0.25, embed_fn=fake)[0]])
 
+    def test_global_lesson_needs_fix(self):
+        bare = {k: v for k, v in RATE.items() if k != 'fix'}
+        with self.assertRaisesRegex(ValueError, 'fix'):
+            lessons.save(self.conn, lessons.GLOBAL, bare)
+        with self.assertRaisesRegex(ValueError, 'fix'):  # a blank fix is no fix
+            lessons.save(self.conn, lessons.GLOBAL, dict(RATE, fix='  '))
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM chunks').fetchone(), (0,))
+        out = lessons.save(self.conn, lessons.GLOBAL, RATE)
+        self.assertEqual(out['conv'], lessons.conv_of('*'))
+        (text,) = self.conn.execute('SELECT text FROM chunks WHERE conv = ?', (out['conv'],)).fetchone()
+        self.assertEqual(lessons.fields_of(text)['fix'], RATE['fix'])
+
+    def test_listing_marks_global_and_fix(self):
+        lessons.save(self.conn, A, dict(RATE, fix=None))
+        lessons.save(self.conn, lessons.GLOBAL, dict(RATE, action='общий урок'))
+        both = {l['text'].split(chr(10))[0]: l for l in lessons.listing(self.conn, [A, lessons.GLOBAL])}
+        self.assertEqual(len(both), 2)
+        self.assertEqual((both['Action: общий урок']['global'], both['Action: общий урок']['fix']), (True, RATE['fix']))
+        mine = both['Action: запустил сборку ещё раз сразу после ошибки']
+        self.assertEqual((mine['global'], mine['fix']), (False, None))
+        self.assertEqual([l['global'] for l in lessons.listing(self.conn, [A])], [False])
+
+    def test_match_never_returns_global(self):
+        lessons.save(self.conn, lessons.GLOBAL, RATE)
+        lessons.save(self.conn, A, dict(RATE, action='урок проекта'))
+        embed_pending(self.conn, embed_fn=fake)
+        found = lessons.match(self.conn, '429', [A], MODEL, 0.0, limit=5, embed_fn=fake)[0]
+        self.assertEqual([l['text'].split(chr(10))[0] for l in found], ['Action: урок проекта'])
+
     def test_matching_costs_nothing_without_lessons_and_says_why_it_could_not(self):
         self.assertEqual(lessons.match(self.conn, 'что угодно', [A], MODEL, 0.4, embed_fn=never), ([], 'ok'))  # no lessons: Ollama not asked
         lessons.save(self.conn, A, RATE)

@@ -1,6 +1,6 @@
 {
   "name": "alethite",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "author": { "name": "Yevgenii Slieptsov (GladLuter)" },
   "license": "MIT",
   "description": "Alethite: price a send into a big idle chat, offer a clean new worker, remember what was learned, share the memory between computers.",
@@ -16,7 +16,7 @@
     "showLimits": { "type": "boolean", "title": "Band: show the limits column", "description": "Add the Limits column (used percentages of the 5 hours and week limits, and when they reset) to Details.", "default": true },
     "python": { "type": "string", "title": "Python command", "description": "The command the mod runs its Python scripts with.", "default": "python" },
     "embedModel": { "type": "string", "title": "Embedding model", "description": "The Ollama model of the vector search in the memory (ollama pull <name>). On a change every vector is computed again.", "default": "embeddinggemma" },
-    "lessons": { "type": "boolean", "title": "Lessons", "description": "Bring the project's lessons (past errors and what they taught) back where they fit: beside an owner's message close to one (hidden, at most 2, each once a chat) and as a one-time stop before a command that holds a lesson's trigger. Off: lessons are still saved and recall still finds them.", "default": true },
+    "lessons": { "type": "boolean", "title": "Lessons", "description": "Bring the project's lessons (past errors and what they taught) back where they fit: beside an owner's message close to one (hidden, at most 2, each once a chat) and as a one-time stop before a command that holds a lesson's trigger. Off: lessons are still saved and recall still finds them, but the reminder of the rules for all projects (about every 20k tokens of chat) stops too.", "default": true },
     "lessonsMinScore": { "type": "number", "title": "Lessons: how close a message must be", "description": "The similarity (0 to 1) of a message and a lesson from which the lesson is shown. Higher: fewer lessons, surer ones.", "default": 0.45 }
   }
 }
