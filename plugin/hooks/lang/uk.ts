@@ -11,7 +11,7 @@ export const uk: Partial<Texts> = {
   cacheUnknown: '?',
 
   // marks: whose a band and a toast are, so neither is taken for another mod's (the engine labels the status line with the plugin name itself). Every other text here is written without the name.
-  bandTitle: 'Alethite - 🛡 CacheGuard',
+  bandTitle: '🛡 Alethite',
   toast: (text: string) => `Alethite: ${text}`,
 
   // band
@@ -21,9 +21,9 @@ export const uk: Partial<Texts> = {
   // band, new
   details: 'Деталі',
   compact: 'Згорнути',
-  bandWarm: (min: number) => `кеш ще ${min} хв`,
+  bandWarm: (min: number) => `кеш ${min} хв`,
   sendHere: (cost: string) => `сюди ≈ ${cost}`,
-  saved: (usd: string) => `заощаджено до ${usd}`,
+  saved: (usd: string) => `економія ≤ ${usd}`,
   dearer: (usd: string) => `дорожче на ${usd}`,
   upTo: (usd: string) => `до ${usd}`,
   baseTrouble: 'база !',

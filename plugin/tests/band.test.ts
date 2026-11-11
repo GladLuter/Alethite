@@ -15,7 +15,7 @@ const info = (over = {}) => ({ status: status(), savings: savings(), isSyncOn: t
 test('line: size, cache, price here, savings', () => {
   const t = lineTokens(snap(), info(), false)
   expect(t.map(x => x.key)).toEqual(['size', 'cache', 'send', 'saved'])
-  expect(t.map(x => x.text)).toEqual(['120k', 'кэш ещё 23 мин', 'сюда ≈ $0.02', 'сэкономлено до $18.70'])
+  expect(t.map(x => x.text)).toEqual(['120k', 'кэш 23 мин', 'сюда ≈ $0.02', 'экономия ≤ $18.70'])
 })
 test('line: stale lit warns the size and prices the cold write; no links, no savings; trouble adds base', () => {
   const t = lineTokens(snap(), info({ savings: savings({ worker: { usd: 0, links: 0, calls: 0 } }), status: status({ encryption: { on: true, db: 'efs', key: 'missing' } }) }), true)
@@ -76,7 +76,7 @@ test('columns: limits only when shown and present; unknown is ?, no handoffs is 
 test('columns: sub-lines, project null, reset times, base facts', () => {
   const col = (c: ReturnType<typeof columns>, key: string) => c.find(x => x.key === key)!
   const c = columns(snap(), info(), true)
-  expect(col(c, 'chat').value).toBe('120k · кэш ещё 23 мин')
+  expect(col(c, 'chat').value).toBe('120k · кэш 23 мин')
   expect(col(c, 'chat').sub).toEqual(['сюда ≈ $0.02 / холодно $0.96'])
   expect(col(c, 'last').value).toBe('$1.24')
   expect(col(c, 'last').sub).toEqual(['303k → 61k'])
