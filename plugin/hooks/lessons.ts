@@ -14,6 +14,7 @@ export const END = '[/al-lessons]'
 export const RULES_CHARS = 1000 // the rules of the owner for all projects, the lines together (with the "- ", without the intro)
 export const RULES_EVERY = 20_000 // context tokens between two reminders of them
 const LESSON_CHARS = 600 // one lesson in the context; two at most a message: about 300 tokens when they fit, none when they do not
+const RULE_CHARS = 300 // one rule of the reminder: lessons.py caps `fix` before redaction and a synced one is not capped, so the mod clips it
 
 // Each value one `--field=…` item: one starting with `-` must not be read as a flag. An empty or a non-text value is left out, and
 // cg.py says what is missing.
@@ -47,14 +48,22 @@ export const lessonsMatchArgs = (text: string, cwd: string, model: string, minSc
 ]
 
 export const oneLine = (text: string) => text.split('\n').join(' | ')
-const clip = (s: string) => (s.length <= LESSON_CHARS ? s : `${s.slice(0, LESSON_CHARS - 1)}…`)
+const clip = (s: string, max = LESSON_CHARS) => (s.length <= max ? s : `${s.slice(0, max - 1)}…`)
+// One line without the marks the index cuts out (transcripts.py): a lesson text holding one would end the block early. Repeated, as cutting
+// one can join the pieces around it into another.
+const MARKS = /\[\/?(?:al|cg)-lessons\]/g
+export const plain = (text: string) => {
+  let t = oneLine(text)
+  for (let u = ''; u !== t; ) [u, t] = [t, t.replace(MARKS, '')]
+  return t
+}
 
 // What the model reads beside the owner's message: the lessons that fit, between the marks.
-export const lessonContext = (found: Found[]) => [START, T.lessonsIntro, ...found.map(l => `- ${clip(oneLine(l.text))}`), END].join('\n')
+export const lessonContext = (found: Found[]) => [START, T.lessonsIntro, ...found.map(l => `- ${clip(plain(l.text))}`), END].join('\n')
 
 // The lessons for all projects, as the one-line rules they carry (`fix`), newest first, while they fit RULES_CHARS; `left` did not fit.
 export const rulesContext = (lessons: readonly Lesson[]) => {
-  const all = lessons.filter(l => l.global && l.fix !== null).map(l => `- ${l.fix}`)
+  const all = [...new Set(lessons.filter(l => l.global && l.fix !== null).map(l => `- ${clip(plain(l.fix!), RULE_CHARS)}`))] // the same fix from two projects or computers once
   const lines: string[] = []
   let used = 0
   for (const line of all) {

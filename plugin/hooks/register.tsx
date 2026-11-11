@@ -16,7 +16,7 @@ import { healthLines, homeNotesOf, indexProblemOf, message, parseCg } from './py
 import type { LastError } from './py'
 import { jobArgs, jobHealth } from './job'
 import type { JobRun } from './job'
-import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, lessonsMatchArgs, oneLine, RULES_EVERY, rulesContext, rulesDue, START } from './lessons'
+import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, lessonsMatchArgs, oneLine, plain, RULES_EVERY, rulesContext, rulesDue, START } from './lessons'
 import type { Found, Lesson } from './lessons'
 import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
@@ -191,6 +191,16 @@ const lessonsOr = async ($: EngineInterface, python: string, kept: Lesson[]) => 
   } catch {
     return kept
   }
+}
+
+// The same, and a rule for all projects that is new in the list (the other computer's, brought by a sync) is toasted: it becomes a
+// standing order in every chat here and must not arrive silently.
+const reloadLessons = async ($: EngineInterface, python: string, kept: Lesson[], on: boolean) => {
+  const known = new Set(kept.map(l => l.pos))
+  const list = await lessonsOr($, python, kept)
+  const { left } = rulesContext(list)
+  for (const l of list) if (l.global && !known.has(l.pos)) toast($, T.lessonToast(oneLine(l.text), { left, on, stale: false }))
+  return list
 }
 
 // How often the lessons came back, on this computer, for /al-health: what they cost and whether they stop anything.
@@ -437,6 +447,7 @@ export const register: Register = (on, options) => {
   let lessonList: Lesson[] = []
   const shownIn = new Map<string, Set<number>>()
   const stoppedIn = new Map<string, Set<number>>()
+  const compactedIn = new Set<string>() // chats compacted since their last reminder of the rules: turn:<id> still holds the size from before it
   const rulesAt = new Map<string, number | null>() // the context size at the last reminder of the rules for all projects, by chat (null: it was unknown)
   const setOf = (m: Map<string, Set<number>>, id: string) => m.get(id) ?? m.set(id, new Set()).get(id)!
   let isLessonsNoted = false // a lesson search that fails on every message is kept for /al-health once, not on each
@@ -470,7 +481,7 @@ export const register: Register = (on, options) => {
     // a chat open for hours learns of a lesson saved in another chat or brought by the job's sync
     // and the band's data (never awaited together: one slow answer must not hold the other)
     $.clock.every(600_000, () => {
-      void lessonsOr($, python, lessonList).then(l => void (lessonList = l))
+      void reloadLessons($, python, lessonList, isLessonsOn).then(l => void (lessonList = l))
       void refreshInfo($, python)
     })
     // session.end has 1.5 s, too little to index: a closed chat is picked up here, or by the next recall. Never awaited, so session.start is not held.
@@ -480,7 +491,7 @@ export const register: Register = (on, options) => {
         void catchUp($, python, embedModel, syncDir, shareCipher).then(async failed => {
           if (failed && !isCatchUpToasted) toast($, T.catchUpFailed(failed))
           if (failed) isCatchUpToasted = true
-          lessonList = await lessonsOr($, python, lessonList) // the sync may have brought the other computer's
+          lessonList = await reloadLessons($, python, lessonList, isLessonsOn) // the sync may have brought the other computer's
           await refreshInfo($, python)
         }),
     )
@@ -627,7 +638,7 @@ export const register: Register = (on, options) => {
     if (skip === null) return { text: T.cgSyncSkipUsage }
     try {
       const r = await runSync($, python, syncDir, embedModel, shareCipher, skip)
-      lessonList = await lessonsOr($, python, lessonList) // the other computer's lessons, if it brought any
+      lessonList = await reloadLessons($, python, lessonList, isLessonsOn) // the other computer's lessons, if it brought any
       void refreshInfo($, python)
       if (r.errors.length) {
         // the reply lists them all; the toast and /al-health keep the first one for when the reply has scrolled away
@@ -727,11 +738,17 @@ export const register: Register = (on, options) => {
     served($, 'lesson_save', async () => {
       const input = e as unknown as Record<string, unknown>
       const r = await runCg($, python, lessonSaveArgs(input, await $.session.root(), embedModel))
-      lessonList = await lessonsOr($, python, lessonList)
+      let stale = false // the list could not be re-read: the new rule is missing from it and the count of rules that do not fit is without it
+      try {
+        lessonList = await lessonsOf($, python)
+      } catch {
+        stale = true
+      }
       if (!r.new) return T.lessonKnown
       if (input.scope === 'all') {
-        toast($, T.lessonToastGlobal(oneLine(String(r.text)), rulesContext(lessonList).left))
-        return T.lessonSavedGlobal(String(r.text))
+        const g = { left: rulesContext(lessonList).left, on: isLessonsOn, stale }
+        toast($, T.lessonToast(oneLine(String(r.text)), g))
+        return T.lessonSaved(String(r.text), g)
       }
       toast($, T.lessonToast(oneLine(String(r.text))))
       return T.lessonSaved(String(r.text))
@@ -781,10 +798,10 @@ export const register: Register = (on, options) => {
     // the rules for all projects come first and need no Python and no minimum length; a failure in one part must not stop the other
     try {
       const id = await $.session.id()
-      const size = ((await $.store.get(`turn:${id}`)) as { tokens: number | null } | undefined)?.tokens ?? null
+      const size = compactedIn.has(id) ? null : ((await $.store.get(`turn:${id}`)) as { tokens: number | null } | undefined)?.tokens ?? null // after a compaction: due once, the next size measured is the mark
       const { due, mark } = rulesDue(rulesAt.get(id), size, RULES_EVERY)
       const rules = due ? rulesContext(lessonList).block : undefined
-      if (!due || rules !== undefined) rulesAt.set(id, mark) // due with nothing to say yet (the list not read): ask again on the next message
+      if (!due || rules !== undefined) (rulesAt.set(id, mark), compactedIn.delete(id)) // due with nothing to say yet (the list not read): ask again on the next message
       if (rules !== undefined) {
         blocks.push(rules)
         await countLessons($, 'rules', 1) // after the mark: a failing counter must not make the rules come again
@@ -835,7 +852,7 @@ export const register: Register = (on, options) => {
       lesson = undefined
     }
     // between the marks: a denial the engine records as an error result must not enter the index as the lesson's text a second time (transcripts.py)
-    return lesson === undefined ? next(e) : { deny: [START, (lesson.global ? T.lessonGateGlobal : T.lessonGate)(oneLine(lesson.text)), END].join('\n') }
+    return lesson === undefined ? next(e) : { deny: [START, T.lessonGate(plain(lesson.text), lesson.global), END].join('\n') }
   })
 
   // After a compaction the model no longer has what it was shown: this chat's lessons may be shown and may stop a command once more.
@@ -849,6 +866,7 @@ export const register: Register = (on, options) => {
         shownIn.delete(id)
         stoppedIn.delete(id)
         rulesAt.delete(id)
+        compactedIn.add(id)
       }
     } catch {}
     return r

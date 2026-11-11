@@ -1169,7 +1169,7 @@ const lessonRig = async ($: any, on: any, found: object[] = [{ ...lesson, score:
 }
 const typed = ($: any, text: string, extra: object = {}) => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' }, ...extra })
 // the gate's denial of the lesson above, between the marks the index cuts out (transcripts.py)
-const gateText = () => ['[al-lessons]', T.lessonGate('Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos'), '[/al-lessons]'].join('\n')
+const gateText = () => ['[al-lessons]', T.lessonGate('Action: gh api in a loop | Symptom: HTTP 429 | Cause: 120 requests an hour | Trigger: gh api /repos', false), '[/al-lessons]'].join('\n')
 
 test('lesson_save: the fields go to cg.py one item each, the owner gets a toast, the model the lesson', async ($, on) => {
   const { m } = await lessonRig($, on)
@@ -1312,6 +1312,20 @@ test('global lessons: due again after 20k tokens, after a compaction and after a
   expect(await got(31_000)).toBe(1) // a compaction
 })
 
+test('global lessons: after a compaction the rules come once, though the stored size is still the one from before it', async ($, on) => {
+  const kept = [{ role: 'user', text: 'summary', toolUses: [] }]
+  on('session.compact', () => ({ messages: kept }))
+  const contexts: string[][] = []
+  const { m } = await lessonRig($, on, [], [rule], { context: contexts })
+  const got = async (tokens: number) => (withSize(m, tokens), await typed($, 'да'), contexts.at(-1)!.length)
+  expect(await got(180_000)).toBe(1)
+  await ($ as any).session.compact({ messages: kept })
+  expect(await got(180_000)).toBe(1) // turn:<id> is written by the main turn only: still the size from before
+  expect(await got(35_000)).toBe(0) // the first size measured after it is the mark, not a shrink
+  expect(await got(35_000)).toBe(0)
+  expect(await got(56_000)).toBe(1) // 20k since
+})
+
 test('global lessons: a new session id gets the rules', async ($, on) => {
   const contexts: string[][] = []
   const { m } = await lessonRig($, on, [], [rule], { context: contexts })
@@ -1388,7 +1402,7 @@ test('global lessons: due with an empty block (list not read yet) leaves the mar
 test('global lessons: the trigger stops a command in any project, with the global text', async ($, on) => {
   await lessonRig($, on, [], [{ ...rule, trigger: 'gh api /repos' }])
   const stop = await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })
-  expect(stop).toEqual({ deny: ['[al-lessons]', T.lessonGateGlobal('Action: a | Symptom: b | Cause: c | Fix: Answer in Ukrainian'), '[/al-lessons]'].join('\n') })
+  expect(stop).toEqual({ deny: ['[al-lessons]', T.lessonGate('Action: a | Symptom: b | Cause: c | Fix: Answer in Ukrainian', true), '[/al-lessons]'].join('\n') })
   expect(await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })).toEqual({ result: 'ran' })
 })
 
@@ -1396,19 +1410,54 @@ test('lesson_save scope all: the answer, the toast and the args', async ($, on) 
   const { m } = await lessonRig($, on, [], [rule])
   const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
   expect(ofCg(m, 'lesson-save')[0]!.argv).toEqual(['lesson-save', '--cwd', 'C:/w', '--model', 'embeddinggemma', '--action=x', '--symptom=y', '--cause=z', '--fix=f', '--scope=all'])
-  expect(r).toEqual({ result: T.lessonSavedGlobal('Action: x\nSymptom: y\nCause: z') })
-  expect(m.toasts).toEqual([T.toast(T.lessonToastGlobal('Action: x | Symptom: y | Cause: z', 0))])
+  expect(r).toEqual({ result: T.lessonSaved('Action: x\nSymptom: y\nCause: z', { on: true, stale: false }) })
+  expect(m.toasts).toEqual([T.toast(T.lessonToast('Action: x | Symptom: y | Cause: z', { left: 0, on: true, stale: false }))])
 })
 
 test('global lessons: rules that no longer fit show in the save toast and in /al-health', async ($, on) => {
-  const long = (id: number, c: string) => ({ ...rule, id, pos: id, fix: c.repeat(600) })
-  const { m } = await lessonRig($, on, [], [long(8, 'a'), long(9, 'b')]) // 600 + 600 > RULES_CHARS: one fits
+  const long = (id: number, c: string) => ({ ...rule, id, pos: id, fix: c.repeat(300) })
+  const { m } = await lessonRig($, on, [], [long(8, 'a'), long(9, 'b'), long(10, 'c'), long(11, 'd')]) // 4 x 302 > RULES_CHARS: three fit
   await typed($, 'да')
   await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
-  expect(m.toasts).toEqual([T.toast(T.lessonToastGlobal('Action: x | Symptom: y | Cause: z', 1))])
+  expect(m.toasts).toEqual([T.toast(T.lessonToast('Action: x | Symptom: y | Cause: z', { left: 1, on: true, stale: false }))])
   const counts = m.store.get('lessonCounts') as Record<string, number>
   const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
-  expect(text).toContain(T.healthRules(2, 1, counts.rulesChars!, 1))
+  expect(text).toContain(T.healthRules(4, 1, counts.rulesChars!, 1, true))
+})
+
+test('lesson_save scope all: a failed re-read of the list keeps the old list and the answer and the toast say so', async ($, on) => {
+  let broken = false
+  const list: object[] = [rule]
+  const m = await started($, on, a => (a[0] === 'lessons' ? (broken ? failed('db locked') : listed(list)) : a[0] === 'lesson-save' ? ran(JSON.stringify({ text: 'Action: x', new: true })) : ran('{}')))
+  await ($ as any).command.run({ command: 'al-lessons', args: '' })
+  broken = true
+  const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
+  const g = { left: 0, on: true, stale: true }
+  expect(r).toEqual({ result: T.lessonSaved('Action: x', g) })
+  expect(m.toasts).toEqual([T.toast(T.lessonToast('Action: x', g))])
+  expect(T.lessonToast('Action: x', g)).not.toBe(T.lessonToast('Action: x', { ...g, stale: false }))
+})
+
+test('lesson_save scope all with lessons off does not promise the rule will come in every chat', { options: { lessons: false } }, async ($, on) => {
+  const { m } = await lessonRig($, on, [], [rule])
+  const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
+  const g = { left: 0, on: false, stale: false }
+  expect(r).toEqual({ result: T.lessonSaved('Action: x\nSymptom: y\nCause: z', g) })
+  expect(m.toasts).toEqual([T.toast(T.lessonToast('Action: x | Symptom: y | Cause: z', g))])
+  expect(T.lessonSaved('t', g)).not.toBe(T.lessonSaved('t', { ...g, on: true }))
+})
+
+test('global lessons: a rule that the sync brought from the other computer is toasted once, not silently added', async ($, on) => {
+  const list: object[] = []
+  const { m } = await lessonRig($, on, [], list)
+  const arrived = T.toast(T.lessonToast('Action: a | Symptom: b | Cause: c | Fix: Answer in Ukrainian', { left: 0, on: true, stale: false }))
+  const count = () => m.toasts.filter(t => t === arrived).length
+  expect(count()).toBe(0)
+  list.push(rule)
+  await m.clock.advance(600_000) // the timer re-reads the list
+  expect(count()).toBe(1)
+  await m.clock.advance(600_000)
+  expect(count()).toBe(1)
 })
 
 test('/al-health shows the rules line', async ($, on) => {
@@ -1418,8 +1467,14 @@ test('/al-health shows the rules line', async ($, on) => {
   expect(counts.rules).toBe(1)
   expect(counts.rulesChars).toBeGreaterThan(0)
   const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
-  expect(text).toContain(T.healthRules(1, 1, counts.rulesChars!, 0))
+  expect(text).toContain(T.healthRules(1, 1, counts.rulesChars!, 0, true))
   expect(text).toContain(T.healthLessons(0, 0, 0, 0, true))
+})
+
+test('/al-health: with lessons off the rules line says the reminders are off', { options: { lessons: false } }, async ($, on) => {
+  await lessonRig($, on, [], [rule])
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
+  expect(text).toContain(T.healthRules(1, 0, 0, 0, false))
 })
 
 // ---- the background job (stage 4) ----

@@ -82,7 +82,7 @@ export const healthLines = (h: {
     ...(enc ? encryptHealth(enc, h.shareCipher ?? 'sqlcipher') : []),
     ...(h.compression === undefined ? [] : [T.compressionLine(h.compression)]),
     ...(h.lessons === undefined ? [] : [T.healthLessons(h.lessons.count, h.lessons.shown, h.lessons.chars, h.lessons.stopped, h.lessons.on)]),
-    ...(h.rules && h.rules.global > 0 ? [T.healthRules(h.rules.global, h.rules.rules, h.rules.chars, h.rules.left)] : []),
+    ...(h.rules && h.rules.global > 0 ? [T.healthRules(h.rules.global, h.rules.rules, h.rules.chars, h.rules.left, h.lessons?.on ?? true)] : []),
     ...(h.syncDir === undefined ? [] : syncHealth(h.syncDir, typeof h.index === 'string' ? undefined : (h.index.sync as SyncStatus | undefined))),
     ...(typeof h.index === 'string' || !('job' in h.index) ? [] : jobHealth(job)),
     h.lastError ? T.healthLastError(new Date(h.lastError.at).toLocaleString(T.locale), h.lastError.where, h.lastError.msg) : T.healthNoError,

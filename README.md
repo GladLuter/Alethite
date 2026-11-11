@@ -38,7 +38,7 @@ The money goes on coming back to a big idle chat. Alethite shows you the price b
 | 🆕 **New worker** | A button that starts a clean chat with a handoff of the old one (no model calls) and the message you already typed. The After reset button does the same once the limit resets. It shows up after you press New worker, when a limit is 90% used or more. | buttons in the band |
 | 📝 **Short memory** | One short rule for Claude: write decisions down at once, save an understood error as a lesson, check memory before proposing. A toast shows each saved fact. | |
 | 🔎 **Long memory** | Every past conversation of every project, subagents included, in a local SQLite index with vectors from a local Ollama model. Claude searches it with `recall`, by words and by meaning. Secrets are hidden before indexing. Nothing that got into the index is ever lost, and tool errors are indexed too. | `/al-index` |
-| 🎓 **Lessons** | An understood error is saved as a lesson and comes back only where it fits. A command that holds a lesson's trigger is stopped once with it, and at most 2 lessons come per message. No fitting lesson, zero tokens. A lesson can also be for all projects (`scope: all`). That kind is the exception: it comes as a short reminder every ~20k tokens of chat and costs those tokens in every project. The reminder holds at most 1000 characters, newest first, and older rules that do not fit are dropped. `/al-lessons` marks them. | `/al-lessons` |
+| 🎓 **Lessons** | An understood error is saved as a lesson and comes back only where it fits. A command that holds a lesson's trigger is stopped once with it, and at most 2 lessons come per message. No fitting lesson, zero tokens. A lesson can also be for all projects (`scope: all`). That kind is the exception: it comes as a short reminder every ~20k tokens of chat and costs those tokens in every project. The reminder holds at most 1000 characters, newest first, and older rules that do not fit stay out of the reminder. They stay in `/al-lessons`, and their triggers still stop commands. | `/al-lessons` |
 | 🔄 **Sync between computers** | A shared folder on a network drive carries the index, the vectors and the memory facts. Without it everything works locally. | `/al-sync` |
 | 🗜️ **Memory compression** | What the plugin hands to the model is squeezed mechanically, in four levels. Code, paths and negations are never touched. | `/al-stats` |
 | ⏱️ **Background job** | A Task Scheduler task keeps the index, the vectors and the sync fresh with no chat open. Windows only. | `/al-job` |
@@ -106,7 +106,7 @@ The file `%USERPROFILE%\.claude\alethite\settings.json` is one per computer. The
 | `showLimits` | Limits column in Details | `true` |
 | `python` | Python command | `"python"` |
 | `embedModel` | Ollama embedding model | `"embeddinggemma"` |
-| `lessons` | Bring lessons back to messages and commands | `true` |
+| `lessons` | Bring lessons back to messages and commands. Off also stops the reminder of rules for all projects (every ~20k tokens) | `true` |
 | `lessonsMinScore` | How close a message must be (0 to 1) | `0.45` |
 | `indexCipher` | How the index is encrypted (`/al-encrypt on` writes it) | `"sqlcipher"` (also `"efs"`) |
 | `shareCipher` | How the sync folder is encrypted (`/al-encrypt on` writes it). `"cryptography"` is the AES-GCM built into Windows | `"sqlcipher"` (also `"cryptography"`) |

@@ -90,6 +90,6 @@ test('health: the rules line follows the lessons line, only when some lessons ar
   const lessons = { count: 2, shown: 0, chars: 0, stopped: 0, on: true }
   const lines = (global: number) => healthLines({ version: '2.1.295', index: {}, memory: null, root: 'C:/w', embedCmd: cmd, lessons, rules: { global, rules: 2, chars: 140, left: 1 } })
   const on = lines(3)
-  expect(on[on.indexOf(T.healthLessons(2, 0, 0, 0, true)) + 1]).toBe(T.healthRules(3, 2, 140, 1))
-  expect(lines(0).join(' ')).not.toContain(T.healthRules(0, 2, 140, 1))
+  expect(on[on.indexOf(T.healthLessons(2, 0, 0, 0, true)) + 1]).toBe(T.healthRules(3, 2, 140, 1, true))
+  expect(lines(0).join(' ')).not.toContain(T.healthRules(0, 2, 140, 1, true))
 })

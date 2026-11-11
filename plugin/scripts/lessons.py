@@ -92,7 +92,7 @@ def listing(conn, project):
     rows = conn.execute(_SELECT + ' ORDER BY pos DESC', {'p': json.dumps(project)}).fetchall()  # not ts: two lessons of one millisecond tie
     return [{'id': rid, 'conv': conv, 'pos': pos, 'ts': ts, 'text': text, 'trigger': f.get('trigger'), 'fix': f.get('fix'),
              'global': conv == conv_of(GLOBAL), 'from': origin}
-            for rid, conv, pos, ts, text, origin in rows if (f := fields_of(text)) is not None]
+            for rid, conv, pos, ts, text, origin in rows for f in (fields_of(text),)]
 
 
 def embed_one(conn, rowid, model, embed_fn=vectors.ollama_embed):
