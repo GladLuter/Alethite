@@ -369,10 +369,14 @@ class MergeTest(unittest.TestCase):
     def test_a_removed_chat_of_the_temporary_index_comes_over(self):
         self.two()
         c = self.index(self.src)
+        d = self.index(self.db)
+        d.execute("INSERT INTO removed VALUES('S8', 'P/S8.jsonl', '2026-11-10T10:00:00+00:00', 'null', 'null', '[1]')")
+        d.commit()
+        c.execute("INSERT INTO removed VALUES('S8', 'P/S8.jsonl', '2026-11-11T10:00:00+00:00', 'null', 'null', '[2]')")  # the newer snapshot
         c.execute("INSERT INTO removed VALUES('S9', 'P/S9.jsonl', '2026-11-11T10:00:00+00:00', 'null', 'null', '[]')")
         c.commit()
         self.merge()
-        self.assertEqual(self.index(self.db).execute('SELECT conv, path FROM removed').fetchall(), [('S9', 'P/S9.jsonl')])
+        self.assertEqual(self.index(self.db).execute('SELECT conv, chains FROM removed ORDER BY conv').fetchall(), [('S8', '[2]'), ('S9', '[]')])
         self.free()
 
     def test_a_record_forgotten_here_after_the_copy_was_taken_does_not_come_back(self):
