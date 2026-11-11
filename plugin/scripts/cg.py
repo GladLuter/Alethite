@@ -48,7 +48,7 @@ def _index(a):
 
 
 def _status(a):
-    import encrypt, sync
+    import cleanup, encrypt, sync
     conn = memdb.connect(a.db)
     out = memdb.status(conn)
     out['sync'] = sync.status(conn, a.machine)
@@ -58,7 +58,7 @@ def _status(a):
         out['encryption']['notes'].append(texts.t(note))
     out['job'] = json.loads(memdb.meta(conn, 'job_last') or 'null')  # the background job's last run (stage 4), for /al-health
     out['index_dir'] = indexdir.status(conn, a.where)
-    out['cleanup'] = {'on': _cleanup_on(a), 'removed_total': conn.execute('SELECT count(*) FROM removed').fetchone()[0]}
+    out['cleanup'] = {'on': _cleanup_on(a), 'removed_total': cleanup.removed_total(conn, a.projects)}
     if a.cwd:  # the scope of «в этом проекте»: a key that matches no conversation makes the project search find nothing
         keys = project_keys(a.cwd, _aliases(a))
         out['project'] = {'key': keys[0], 'convs': conn.execute('SELECT count(*) FROM convs WHERE ' + memdb.IN_PROJECT, {'p': json.dumps(keys)}).fetchone()[0]}
@@ -262,7 +262,7 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
         else:
             try:  # what the share does not hold yet is not removed: the chat's text must be on the other computers first
                 r = cleanup.run(conn, a.projects, not (sync_dir and sync.pending(conn)), os.path.join(os.path.dirname(a.db), 'handoffs'))
-                out['cleanup'] = {k: r[k] for k in ('removed', 'mb', 'waiting')} | {'errors': len(r['errors'])}
+                out['cleanup'] = dict(removed=r['removed'], mb=r['mb'], waiting=r['waiting'], errors=len(r['errors']))
                 if r['errors']:
                     out['errors'].append({'where': 'cleanup', 'error': '%s: %s' % (r['errors'][0]['path'], r['errors'][0]['error'])})
             except Exception as e:

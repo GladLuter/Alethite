@@ -1,6 +1,5 @@
 """A chat removed from the disk keeps its numbers in the index: the token audit's chains (no conversation text) and the two reads the handoff
 savings take from a transcript. `removed` is written right before the removal; stats and savings read it back."""
-import contextlib
 import datetime
 import json
 import os
@@ -60,7 +59,22 @@ def candidates(conn, projects):
 
 def _files(path):
     """Every file of the chat: its transcript and what lies in its folder (subagents)."""
-    return [lp(path)] + [os.path.join(d, n) for d, _, names in os.walk(lp(path[:-6])) for n in names]
+    folder = lp(path[:-6])
+    # an unlistable subfolder raises: the chat is reported and waits, it is not taken for emptier than it is
+    return [lp(path)] + ([os.path.join(d, n) for d, _, names in os.walk(folder, onerror=_raise) for n in names] if os.path.isdir(folder) else [])
+
+
+def _raise(e):
+    raise e
+
+
+def _gone_rows(conn, projects):
+    """(conv, path) of the removed rows whose transcript is really gone: snapshot writes the row before the removal."""
+    return [(c, p) for c, p in conn.execute('SELECT conv, path FROM removed ORDER BY conv') if not os.path.exists(lp(os.path.join(projects, p)))]
+
+
+def removed_total(conn, projects):
+    return len(_gone_rows(conn, projects))
 
 
 def _mb(path):
@@ -94,12 +108,17 @@ def run(conn, projects, synced, handoffs_dir=None, now=time.time):
             if os.path.isdir(lp(path[:-6])):
                 shutil.rmtree(lp(path[:-6]))  # first: a folder that fails to go keeps the transcript, so the next pass is a candidate again
             os.remove(lp(path))
-            if handoffs_dir:
-                with contextlib.suppress(FileNotFoundError):
-                    os.remove(os.path.join(handoffs_dir, os.path.basename(path)[:-6] + '.md'))
             out['removed'], out['mb'] = out['removed'] + 1, out['mb'] + mb
         except OSError as e:
             out['errors'].append({'path': path, 'error': '%s: %s' % (type(e).__name__, e)})
+    for conv, _ in _gone_rows(conn, projects) if handoffs_dir else []:  # also the retry of a handoff text that could not be removed with its chat
+        md = os.path.join(handoffs_dir, conv + '.md')
+        try:
+            os.remove(md)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            out['errors'].append({'path': md, 'error': '%s: %s' % (type(e).__name__, e)})
     return out
 
 

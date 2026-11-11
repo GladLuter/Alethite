@@ -186,6 +186,65 @@ class CleanupTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.path(A)))
         self.assertEqual(self.metrics(cleanup.saved_chains(self.conn)), before)
 
+    def test_handoff_file_failure_counted_and_retried(self):
+        self.ready()
+        real = os.remove
+
+        def locked_md(p, *a):
+            if p.endswith('.md'):
+                raise PermissionError('locked')
+            return real(p, *a)
+
+        with mock.patch('os.remove', locked_md):
+            out = self.run_cleanup()
+        md = os.path.join(self.handoffs, A + '.md')
+        self.assertEqual((out['removed'], [e['path'] for e in out['errors']]), (1, [md]))
+        self.assertFalse(os.path.exists(self.path(A)))
+        self.assertTrue(os.path.exists(md))
+        self.assertEqual((self.run_cleanup()['errors'], os.path.exists(md)), ([], False))
+
+    def test_run_waits_on_partial_last_line(self):
+        self.ready()
+        with open(self.path(A), 'a') as f:
+            f.write('{"type": "user"')  # no newline yet: the index stops before it (offset < size)
+        memdb.update(self.conn, self.projects)
+        self.assertEqual(self.conn.execute('SELECT offset < size FROM files WHERE path LIKE ?', ('%' + A + '.jsonl',)).fetchone()[0], 1)
+        self.assertEqual(self.run_cleanup()['waiting'], 1)
+        self.assertTrue(os.path.exists(self.path(A)))
+
+    def test_unlistable_folder_reported_not_removed(self):
+        self.ready()
+
+        def denied(top, onerror=None, **kw):
+            onerror(PermissionError('denied'))
+            return iter(())
+
+        with mock.patch('os.walk', denied):
+            out = self.run_cleanup()
+        self.assertEqual((out['removed'], len(out['errors'])), (0, 1))
+        self.assertTrue(os.path.exists(self.path(A)))
+
+    def test_maintain_waits_while_sync_pending(self):
+        self.ready()
+        for p in (self.path(A), os.path.join(self.projects, 'P', A, 'subagents', 'agent-1.jsonl')):
+            os.utime(p, (time.time() - 7200,) * 2)  # cold
+        crypto.set_fields(crypto.settings_path(self.db), {'deleteOldChats': True, 'syncDir': os.path.join(os.path.dirname(self.db), 'share')})
+        ok = {'pushed': 0, 'pulled': 0, 'errors': []}
+        with mock.patch('sync.sync', return_value=ok), mock.patch('sync.pending', return_value=True):
+            out = self.maintain()
+        self.assertEqual((out['cleanup']['removed'], out['cleanup']['waiting']), (0, 1))
+        self.assertTrue(os.path.exists(self.path(A)))
+        with mock.patch('sync.sync', return_value=ok), mock.patch('sync.pending', return_value=False):
+            self.assertEqual(self.maintain()['cleanup']['removed'], 1)
+
+    def test_status_counts_only_chats_gone_from_disk(self):
+        self.ready()
+        cleanup.snapshot(self.conn, self.projects, self.path(A))  # as a failed removal leaves it
+        a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'status'])
+        self.assertEqual(a.fn(a)['cleanup']['removed_total'], 0)
+        self.run_cleanup()
+        self.assertEqual(a.fn(a)['cleanup']['removed_total'], 1)
+
     def test_rebuild_keeps_removed_chat(self):
         self.chat_a()
         self.write('P/%s.jsonl' % A, [user('хомяк ёжик', T)], 'a')
