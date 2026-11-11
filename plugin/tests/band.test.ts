@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { baseTrouble, columns, columnsSvg, delayAt, fitTokens, lineTokens, money } from '../hooks/band'
+import { baseTrouble, columns, delayAt, fitTokens, lineTokens, money } from '../hooks/band'
 import { setLanguage } from '../hooks/text'
 
 setLanguage('ru')
@@ -97,7 +97,6 @@ test('columns: a negative project sum is the dearer form, not "up to $-0.40"', (
   const w = columns(snap(), info({ savings: savings({ project: { usd: -0.4, links: 4 } }) }), true).find(x => x.key === 'worker')!
   expect(w.sub[1]).toBe('проект: дороже на $0.40 (4)')
   expect(w.subTone).toEqual({ 1: 'error' })
-  expect(columnsSvg([w])).toContain('class="s error"')
 })
 test('columns: a reset on another day carries the weekday; a bad stamp is ?', () => {
   const far = columns(snap({ limits: [{ kind: 'seven_day', percentUsed: 50, resetsAt: new Date(now + 3 * 86_400_000).toISOString() }] }), info(), true)
@@ -121,15 +120,4 @@ test('delayAt: the latest reset at 90% or more, plus 5 minutes', () => {
   expect(delayAt([{ kind: 'five_hour', percentUsed: 100, resetsAt: 'soon' }], now)).toBeNull()
   expect(delayAt([{ kind: 'five_hour', percentUsed: 100, resetsAt: at(now - 3_600_000) }], now)).toBeNull()
   expect(delayAt([], now)).toBeNull()
-})
-test('columnsSvg: the sample sub-lines are not cut at the default width', () => {
-  const svg = columnsSvg(columns(snap(), info(), true))
-  expect(svg).not.toContain('…')
-  expect(svg).toContain('проект: до $40.10 (17)')
-})
-test('columnsSvg: values, and the error color class', () => {
-  const svg = columnsSvg(columns(snap(), info({ savings: savings({ last: { usd: -0.4, old_tokens: 1, new_tokens: 2 } }) }), true))
-  expect(svg).toContain('до $18.70')
-  expect(svg).toContain('class="v error"')
-  expect(svg).toContain('#c62828')
 })

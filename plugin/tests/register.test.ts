@@ -212,14 +212,15 @@ test('Details stays open after a restart of the mod', async ($, on) => {
   expect(await texts(ui)).toContain(T.col.chat)
 })
 
-test('desktop draws the columns as one Svg', async ($, on) => {
+test('desktop Details draws the columns as Text, with the rule Svg first; the terminal has no rule', async ($, on) => {
   wire(on, [], () => ({ value: usage }))
-  await mountBand($)
+  const term = await mountBand($)
+  expect(await term.findAll({ type: 'Svg' })).toHaveLength(0)
   const ui = await $.ui.mount({ plugin: 'alethite', surface: 'desktop', component: 'AbovePrompt', props } as never)
+  expect(((await ui.drawn()) as unknown as Drawn).children[0]).toMatchObject({ type: 'Svg' })
   await ui.press({ key: 'details' })
-  const svg = await ui.findAll({ type: 'Svg' })
-  expect(svg).toHaveLength(1)
-  expect(typeof svg[0]!.props.alt).toBe('string')
+  expect(await ui.findAll({ type: 'Svg' })).toHaveLength(1)
+  expect(await texts(ui)).toContain(T.col.chat)
 })
 
 test('/al-band off hides the band in this chat, /al-band brings it back', async ($, on) => {
