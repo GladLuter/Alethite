@@ -34,8 +34,8 @@ The money goes on coming back to a big idle chat. Alethite shows you the price b
 
 | Feature | What it does | Command |
 |---|---|---|
-| 🛡️ **Cache guard** | The status line shows the context size and the minutes left in the cache. After a pause, a band above the prompt shows what sending costs now. | `/al-band` |
-| 🆕 **New worker** | A button that starts a clean chat with a handoff of the old one (no model calls) and the message you already typed. | button in the band |
+| 🛡️ **Cache guard** | The status line shows the context size and the minutes left in the cache. One row above the prompt is always there: chat size, cache, the price of a send here and how much the handoffs saved. The Details button opens it into columns. | `/al-band` |
+| 🆕 **New worker** | A button that starts a clean chat with a handoff of the old one (no model calls) and the message you already typed. The After reset button does the same once the limit resets. It shows up after you press New worker, when a limit is 90% used or more. | buttons in the band |
 | 📝 **Short memory** | One short rule for Claude: write decisions down at once, save an understood error as a lesson, check memory before proposing. A toast shows each saved fact. | |
 | 🔎 **Long memory** | Every past conversation of every project, subagents included, in a local SQLite index with vectors from a local Ollama model. Claude searches it with `recall`, by words and by meaning. Secrets are hidden before indexing. Nothing that got into the index is ever lost, and tool errors are indexed too. | `/al-index` |
 | 🎓 **Lessons** | An understood error is saved as a lesson and comes back only where it fits. A command that holds a lesson's trigger is stopped once with it, and at most 2 lessons come per message. No fitting lesson, zero tokens. | `/al-lessons` |
@@ -78,7 +78,7 @@ Type `/al-health` in a new chat to check it. Computing the vectors (it takes hou
 | Command | What it does |
 |---|---|
 | `/al-health` | Checks the plugin, the index, the vectors, the memory, the sync and the compression |
-| `/al-band [off]` | Shows the band now, or goes back to the thresholds |
+| `/al-band [off]` | Brings the band back, or hides it in this chat (`off`) |
 | `/al-index [rebuild]` | Updates the index. `rebuild` re-reads everything and adds what is missing |
 | `/al-sync [skip <computer> <N>]` | Syncs with the other computers now |
 | `/al-stats [days]` | Measures the cost and writes it to Obsidian |
@@ -101,9 +101,9 @@ The file `%USERPROFILE%\.claude\alethite\settings.json` is one per computer. The
 | `language` | Language | `"en"` (also `"ru"`, `"uk"`) |
 | `compression` | Memory compression | `"ultra"` (also `"off"`, `"lite"`, `"full"`) |
 | `syncDir` | Sync folder | `""` (empty: no sync) |
-| `bandMinTokens` | Band threshold: chat size, tokens | `100000` |
-| `bandIdleMinutes` | Band threshold: idle time, minutes | `55` |
-| `showLimits` | Limits line in the band | `true` |
+| `bandMinTokens` | Row highlight: chat size, tokens | `100000` |
+| `bandIdleMinutes` | Row highlight: idle time, minutes | `55` |
+| `showLimits` | Limits column in Details | `true` |
 | `python` | Python command | `"python"` |
 | `embedModel` | Ollama embedding model | `"embeddinggemma"` |
 | `lessons` | Bring lessons back to messages and commands | `true` |

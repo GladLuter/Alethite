@@ -11,23 +11,32 @@ export const ru: Partial<Texts> = {
   cacheUnknown: '?',
 
   // marks: whose a band and a toast are, so neither is taken for another mod's (the engine labels the status line with the plugin name itself). Every other text here is written without the name.
-  bandTitle: 'Alethite - 🛡 CacheGuard',
+  bandTitle: '🛡 Alethite',
   toast: (text: string) => `Alethite: ${text}`,
 
   // band
-  head: (k: string, ago: string, cache: string) => `Этот чат: ${k} тыс. токенов · последний ответ ${ago} · ${cache}`,
-  bandCache: { expired: 'кэш истёк', warm: 'кэш тёплый', unknown: 'кэш ?' },
-  agoNow: 'только что',
-  agoMin: (n: number) => `${n} мин назад`,
-  agoHours: (n: number) => `${n} ч назад`,
-  agoDays: (n: number) => `${n} д назад`,
-  send: (cost: string) => `Отправка сюда ≈ ${cost}`,
-  sendHot: (cost: string) => `${cost} (кэш тёплый)`,
-  sendCold: (cost: string) => `${cost} (перезапись кэша)`,
-  sendEither: (hot: string, cold: string) => `${hot} или ${cold}`,
+  bandCache: { expired: 'кэш истёк', unknown: 'кэш ?' },
   limitNames: { five_hour: '5 ч', seven_day: 'неделя' } as Record<string, string>,
   limit: (name: string, percent: number) => `${name}: ${percent}%`,
-  limits: (parts: string) => `Лимит ${parts}`,
+  // band, new
+  details: 'Детали',
+  compact: 'Свернуть',
+  bandWarm: (min: number) => `кэш ${min} мин`,
+  sendHere: (cost: string) => `сюда ≈ ${cost}`,
+  saved: (usd: string) => `экономия ≤ ${usd}`,
+  dearer: (usd: string) => `дороже на ${usd}`,
+  upTo: (usd: string) => `до ${usd}`,
+  baseTrouble: 'база !',
+  col: { chat: 'Этот чат', last: 'Последняя передача', worker: 'Весь работник', limits: 'Лимиты', base: 'База' },
+  spent: (usd: string) => `потрачено ${usd}`,
+  coldPrice: (cost: string) => `холодно ${cost}`,
+  workerSub: (links: number, calls: number) => `передач: ${links} · вызовов: ${calls}`,
+  projectSub: (usd: string, links: number) => `проект: ${usd} (${links})`,
+  resets: (when: string) => `сброс ${when}`,
+  baseConvs: (n: number) => `разговоров: ${n}`,
+  baseVectors: (done: number, total: number) => `векторы ${done}/${total}`,
+  baseSize: (mb: number, cipher: string) => `${mb} МБ · ${cipher}`,
+  baseTimes: (sync: string, job: string) => `синхр. ${sync}; фон ${job}`,
 
   // band buttons
   newWorker: 'Новый работник',
@@ -38,6 +47,8 @@ export const ru: Partial<Texts> = {
   cancel: 'Отмена',
   atFilesHint: '@файлы и картинки из черновика не передаются',
   busy: 'Запускаю…',
+  afterReset: (time: string) => `После сброса (${time})`,
+  waitingAt: (time: string) => `⏰ работник в ${time}`,
 
   // new worker launch: every failure says what was kept and where
   draftEmpty: 'Новый работник: черновик пуст, чат не тронут. Набери сообщение и нажми снова.',
@@ -55,9 +66,9 @@ export const ru: Partial<Texts> = {
   indexProblemStatus: 'Индекс недоступен, подробности в /al-health',
 
   // /al-band
-  cgBandDescription: 'Показать полосу принудительно (off: вернуть пороги)',
-  cgBandOn: 'al-band: полоса показана принудительно.',
-  cgBandOff: 'al-band: полоса снова по порогам.',
+  cgBandDescription: 'Скрыть полосу в этом чате (off) или вернуть',
+  cgBandOn: 'al-band: полоса снова на месте.',
+  cgBandOff: 'al-band: полоса скрыта в этом чате. /al-band вернёт её.',
   cgBandFailed: 'al-band: не вышло, причина в строке состояния.',
 
   // errors: the toast of an owner-started action; cg.py could not be started at all

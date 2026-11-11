@@ -10,23 +10,32 @@ export const en = {
   cacheUnknown: '?',
 
   // marks: whose a band and a toast are, so neither is taken for another mod's (the engine labels the status line with the plugin name itself). Every other text here is written without the name.
-  bandTitle: 'Alethite - 🛡 CacheGuard',
+  bandTitle: '🛡 Alethite',
   toast: (text: string) => `Alethite: ${text}`,
 
   // band
-  head: (k: string, ago: string, cache: string) => `This chat: ${k}k tokens · last reply ${ago} · ${cache}`,
-  bandCache: { expired: 'cache expired', warm: 'cache warm', unknown: 'cache ?' },
-  agoNow: 'just now',
-  agoMin: (n: number) => `${n} min ago`,
-  agoHours: (n: number) => `${n} h ago`,
-  agoDays: (n: number) => `${n} d ago`,
-  send: (cost: string) => `Sending here ≈ ${cost}`,
-  sendHot: (cost: string) => `${cost} (cache warm)`,
-  sendCold: (cost: string) => `${cost} (cache rewrite)`,
-  sendEither: (hot: string, cold: string) => `${hot} or ${cold}`,
+  bandCache: { expired: 'cache expired', unknown: 'cache ?' },
   limitNames: { five_hour: '5 h', seven_day: 'week' } as Record<string, string>,
   limit: (name: string, percent: number) => `${name}: ${percent}%`,
-  limits: (parts: string) => `Limits ${parts}`,
+  // band, new
+  details: 'Details',
+  compact: 'Collapse',
+  bandWarm: (min: number) => `cache ${min} min`,
+  sendHere: (cost: string) => `here ≈ ${cost}`,
+  saved: (usd: string) => `saved ≤ ${usd}`,
+  dearer: (usd: string) => `${usd} dearer`,
+  upTo: (usd: string) => `up to ${usd}`,
+  baseTrouble: 'base !',
+  col: { chat: 'This chat', last: 'Last handoff', worker: 'Whole worker', limits: 'Limits', base: 'Base' },
+  spent: (usd: string) => `spent ${usd}`,
+  coldPrice: (cost: string) => `cold ${cost}`,
+  workerSub: (links: number, calls: number) => `handoffs: ${links} · calls: ${calls}`,
+  projectSub: (usd: string, links: number) => `project: ${usd} (${links})`,
+  resets: (when: string) => `resets ${when}`,
+  baseConvs: (n: number) => `conversations: ${n}`,
+  baseVectors: (done: number, total: number) => `vectors ${done}/${total}`,
+  baseSize: (mb: number, cipher: string) => `${mb} MB · ${cipher}`,
+  baseTimes: (sync: string, job: string) => `sync ${sync}; background ${job}`,
 
   // band buttons
   newWorker: 'New worker',
@@ -37,6 +46,8 @@ export const en = {
   cancel: 'Cancel',
   atFilesHint: '@files and images in the draft are not passed on',
   busy: 'Starting…',
+  afterReset: (time: string) => `After reset (${time})`,
+  waitingAt: (time: string) => `⏰ worker at ${time}`,
 
   // new worker launch: every failure says what was kept and where
   draftEmpty: 'New worker: the draft is empty, the chat is untouched. Type a message and press again.',
@@ -56,9 +67,9 @@ export const en = {
   indexProblemStatus: 'Index unavailable, details in /al-health',
 
   // /al-band
-  cgBandDescription: 'Show the band now (off: back to the thresholds)',
-  cgBandOn: 'al-band: the band is shown now.',
-  cgBandOff: 'al-band: the band follows the thresholds again.',
+  cgBandDescription: 'Hide the band in this chat (off) or bring it back',
+  cgBandOn: 'al-band: the band is back.',
+  cgBandOff: 'al-band: the band is hidden in this chat. /al-band brings it back.',
   cgBandFailed: 'al-band: did not work, the reason is on the status line.',
 
   // errors: the toast of an owner-started action; cg.py could not be started at all

@@ -1,8 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Snap } from '../types'
-import { bandLines, isStale, statusText } from './guard'
+import type { Savings, Snap } from '../types'
+import { columns, delayAt, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
+import { isStale, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
 import { flush, notePath, summaryNote, summaryPath } from './notes'
@@ -28,9 +29,12 @@ import type { LaunchIO } from './worker'
 
 const snap = atom({ plugin: 'alethite', key: 'snap' } as const, null)
 const hiddenId = atom({ plugin: 'alethite', key: 'hiddenId' } as const, '')
-const forcedId = atom({ plugin: 'alethite', key: 'forcedId' } as const, '')
 const isArmed = atom({ plugin: 'alethite', key: 'isArmed' } as const, false)
 const isBusy = atom({ plugin: 'alethite', key: 'isBusy' } as const, false)
+const info = atom({ plugin: 'alethite', key: 'info' } as const, null)
+const isDetails = atom({ plugin: 'alethite', key: 'isDetails' } as const, false)
+const calmId = atom({ plugin: 'alethite', key: 'calmId' } as const, '')
+const delayedAt = atom({ plugin: 'alethite', key: 'delayedAt' } as const, null)
 
 // The helpers below take `$` and so stay in this file: the loader follows `$` only into functions declared here, never across an import.
 
@@ -228,7 +232,8 @@ const refresh = async ($: EngineInterface, python: string) => {
     // a resumed chat has no live token count until its first reply, so fall back to the last one stored
     tokens: usage.context.tokens ?? rec?.tokens ?? null,
     at: rec?.at ?? null,
-    limits: usage.rateLimits.map(({ kind, percentUsed }) => ({ kind, percentUsed })),
+    cost: usage.cost?.usd ?? null,
+    limits: usage.rateLimits.map(({ kind, percentUsed, resetsAt }) => ({ kind, percentUsed, resetsAt })),
   }
   showStatus($, statusText(fresh.tokens, fresh.at, now))
   await update($, snap, () => fresh)
@@ -294,11 +299,76 @@ const runStats = async ($: EngineInterface, python: string, days: number, compre
   return `${figures}\n\n${T.cgStatsSent(sent.sent)}`
 }
 
+// What the band's «База» and «сэкономлено» draw from: asked of cg.py when something changes, never while drawing. A field that did not come is null;
+// the first failure of a load goes to /al-health, no toast (a broken index would repeat it every 10 minutes).
+let isInfoNoted = false
+let loadedAt = 0 // when this load of the mod started: an error older than that is not this load's first cause
+let isSyncOn = false // the sync folder is set: a stored sync error means something only then
+let infoSeq = 0 // an older, slower answer must not replace a newer one
+// The flag goes up before anything is awaited (two failures at once note one); an error of this load stays, it is the first cause (a broken index fails these too).
+const noteInfoOnce = async ($: EngineInterface, err: unknown) => {
+  if (isInfoNoted) return
+  isInfoNoted = true
+  const last = (await $.store.get('lastError')) as LastError | undefined
+  if (!last || last.at < loadedAt) await noteError($, 'band', err)
+}
+const refreshInfo = async ($: EngineInterface, python: string) => {
+  const seq = ++infoSeq
+  try {
+    const [id, root] = await Promise.all([$.session.id(), $.session.root()])
+    const ask = (args: string[], bad: (err: unknown) => unknown = () => null) => runCg($, python, args).catch(async (err: unknown) => (await noteInfoOnce($, err), bad(err)))
+    // a status that fails (cg.py exits 1 for an index it cannot use) keeps its reason: the band must light the base alarm for it
+    const [status, savings] = await Promise.all([ask(['status', `--cwd=${root}`], err => ({ index_problem: indexProblem || message(err) })), ask(['savings', '--session', id, '--cwd', root])])
+    if (seq === infoSeq) await update($, info, () => ({ status: status as Record<string, unknown>, savings: savings as Savings | null, isSyncOn }))
+  } catch (err) {
+    await noteInfoOnce($, err).catch(() => {}) // never throws: callers run it bare
+  }
+}
+
+// Whether the model is mid-turn, as the last band render saw it (only the render is told): /clear then is dangerous.
+let isWorking = false
+
+// When this chat's wait comes due; a stored value that is not a time the clock can show counts as no wait.
+const waitOf = async ($: EngineInterface, id: string) => {
+  const wait = (await $.store.get(`delayed:${id}`)) as { at?: unknown } | undefined
+  return typeof wait?.at === 'number' && !Number.isNaN(new Date(wait.at).getTime()) ? wait.at : null
+}
+
+// The delayed New worker: the wait is a store key of its chat; the 30 s tick starts it once due. The key goes first, so it never fires twice.
+// A turn or a launch in progress leaves the wait where it is for the next tick. The band shows the wait of the chat that is open (a /clear or /resume
+// changes the id without a session.start), so a wait goes only after the band has shown it for a tick.
+let threwAt = 0
+const fireDue = async ($: EngineInterface, python: string, compression: string) => {
+  const [id, now] = await Promise.all([$.session.id(), $.clock.now()])
+  const at = await waitOf($, id)
+  let shown: number | null = null
+  await update($, delayedAt, v => ((shown = v), at))
+  if (at === null || at > now || isWorking || shown !== at) return
+  await $.store.delete(`delayed:${id}`)
+  await update($, delayedAt, () => null)
+  // false = nothing was launched (busy, the busy flag could not be set, or a step before /clear threw): the wait goes back. A throw from startWorker's tail comes after the launch: no put-back.
+  const r = await startWorker($, python, 'send', compression)
+  if (r) return
+  if (r === null) {
+    if (threwAt === at) return // a step before /clear keeps throwing: one put-back per wait, not a toast every tick
+    threwAt = at
+  }
+  await $.store.set(`delayed:${id}`, { at })
+  await update($, delayedAt, () => at)
+}
+
 // "Новый работник": binds launch() to the engine through closures made here. One launch at a time.
 const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill', compression: string) => {
   let wasBusy = false
-  await update($, isBusy, busy => ((wasBusy = busy), true)) // atomic: a second press before the redraw is refused here
-  if (wasBusy) return
+  try {
+    await update($, isBusy, busy => ((wasBusy = busy), true)) // atomic: a second press before the redraw is refused here
+  } catch (err) {
+    await fail($, 'launch', err)
+    return false
+  }
+  if (wasBusy) return false
+  let outcome: Awaited<ReturnType<typeof launch>> | undefined
+  let isCleared = false
   try {
     await update($, isArmed, () => false)
     let told = '' // the last thing launch told the owner; it is the reason when the launch did not go through
@@ -309,7 +379,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
         const args = ['handoff', '--session', id, '--today', calendarDay(now), ...(dir ? ['--memory-dir', dir] : []), '--compress', compression]
         return (await runCg($, python, args)) as { text: string; path: string }
       },
-      clear: () => $.command.run({ command: 'clear' }),
+      clear: () => ((isCleared = true), $.command.run({ command: 'clear' })),
       submit: text => $.prompt.submit({ text, asUser: true }),
       fill: async text => {
         const r = await $.prompt.fill({ text })
@@ -324,7 +394,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
         told = text
       },
     }
-    const outcome = await launch(io, mode)
+    outcome = await launch(io, mode)
     if (outcome === 'ready') toast($, T.pickThenEnter)
     if (outcome === 'failed' || outcome === 'dropped') await noteError($, 'launch', told)
   } catch (err) {
@@ -335,6 +405,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
     await update($, isBusy, () => false)
     await guarded($, 'launch', () => refresh($, python))
   }
+  return outcome !== undefined || isCleared ? true : null // null: a throw before /clear launched nothing, the delayed wait goes back
 }
 
 export const register: Register = (on, options) => {
@@ -344,6 +415,7 @@ export const register: Register = (on, options) => {
   const apply = (o: Record<string, unknown>) => {
     setLanguage(o.language as string)
     syncDir = (o.syncDir as string).trim().replace(/^"(.*)"$/, '$1') // Explorer's "Copy as path" puts quotes around it
+    isSyncOn = syncDir !== ''
     shareCipher = (o.shareCipher as string | undefined) ?? 'sqlcipher' // sqlcipher or cryptography; any other word is refused by cg.py, not turned into the other
     indexCipher = (o.indexCipher as string | undefined) ?? 'sqlcipher' // sqlcipher or efs; likewise refused by cg.py when unknown
     minTokens = o.bandMinTokens as number
@@ -369,6 +441,8 @@ export const register: Register = (on, options) => {
   let isLessonsNoted = false // a lesson search that fails on every message is kept for /al-health once, not on each
 
   on('session.start', async ($, e, next) => {
+    loadedAt = await $.clock.now()
+    isInfoNoted = false // once per load of the mod
     // first, so the language and every other setting of the file hold before anything is drawn or said; a reload reads it again
     homeDir = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
     if (homeDir !== undefined) {
@@ -388,9 +462,16 @@ export const register: Register = (on, options) => {
 
 
     // timers outlive /clear (no session.start after it), so one tick also keeps a new session's figures fresh
-    $.clock.every(30_000, () => void guarded($, 'timer', () => refresh($, python)))
+    $.clock.every(30_000, () => {
+      void guarded($, 'timer', () => refresh($, python))
+      void guarded($, 'delayed', () => fireDue($, python, compression))
+    })
     // a chat open for hours learns of a lesson saved in another chat or brought by the job's sync
-    $.clock.every(600_000, () => void lessonsOr($, python, lessonList).then(l => void (lessonList = l)))
+    // and the band's data (never awaited together: one slow answer must not hold the other)
+    $.clock.every(600_000, () => {
+      void lessonsOr($, python, lessonList).then(l => void (lessonList = l))
+      void refreshInfo($, python)
+    })
     // session.end has 1.5 s, too little to index: a closed chat is picked up here, or by the next recall. Never awaited, so session.start is not held.
     $.clock.after(
       3_000,
@@ -399,9 +480,16 @@ export const register: Register = (on, options) => {
           if (failed && !isCatchUpToasted) toast($, T.catchUpFailed(failed))
           if (failed) isCatchUpToasted = true
           lessonList = await lessonsOr($, python, lessonList) // the sync may have brought the other computer's
+          await refreshInfo($, python)
         }),
     )
     await guarded($, 'session.start', () => refresh($, python))
+    await guarded($, 'session.start', async () => {
+      const isOpen = (await $.store.get('details')) === true
+      await update($, isDetails, () => isOpen)
+      const at = await waitOf($, await $.session.id()) // a wait outlives a restart
+      await update($, delayedAt, () => at)
+    })
 
     // after the status line and the timers: a refusal of one schema must not leave the owner without the rest
     // two short schemas in every request cost less than the extra ToolSearch turn a deferred tool needs in each new chat
@@ -466,13 +554,14 @@ export const register: Register = (on, options) => {
     // a subagent's turn or one that cost nothing (interrupted, API error) does not move the cache clock
     if (e.agentId === undefined && e.usage !== undefined) {
       await guarded($, 'turn.complete', async () => {
-        // "Остаться здесь" lasts one turn, and an armed picker never outlives one
-        await update($, hiddenId, () => '')
+        // an armed picker never outlives a turn
         await update($, isArmed, () => false)
         const [id, now, usage] = await Promise.all([$.session.id(), $.clock.now(), $.session.usage()])
+        const prev = (await $.store.get(`turn:${id}`)) as { at: number | null } | undefined
         await $.store.set(`turn:${id}`, { at: now, tokens: usage.context.tokens ?? null })
         await pruneTurns($)
         await refresh($, python)
+        if (!prev?.at) void refreshInfo($, python) // the first reply of a chat (a new worker's): only now has its transcript a call for the savings to read
       })
     }
 
@@ -484,8 +573,7 @@ export const register: Register = (on, options) => {
     const isOk = await guarded($, 'al-band', async () => {
       await refresh($, python)
       const id = await $.session.id()
-      await update($, forcedId, () => (isOff ? '' : id))
-      if (!isOff) await update($, hiddenId, () => '')
+      await update($, hiddenId, () => (isOff ? id : ''))
     })
 
     return { text: !isOk ? T.cgBandFailed : isOff ? T.cgBandOff : T.cgBandOn }
@@ -522,6 +610,7 @@ export const register: Register = (on, options) => {
     try {
       const i = await runCg($, python, ['index', ...(e.args.trim() === 'rebuild' ? ['--rebuild'] : [])], 600_000)
       await indexErrors($, 'al-index', i.errors as IndexError[], true)
+      void refreshInfo($, python)
       return { text: T.cgIndexDone(i) }
     } catch (err) {
       await fail($, 'al-index', err)
@@ -536,6 +625,7 @@ export const register: Register = (on, options) => {
     try {
       const r = await runSync($, python, syncDir, embedModel, shareCipher, skip)
       lessonList = await lessonsOr($, python, lessonList) // the other computer's lessons, if it brought any
+      void refreshInfo($, python)
       if (r.errors.length) {
         // the reply lists them all; the toast and /al-health keep the first one for when the reply has scrolled away
         toast($, T.syncErrors(r.errors.length))
@@ -565,6 +655,7 @@ export const register: Register = (on, options) => {
     try {
       if (!isState) toast($, T.encryptWindow)
       const r = await runCg($, python, args, isState ? 120_000 : 600_000)
+      if (!isState) void refreshInfo($, python)
       return { text: isState ? encryptHealth(r as unknown as EncryptStatus, shareCipher).join('\n') : encryptReply(r as unknown as EncryptResult) }
     } catch (err) {
       // cut at the time limit: not "Python did not start" (what runCg says of any failure of the process), but what to do
@@ -579,7 +670,9 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'al-index-dir' }, async ($, e) => {
     try {
       if (indexDirArgs(e.args).length === 1) toast($, T.indexDirWindow) // only the run without a path opens the window
-      return { text: indexDirReply((await runCg($, python, indexDirArgs(e.args), 600_000)) as unknown as IndexDirResult) }
+      const r = (await runCg($, python, indexDirArgs(e.args), 600_000)) as unknown as IndexDirResult
+      void refreshInfo($, python)
+      return { text: indexDirReply(r) }
     } catch (err) {
       const cut = isTimeout(message(err)) ? T.indexDirTimeout : undefined
       await fail($, 'al-index-dir', cut ?? err)
@@ -749,41 +842,120 @@ export const register: Register = (on, options) => {
     // every read first, so the band is subscribed to all of them even when it draws nothing
     const s = await read($, snap)
     const hidden = await read($, hiddenId)
-    const forced = await read($, forcedId)
+    const calm = await read($, calmId)
     const armed = await read($, isArmed)
     const busy = await read($, isBusy)
+    const wait = await read($, delayedAt)
+    const data = await read($, info)
+    const isOpen = await read($, isDetails)
 
-    if (s === null || e.props.hasSurvey || e.props.isWorking || s.id === hidden) return next(e)
-    if (!isStale(s, minTokens, idleMinutes) && s.id !== forced) return next(e)
+    isWorking = e.props.isWorking // /clear in the middle of a turn is dangerous: no New worker then, and no waiting one either
+    if (s === null || e.props.hasSurvey || s.id === hidden) return next(e)
 
-    const { Box, Button, Text } = $.ui.resolve(e)
-    // the band above the prompt is one area for every mod: ours goes in a frame of its own, so it never reads as part of another mod's,
-    // and what the mods beneath draw stays, under the frame, instead of being covered by it
+    const { Box, Button, Svg, Text } = $.ui.resolve(e)
+    const rule = e.surface === 'desktop' ? <Svg source={RULE_SVG} alt="—" /> : null
+    // the band above the prompt is one area for every mod: ours is a row or a frame of its own, and what the mods beneath draw stays under it
     const below = await next(e)
+    const isLit = isStale(s, minTokens, idleMinutes) && s.id !== calm
+    const title = <Text bold>{T.bandTitle}</Text>
+    const after = delayAt(s.limits, s.now)
 
+    if (armed && !isWorking) {
+      return (
+        <Box flexDirection="column">
+          {rule}
+          <Box borderStyle="round" borderDimColor flexDirection="column" paddingX={1}>
+            {title}
+            <Text>{T.willClear}</Text>
+            <Box gap={1} flexWrap="wrap">
+              <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send', compression)} />
+              <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill', compression)} />
+              {after !== null && (
+                <Button
+                  key="after"
+                  label={T.afterReset(when(new Date(after).toISOString(), s.now))}
+                  onPress={() =>
+                    guarded($, 'band', async () => {
+                      await update($, isArmed, () => false)
+                      if (!(await $.prompt.read()).text.trim()) return toast($, T.draftEmpty)
+                      await $.store.set(`delayed:${await $.session.id()}`, { at: after }) // the time printed on the button; the chat that is open now (a /clear may have come)
+                      await update($, delayedAt, () => after)
+                    })
+                  }
+                />
+              )}
+              <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
+            </Box>
+            <Text dimColor>{T.atFilesHint}</Text>
+          </Box>
+          {below}
+        </Box>
+      )
+    }
+
+    const launchLabel = busy ? T.busy : T.newWorker
+    const detailsLabel = isOpen ? T.compact : T.details
+    const toggle = () => guarded($, 'band', async () => (await update($, isDetails, () => !isOpen), await $.store.set('details', !isOpen)))
+    const waitText = wait === null ? '' : T.waitingAt(when(new Date(wait).toISOString(), s.now))
+    const cancelWait = () => guarded($, 'band', async () => (await Promise.all([$.store.delete(`delayed:${s.id}`), $.store.delete(`delayed:${await $.session.id()}`)]), await update($, delayedAt, () => null)))
+    const actions = (wrap: boolean, hasDetails = true) => (
+      <Box gap={1} flexWrap={wrap ? 'wrap' : undefined}>
+        {wait !== null && <Text color="warning">{waitText}</Text>}
+        {wait !== null && <Button key="cancel-delay" label={T.cancel} onPress={cancelWait} />}
+        {wait === null && !isWorking && <Button key="launch" label={launchLabel} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />}
+        {wait === null && !isWorking && isLit && <Button key="stay" label={T.stayHere} onPress={() => update($, calmId, () => s.id)} />}
+        {hasDetails && <Button key="details" label={detailsLabel} onPress={toggle} />}
+      </Box>
+    )
+
+    if (!isOpen) {
+      // the terminal counts cells; the desktop draws wider and does not wrap, so only the terminal trims the tokens to the room the buttons leave
+      const buttons = wait !== null ? [waitText, T.cancel, detailsLabel] : [launchLabel, ...(isLit ? [T.stayHere] : []), detailsLabel].slice(isWorking ? -1 : 0)
+      // the row is the title, the tokens ("· " + text), a spacer and the buttons, one gap between neighbours; a Button draws `[ label ]`, its label plus 4.
+      // The tokens' ' · ' joins in tokensWidth are 3 cells short of what they take in the row, and the spacer's gap is one more.
+      const room = (rowTitle: string) => (e.surface === 'terminal' ? e.props.bodyColumns - rowTitle.length - buttons.join('').length - 5 * buttons.length - 4 : Infinity)
+      const all = lineTokens(s, data, isLit)
+      let [rowTitle, left] = [T.bandTitle, room(T.bandTitle)]
+      let tokens = fitTokens(all, left)
+      if (tokensWidth(tokens) > left) [rowTitle, left, tokens] = [SHIELD, room(SHIELD), fitTokens(all, room(SHIELD))] // not even the base alarm fits beside the name: the shield alone
+      // Details goes too when a waiting row still cannot hold it (the row stays one line)
+      return (
+        <Box flexDirection="column">
+          {rule}
+          <Box gap={1}>
+            <Text bold>{rowTitle}</Text>
+            {tokens.map(t => (
+              <Text key={t.key} color={t.tone}>{`· ${t.text}`}</Text>
+            ))}
+            <Box flexGrow={1} />
+            {actions(false, wait === null || left >= 0)}
+          </Box>
+          {below}
+        </Box>
+      )
+    }
+
+    const cols = columns(s, data, showLimits)
+    const body = (
+      <Box columnGap={2} flexWrap="wrap">
+        {cols.map(c => (
+          <Box key={c.key} flexDirection="column">
+            <Text dimColor>{c.label}</Text>
+            <Text bold color={c.tone}>{c.value}</Text>
+            {c.sub.map((line, j) => (
+              <Text key={line} dimColor={!c.subTone?.[j]} color={c.subTone?.[j]} wrap="truncate-end">{line}</Text>
+            ))}
+          </Box>
+        ))}
+      </Box>
+    )
     return (
       <Box flexDirection="column">
+        {rule}
         <Box borderStyle="round" borderDimColor flexDirection="column" paddingX={1}>
-          <Text bold>{T.bandTitle}</Text>
-          {bandLines(s, showLimits).map(line => (
-            <Text>{line}</Text>
-          ))}
-          {armed ? (
-            <Box flexDirection="column">
-              <Text>{T.willClear}</Text>
-              <Box gap={1} flexWrap="wrap">
-                <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send', compression)} />
-                <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill', compression)} />
-                <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
-              </Box>
-              <Text dimColor>{T.atFilesHint}</Text>
-            </Box>
-          ) : (
-            <Box gap={1} flexWrap="wrap">
-              <Button key="launch" label={busy ? T.busy : T.newWorker} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />
-              <Button key="stay" label={T.stayHere} onPress={() => update($, hiddenId, () => s.id)} />
-            </Box>
-          )}
+          {title}
+          {body}
+          {actions(true)}
         </Box>
         {below}
       </Box>

@@ -2,6 +2,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import { ru } from '../hooks/lang/ru'
 import { uk } from '../hooks/lang/uk'
 import { notePath, summaryPath } from '../hooks/notes'
+import { when } from '../hooks/band'
+import { price } from '../hooks/guard'
 import { T } from '../hooks/text'
 
 const usage = { context: { tokens: 512_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 7 }] }
@@ -12,13 +14,15 @@ const ran = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isS
 const noTurn = () => ran('{"tokens":null,"at":null,"model":null}')
 
 // stands for the engine beneath the plugin; `statuses` collects what the status line was set to, `answerRun` answers cg.py
+const ids = { now: 'id' }
 const wire = (on: any, statuses: (string | undefined)[], answerUsage: () => unknown, answerRun: (_: unknown, e: { argv: string[] }) => unknown = noTurn, store = new Map<string, unknown>()) => {
+  ids.now = 'id'
   const clock = mock.clock(on, { now: 10_000_000_000 })
   on('store.get', (_: unknown, e: { key: string }) => ({ value: store.get(e.key) }))
   on('store.set', (_: unknown, e: { key: string; value: unknown }) => (store.set(e.key, e.value), { value: undefined }))
   on('store.keys', () => ({ value: [...store.keys()] }))
   on('store.delete', (_: unknown, e: { key: string }) => (store.delete(e.key), { value: undefined }))
-  on('session.id', () => ({ value: 'id' }))
+  on('session.id', () => ({ value: ids.now }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('session.usage', answerUsage)
   on('session.version', () => ({ value: { version: '2.1.295' } }))
@@ -39,7 +43,7 @@ test('a failed refresh shows its error in the status line', async ($, on) => {
   expect(store.get('lastError')).toMatchObject({ at: 10_000_000_000, where: 'al-band' }) // kept for /al-health too
 })
 
-test('"Остаться здесь" and an armed picker last one turn', async ($, on) => {
+test('an armed picker lasts one turn', async ($, on) => {
   wire(on, [], () => ({ value: usage }))
   await ($ as any).command.run({ command: 'al-band', args: '' })
   const ui = await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props } as never)
@@ -47,19 +51,13 @@ test('"Остаться здесь" and an armed picker last one turn', async ($
   await ui.press({ key: 'launch' })
   expect(await buttons(ui)).toEqual(['send', 'pick', 'cancel'])
   await ($ as any).turn.complete(turn)
-  expect(await buttons(ui)).toEqual(['launch', 'stay'])
-
-  await ui.press({ key: 'stay' })
-  expect(await buttons(ui)).toEqual([])
-  await ($ as any).turn.complete(turn)
-  expect(await buttons(ui)).toEqual(['launch', 'stay'])
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
 })
 
-test('no band while the model is working', async ($, on) => {
+test('while the model works the row stays without New worker', async ($, on) => {
   wire(on, [], () => ({ value: usage }))
-  await ($ as any).command.run({ command: 'al-band', args: '' }) // forces the band
-  expect(await buttons(await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props } as never))).toEqual(['launch', 'stay'])
-  expect(await buttons(await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props: { ...props, isWorking: true } } as never))).toEqual([])
+  await ($ as any).command.run({ command: 'al-band', args: '' })
+  expect(await buttons(await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props: { ...props, isWorking: true } } as never))).toEqual(['details'])
 })
 
 const noSize = () => ({ value: { context: { window: 1_000_000 }, rateLimits: [] } })
@@ -137,8 +135,8 @@ test('/al-health: a project that matches no conversation is said so', async ($, 
 
 // The engine beneath a launch: the prompt box (`refuse` makes a fill fail), /clear, and the first message. `gate` holds the submit until released.
 const box = (on: any, draft: string, log: string[], gate: Promise<unknown> = Promise.resolve()) => {
-  const state = { text: draft, refuse: undefined as string | undefined }
-  on('prompt.read', () => ({ value: { text: state.text, cursor: 0 } }))
+  const state = { text: draft, refuse: undefined as string | undefined, broken: false }
+  on('prompt.read', () => (state.broken ? { deny: 'boom' } : { value: { text: state.text, cursor: 0 } }))
   on('prompt.fill', (_: unknown, e: { text: string }) => (state.refuse ? { isFilled: false, refusal: state.refuse } : ((state.text = e.text), { isFilled: true })))
   on('prompt.submit', async (_: unknown, e: { text: string }) => (log.push(`submit ${e.text}`), await gate, { text: e.text }))
   on('command.run', (_: unknown, e: { command: string; args: string }) => (log.push(`/${e.command} ${e.args}`.trim()), { text: '' }))
@@ -153,13 +151,85 @@ const mountBand = async ($: any) => {
 
 type Drawn = { type: string; props?: Record<string, unknown>; children: Drawn[] }
 
-test('the band is a frame of its own, the Alethite title first in it, bold, above its lines and buttons', async ($, on) => {
+const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text)
+const UI = { plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props } as never
+
+test('the band is always one row: the title first, no frame', async ($, on) => {
   wire(on, [], () => ({ value: usage }))
-  const band = (await (await mountBand($)).drawn()) as unknown as Drawn
-  const frame = band.children[0]!
+  const ui = await mountBand($)
+  const band = (await ui.drawn()) as unknown as Drawn
+  expect(band.children[0]!.props?.borderStyle).toBeUndefined()
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
+  expect((await texts(ui))[0]).toBe(T.bandTitle)
+})
+
+test('a stale chat lights the row and offers to stay; staying lasts to the end of the chat', async ($, on) => {
+  const at = new Date(10_000_000_000 - 2 * 3_600_000).toISOString()
+  wire(on, [], () => ({ value: usage }), () => ran(JSON.stringify({ tokens: 300_000, at, model: 'm' })))
+  const ui = await mountBand($)
+  expect(await buttons(ui)).toEqual(['launch', 'stay', 'details'])
+  await ui.press({ key: 'stay' })
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
+  await ($ as any).turn.complete(turn) // a turn must not bring the light back
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
+})
+
+test('a stale chat paints the size and the price as a warning, the price at the cold rate', async ($, on) => {
+  const at = new Date(10_000_000_000 - 2 * 3_600_000).toISOString()
+  wire(on, [], () => ({ value: usage }), () => ran(JSON.stringify({ tokens: 300_000, at, model: 'claude-opus-5-5' })))
+  await $.command.run({ command: 'al-band', args: '' })
+  const ui = await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 140 } } as never)
+  const all = await ui.findAll({ type: 'Text' })
+  const warned = all.filter((t: { props: { color?: string } }) => t.props.color === 'warning').map((t: { text: string }) => t.text)
+  expect(warned).toHaveLength(2)
+  expect(warned.some((t: string) => t.includes(T.sendHere(`$${price('claude-opus-5-5', 512_000, true).toFixed(2)}`)))).toBe(true)
+})
+
+test('Details opens the columns in a frame, remembers it, and the next press brings the row back', async ($, on) => {
+  const store = new Map<string, unknown>()
+  wire(on, [], () => ({ value: usage }), undefined, store)
+  const ui = await mountBand($)
+  await ui.press({ key: 'details' })
+  const frame = ((await ui.drawn()) as unknown as Drawn).children[0]!
   expect(frame).toMatchObject({ type: 'Box', props: { borderStyle: 'round' } })
   expect(frame.children[0]).toMatchObject({ type: 'Text', props: { bold: true }, children: [T.bandTitle] })
-  expect(frame.children.length).toBeGreaterThan(2)
+  expect(await texts(ui)).toContain(T.col.chat)
+  expect(store.get('details')).toBe(true)
+  await ui.press({ key: 'details' })
+  expect(store.get('details')).toBe(false)
+  expect(((await ui.drawn()) as unknown as Drawn).children[0]!.props?.borderStyle).toBeUndefined()
+})
+
+test('Details stays open after a restart of the mod', async ($, on) => {
+  mock.env(on, {})
+  on('tool.register', () => ({ value: { tool: 'x' } }))
+  on('command.register', () => ({ value: { command: 'x' } }))
+  on('session.root', () => ({ value: 'C:/w' }))
+  on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
+  wire(on, [], () => ({ value: usage }), undefined, new Map<string, unknown>([['details', true]]))
+  await ($ as any).session.start({ cwd: 'C:/w', surface: null, isInteractive: false })
+  const ui = await $.ui.mount(UI)
+  expect(await texts(ui)).toContain(T.col.chat)
+})
+
+test('desktop Details draws the columns as Text, with the rule Svg first; the terminal has no rule', async ($, on) => {
+  wire(on, [], () => ({ value: usage }))
+  const term = await mountBand($)
+  expect(await term.findAll({ type: 'Svg' })).toHaveLength(0)
+  const ui = await $.ui.mount({ plugin: 'alethite', surface: 'desktop', component: 'AbovePrompt', props } as never)
+  expect(((await ui.drawn()) as unknown as Drawn).children[0]).toMatchObject({ type: 'Svg' })
+  await ui.press({ key: 'details' })
+  expect(await ui.findAll({ type: 'Svg' })).toHaveLength(1)
+  expect(await texts(ui)).toContain(T.col.chat)
+})
+
+test('/al-band off hides the band in this chat, /al-band brings it back', async ($, on) => {
+  wire(on, [], () => ({ value: usage }))
+  const ui = await mountBand($)
+  await ($ as any).command.run({ command: 'al-band', args: 'off' })
+  expect(await buttons(ui)).toEqual([])
+  await ($ as any).command.run({ command: 'al-band', args: '' })
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
 })
 
 test("another mod's band beneath ours is not covered: it stays, under our frame", async ($, on) => {
@@ -181,7 +251,7 @@ test('new worker: the first press arms the band: two ways to go, cancel and the 
   expect(await ui.findAll({ type: 'Text', text: T.willClear })).toHaveLength(1)
 
   await ui.press({ key: 'cancel' })
-  expect(await buttons(ui)).toEqual(['launch', 'stay'])
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
 })
 
 test('new worker, send at once: /clear, then handoff + draft as the first message on the same model, draft taken out of the box, band idle', async ($, on) => {
@@ -198,7 +268,7 @@ test('new worker, send at once: /clear, then handoff + draft as the first messag
   expect(state.text).toBe('')
   const a = argvs[0]!
   expect(a.slice(a.indexOf('handoff'))).toEqual(['handoff', '--session', 'id', '--today', expect.stringMatching(/^\d{4}-\d\d-\d\d$/), '--memory-dir', 'C:/mem/memory', '--compress', 'ultra'])
-  expect(await buttons(ui)).toEqual(['launch', 'stay']) // not armed, not busy
+  expect(await buttons(ui)).toEqual(['launch', 'details']) // not armed, not busy
   expect(await ui.findAll({ type: 'Button', text: T.busy })).toEqual([])
 })
 
@@ -216,7 +286,7 @@ test('new worker, pick the model myself: /clear, handoff + draft left in the box
   expect(log).toEqual(['/clear']) // no submit, no /model
   expect(state.text).toBe('[al-handoff]x[/al-handoff]\n\nпродолжаем')
   expect(toasts).toEqual([T.toast(T.pickThenEnter)])
-  expect(await buttons(ui)).toEqual(['launch', 'stay']) // not armed, not busy
+  expect(await buttons(ui)).toEqual(['launch', 'details']) // not armed, not busy
   expect(await ui.findAll({ type: 'Button', text: T.busy })).toEqual([])
 })
 
@@ -233,7 +303,7 @@ test('new worker: busy for the whole launch, the arm button is ignored meanwhile
   for (let i = 0; i < 100 && !log.some(l => l.startsWith('submit')); i++) await new Promise(r => (globalThis as any).setTimeout(r, 10))
   expect(await ui.findAll({ type: 'Button', text: T.busy })).toHaveLength(1)
   await ui.press({ key: 'launch' })
-  expect(await buttons(ui)).toEqual(['launch', 'stay']) // the picker did not open
+  expect(await buttons(ui)).toEqual(['launch', 'details']) // the picker did not open
 
   release()
   await Promise.all([pressed, again])
@@ -246,6 +316,7 @@ test('new worker: a failed handoff leaves the chat alone, tells why and is kept 
   const log: string[] = []
   const store = new Map<string, unknown>()
   on('ui.toast', (_: unknown, e: { text: string }) => (toasts.push(e.text), { value: undefined }))
+  on('session.root', () => ({ value: 'C:/w' }))
   wire(on, [], () => ({ value: usage }), (_, e) => (e.argv.includes('handoff') ? { value: { exitCode: 1, stdout: '{"error":"no transcript"}', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } : noTurn()), store)
   box(on, 'x', log)
   const ui = await mountBand($)
@@ -256,7 +327,7 @@ test('new worker: a failed handoff leaves the chat alone, tells why and is kept 
   expect(log).toEqual([])
   expect(toasts).toEqual([T.toast(T.handoffFailed('no transcript'))])
   expect(store.get('lastError')).toMatchObject({ where: 'launch', msg: T.handoffFailed('no transcript') })
-  expect(await buttons(ui)).toEqual(['launch', 'stay'])
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
   expect(await ui.findAll({ type: 'Button', text: T.newWorker })).toHaveLength(1) // busy ended
 })
 
@@ -271,7 +342,7 @@ test('new worker, pick the model myself: the box refuses the text: readable reas
   await ui.press({ key: 'pick' })
 
   expect(toasts).toEqual([T.toast(T.fillFailed(T.notSent, T.fillRefused.other, 'C:/h/id.md'))])
-  expect(await buttons(ui)).toEqual(['launch', 'stay'])
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
 })
 
 // ---- long memory ----
@@ -282,9 +353,9 @@ const found = (extra: object = {}) => ran(JSON.stringify({ hits: [hit], errors: 
 const failed = (error: string) => ({ value: { exitCode: 1, stdout: JSON.stringify({ error }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
 // A session that has started: cg.py answers `answer(argv)` and every run is recorded in `runs`; the tools and the index timer exist.
-const started = async ($: any, on: any, answer: (a: string[]) => unknown, statuses: (string | undefined)[] = [], answerUsage: () => unknown = () => ({ value: usage }), env: Record<string, string> = {}, lastTurn: () => unknown = noTurn) => {
+const started = async ($: any, on: any, answer: (a: string[]) => unknown, statuses: (string | undefined)[] = [], answerUsage: () => unknown = () => ({ value: usage }), env: Record<string, string> = {}, lastTurn: () => unknown = noTurn, store = new Map<string, unknown>()) => {
   mock.env(on, env) // no USERPROFILE: no settings file
-  const m = { runs: [] as { argv: string[]; timeoutMs?: number }[], langs: [] as string[][], toasts: [] as string[], specs: [] as any[], store: new Map<string, unknown>(), clock: undefined as any }
+  const m = { runs: [] as { argv: string[]; timeoutMs?: number }[], langs: [] as string[][], toasts: [] as string[], specs: [] as any[], store, clock: undefined as any }
   on('ui.toast', (_: unknown, e: { text: string }) => (m.toasts.push(e.text), { value: undefined }))
   on('tool.register', (_: unknown, e: unknown) => (m.specs.push(e), { value: { tool: 'x' } }))
   on('command.register', () => ({ value: { command: 'x' } }))
@@ -983,7 +1054,7 @@ test('background: the sync follows the index and the vectors, 60 s in cg.py, 120
   await m.clock.advance(3_000)
   const steps = m.runs.filter(r => r.argv[0] !== 'last-turn').map(r => [verb(r.argv)[0], r.timeoutMs])
   // the lessons are read at the start and again after the sync, which may have brought the other computer's (stage 4)
-  expect(steps).toEqual([['lessons', 120_000], ['index', 600_000], ['embed', 180_000], ['sync', 120_000], ['lessons', 120_000]])
+  expect(steps).toEqual([['lessons', 120_000], ['index', 600_000], ['embed', 180_000], ['sync', 120_000], ['lessons', 120_000], ['status', 120_000], ['savings', 120_000]])
   expect(ofCg(m, 'sync')[0]!.argv).toContain('--max-seconds')
   expect(m.toasts).toEqual([])
 })
@@ -1389,7 +1460,8 @@ test('/al-index-dir: a run the host stopped at its time limit says so and what t
 
 test('index notice: any answer of cg.py that carries one gives a toast when it differs from the last one shown, and an answer with none forgets it', async ($, on) => {
   let notice: string | undefined = 'the index of the test is not in D:/one'
-  const m = await started($, on, a => (a[0] === 'index' ? ran(JSON.stringify({ files: 0, rows: 0, convs: 0, seconds: 0, errors: [], index_notice: notice })) : ran('{}')))
+  // every answer carries the notice, status and savings too: the band's background calls (refreshInfo, after /al-index) raise index-notice toasts like any other call
+  const m = await started($, on, a => (ran(JSON.stringify({ ...(a[0] === 'index' && { files: 0, rows: 0, convs: 0, seconds: 0, errors: [] }), index_notice: notice }))))
   const index = () => ($ as any).command.run({ command: 'al-index', args: '' })
   await index()
   await index()
@@ -1495,4 +1567,377 @@ test('home_notes: a note beside an error answer is told as well', async ($, on) 
   const m = await started($, on, a => (a[0] === 'index' ? refused : ran('{}')))
   await ($ as any).command.run({ command: 'al-index', args: '' })
   expect(m.toasts).toEqual([T.toast('a note beside an error'), T.toast(T.failed('al-index', 'boom'))])
+})
+
+const savingsJson = ran(JSON.stringify({ last: null, worker: { usd: 0, links: 0, calls: 0 }, project: null }))
+
+test('band data: status and savings are asked at the start and after /al-sync', { options: { syncDir: SHARE } }, async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'savings' ? savingsJson : a[0] === 'sync' ? synced() : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')))
+  await m.clock.advance(3_000)
+  const asked = () => [ofCg(m, 'status').length, ofCg(m, 'savings').length]
+  expect(ofCg(m, 'savings')[0]!.argv).toEqual(['savings', '--session', 'id', '--cwd', 'C:/w'])
+  expect(ofCg(m, 'status')[0]!.argv).toEqual(['status', '--cwd=C:/w'])
+  const [s0, v0] = asked()
+  await ($ as any).command.run({ command: 'al-sync', args: '' })
+  await m.clock.advance(0) // the refresh is not awaited by the reply
+  expect(asked()).toEqual([s0 + 1, v0 + 1])
+})
+
+test('band data: a failed savings is noted once, status still arrives', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'savings' ? failed('boom') : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')))
+  await m.clock.advance(3_000)
+  expect(m.store.get('lastError')).toMatchObject({ where: 'band', msg: 'boom' })
+  m.store.delete('lastError')
+  await m.clock.advance(600_000)
+  expect(ofCg(m, 'savings').length).toBeGreaterThanOrEqual(2)
+  expect(ofCg(m, 'status').length).toBeGreaterThanOrEqual(2)
+  expect(m.store.get('lastError')).toBeUndefined() // noted once per load
+  expect(m.toasts).toEqual([])
+})
+
+test("band data: an older lastError in the store does not hide this load's band failure", async ($, on) => {
+  const store = new Map<string, unknown>([['lastError', { at: 5, where: 'sync', msg: 'last week' }]])
+  const m = await started($, on, a => (a[0] === 'savings' ? failed('boom') : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')), [], undefined, {}, noTurn, store)
+  await m.clock.advance(3_000)
+  expect(store.get('lastError')).toMatchObject({ where: 'band', msg: 'boom' })
+})
+
+test('band data: both calls failing at once note only the first error', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'savings' ? failed('savings down') : a[0] === 'status' ? failed('status down') : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')))
+  await m.clock.advance(3_000)
+  expect(m.store.get('lastError')).toMatchObject({ where: 'band' })
+  const first = m.store.get('lastError')
+  await m.clock.advance(600_000)
+  expect(m.store.get('lastError')).toEqual(first)
+})
+
+const worker = { last: null, worker: { usd: 18.7, links: 7, calls: 400 }, project: null }
+const bandData = async ($: any, on: any, savings: unknown, status: object = { convs: 12, size_mb: 1.5 }, statusAnswer: unknown = ran(JSON.stringify(status))) => {
+  const m = await started($, on, a => (a[0] === 'savings' ? savings : a[0] === 'status' ? statusAnswer : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')))
+  await m.clock.advance(3_000)
+  return m
+}
+
+// cells the collapsed row takes in the terminal: every Text, every Button as `[ label ]`, one gap between neighbours and one for the spacer
+const rowWidth = async (ui: any) => {
+  const t: string[] = (await texts(ui)).filter((x: string) => x !== 'no band')
+  const b: { text: string }[] = await ui.findAll({ type: 'Button' })
+  return t.reduce((n, x) => n + x.length + (x.includes('⏰') ? 1 : 0), 0) + b.reduce((n, x) => n + x.text.length + 4, 0) + t.length + b.length
+}
+const atColumns = ($: any, bodyColumns: number) => $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns } } as never)
+
+test('narrow terminal keeps one row: the savings drop out first, the row fits', async ($, on) => {
+  await bandData($, on, ran(JSON.stringify(worker)))
+  const wide = await texts(await atColumns($, 120))
+  expect(wide.some((t: string) => t.includes(T.saved('$18.70')))).toBe(true)
+  for (const cols of [120, 80, 60]) expect(await rowWidth(await atColumns($, cols))).toBeLessThanOrEqual(cols)
+  const narrow = await texts(await atColumns($, 60))
+  expect(narrow.some((t: string) => t.includes(T.saved('')))).toBe(false)
+  expect(narrow[0]).toBe(T.bandTitle)
+})
+
+const STALE = new Date(10_000_000_000 - 2 * 3_600_000).toISOString()
+test('a stale row with Stay here fits 60 columns', async ($, on) => {
+  wire(on, [], () => ({ value: usage }), () => ran(JSON.stringify({ tokens: 300_000, at: STALE, model: 'm' })))
+  await $.command.run({ command: 'al-band', args: '' })
+  const ui = await atColumns($, 60)
+  expect(await buttons(ui)).toEqual(['launch', 'stay', 'details'])
+  expect(await rowWidth(ui)).toBeLessThanOrEqual(60)
+})
+
+test('the same in Russian: the name shortens to the shield when the buttons leave no room', { options: { language: 'ru' } }, async ($, on) => {
+  wire(on, [], () => ({ value: usage }), () => ran(JSON.stringify({ tokens: 300_000, at: STALE, model: 'm' })))
+  await $.command.run({ command: 'al-band', args: '' })
+  const ui = await atColumns($, 60)
+  expect(await buttons(ui)).toEqual(['launch', 'stay', 'details'])
+  expect(await rowWidth(ui)).toBeLessThanOrEqual(60)
+  expect((await texts(ui))[0]).toBe('🛡')
+})
+
+// cg.py exits 1 with {error, index_problem} for an index it cannot use: status then never answers ok
+const refusedStatus = ran('{}')
+refusedStatus.value.exitCode = 1
+refusedStatus.value.stdout = JSON.stringify({ error: 'ValueError: broken', index_problem: 'broken' })
+
+test('a base alarm stays on the row however narrow; the price goes before it', async ($, on) => {
+  await bandData($, on, ran(JSON.stringify(worker)), undefined, refusedStatus)
+  const row = async (bodyColumns: number) => (await texts(await atColumns($, bodyColumns))).join(' ')
+  expect(await row(120)).toContain(T.baseTrouble)
+  expect(await row(60)).toContain(T.baseTrouble)
+  expect(await row(60)).not.toContain(T.saved(''))
+  const tight = await row(45)
+  expect(tight).toContain(T.baseTrouble)
+  expect(tight).not.toContain(T.sendHere(''))
+  expect(await rowWidth(await atColumns($, 45))).toBeLessThanOrEqual(45)
+})
+
+test('an index that cannot be used: the Base column says ? and the alarm is on', async ($, on) => {
+  await bandData($, on, ran(JSON.stringify(worker)), undefined, refusedStatus)
+  const ui = await $.ui.mount(UI)
+  await ui.press({ key: 'details' })
+  const all = await texts(ui)
+  expect(all).toContain('?')
+  expect(all).not.toContain(T.baseConvs(12))
+})
+
+test('savings that cost more are drawn as an error', async ($, on) => {
+  await bandData($, on, ran(JSON.stringify({ ...worker, worker: { usd: -2, links: 3, calls: 9 } })))
+  const dear = (await (await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 140 } } as never)).findAll({ type: 'Text' })).filter((t: { props: { color?: string } }) => t.props.color === 'error')
+  expect(dear.map((t: { text: string }) => t.text).join()).toContain(T.dearer('$2.00'))
+})
+
+test('Details shows what the chat has spent when the engine says', async ($, on) => {
+  wire(on, [], () => ({ value: { ...usage, cost: { usd: 3.2 } } }))
+  const ui = await mountBand($)
+  await ui.press({ key: 'details' })
+  expect(await texts(ui)).toContain(T.spent('$3.20'))
+})
+
+test('the Base column is filled while savings failed', async ($, on) => {
+  await bandData($, on, failed('boom'))
+  const ui = await $.ui.mount(UI)
+  await ui.press({ key: 'details' })
+  const all = await texts(ui)
+  expect(all).toContain(T.baseConvs(12))
+  expect(all).toContain('?') // the handoff columns say they do not know
+})
+
+// the delayed New worker: a limit at 92% that resets in an hour, so the wait ends 5 minutes after the reset
+const NOW = 10_000_000_000
+const AT = NOW + 3_600_000 + 300_000
+const nearLimit = (resetsAt: string | undefined = new Date(NOW + 3_600_000).toISOString(), percentUsed = 92) => () => ({ value: { ...usage, rateLimits: [{ kind: 'five_hour', percentUsed, resetsAt }] } })
+const waitLabel = T.waitingAt(when(new Date(AT).toISOString(), NOW))
+
+// a chat that started, with a draft in the box; its handoff notes whether the wait was already gone
+const delayed = async ($: any, on: any, draft = 'продолжаем', store = new Map<string, unknown>(), limit = nearLimit()) => {
+  const log: string[] = []
+  const gone: boolean[] = []
+  const state = box(on, draft, log)
+  const m = await started($, on, a => (a[0] === 'handoff' ? (gone.push(!store.has('delayed:id')), ran(JSON.stringify({ text: 'h', path: 'C:/h/id.md' }))) : ran('{}')), [], limit, {}, noTurn, store)
+  return { m, log, gone, state, ui: await $.ui.mount(UI) }
+}
+
+test('after-reset is offered only near a limit', async ($, on) => {
+  wire(on, [], nearLimit())
+  const ui = await mountBand($)
+  await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
+  expect(await ui.findAll({ type: 'Button', text: T.afterReset(when(new Date(AT).toISOString(), NOW)) })).toHaveLength(1)
+})
+
+for (const [name, limit] of [
+  ['under 90%', nearLimit(undefined, 50)],
+  ['without a reset time', () => ({ value: { ...usage, rateLimits: [{ kind: 'five_hour', percentUsed: 92 }] } })],
+] as const)
+  test(`after-reset is not offered ${name}`, async ($, on) => {
+    wire(on, [], limit)
+    const ui = await mountBand($)
+    await ui.press({ key: 'launch' })
+    expect(await buttons(ui)).toEqual(['send', 'pick', 'cancel'])
+  })
+
+test('after-reset needs a draft and waits', async ($, on) => {
+  const { m, state, ui } = await delayed($, on, '')
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after' })
+  expect(m.toasts).toEqual([T.toast(T.draftEmpty)])
+  expect(m.store.has('delayed:id')).toBe(false)
+
+  state.text = 'продолжаем'
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after' })
+  expect(m.store.get('delayed:id')).toEqual({ at: AT })
+  expect(await texts(ui)).toContain(waitLabel)
+  expect(await buttons(ui)).toEqual(['cancel-delay', 'details'])
+})
+
+// a wait that comes due within a minute: the same paths as the hour-long one in 2-3 ticks of 30 s
+const SOON = NOW + 60_000
+const soonLabel = T.waitingAt(when(new Date(SOON).toISOString(), NOW))
+const dueSoon = () => new Map<string, unknown>([['delayed:id', { at: SOON }]])
+
+test('a wait fires once when due: the key goes before the launch', async ($, on) => {
+  const { m, log, gone } = await delayed($, on, 'продолжаем', dueSoon())
+  await m.clock.advance(SOON - NOW - 30_000)
+  expect(log).toEqual([])
+  await m.clock.advance(30_000)
+  expect(log).toEqual(['/clear', 'submit h' + String.fromCharCode(10, 10) + 'продолжаем'])
+  expect(gone).toEqual([true])
+  await m.clock.advance(120_000)
+  expect(log).toHaveLength(2)
+})
+
+test('cancel-delay removes the wait', async ($, on) => {
+  const { m, log, ui } = await delayed($, on, 'продолжаем', dueSoon())
+  await ui.press({ key: 'cancel-delay' })
+  expect(m.store.has('delayed:id')).toBe(false)
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
+  await m.clock.advance(120_000)
+  expect(log).toEqual([])
+})
+
+test("another chat's wait is left alone", async ($, on) => {
+  const { m, log } = await delayed($, on, 'x', new Map([['delayed:other', { at: 1 }]]))
+  await m.clock.advance(60_000)
+  expect(log).toEqual([])
+  expect(m.store.get('delayed:other')).toEqual({ at: 1 })
+})
+
+test('a wait survives a restart', async ($, on) => {
+  const { m, log, ui } = await delayed($, on, 'продолжаем', dueSoon())
+  expect(await texts(ui)).toContain(soonLabel)
+  expect(await buttons(ui)).toEqual(['cancel-delay', 'details'])
+  await m.clock.advance(SOON - NOW)
+  expect(log[0]).toBe('/clear')
+})
+
+test('an emptied box at fire time cancels with a toast', async ($, on) => {
+  const { m, log } = await delayed($, on, '', dueSoon())
+  await m.clock.advance(SOON - NOW)
+  expect(log).toEqual([])
+  expect(m.toasts.filter(t => t === T.toast(T.draftEmpty))).toHaveLength(1)
+  expect(m.store.has('delayed:id')).toBe(false)
+  await m.clock.advance(120_000)
+  expect(m.toasts.filter(t => t === T.toast(T.draftEmpty))).toHaveLength(1) // the tick does not say it again
+})
+
+test('a wait that falls due during a launch stays and fires after it', async ($, on) => {
+  const log: string[] = []
+  let release!: () => void
+  const state = box(on, 'продолжаем', log, new Promise<void>(r => (release = r)))
+  const m = await started($, on, a => (a[0] === 'handoff' ? ran(JSON.stringify({ text: 'h', path: 'C:/h/id.md' })) : ran('{}')), [], nearLimit(), {}, noTurn)
+  const ui = await $.ui.mount(UI)
+  await ui.press({ key: 'launch' })
+  void ui.press({ key: 'send' }) // held at the submit
+  await m.clock.advance(1)
+  m.store.set('delayed:id', { at: SOON })
+  await m.clock.advance(60_000)
+  expect(log.filter(l => l === '/clear')).toHaveLength(1)
+  expect(m.store.get('delayed:id')).toEqual({ at: SOON }) // not dropped
+  release()
+  state.text = 'ещё' // the first launch emptied the box; the owner typed again
+  await m.clock.advance(60_000)
+  expect(log.filter(l => l === '/clear')).toHaveLength(2)
+  expect(m.store.has('delayed:id')).toBe(false)
+})
+
+test('a wait that falls due mid-turn waits for the turn to end', async ($, on) => {
+  const { m, log } = await delayed($, on, 'продолжаем', dueSoon())
+  await $.ui.mount({ ...(UI as object), props: { ...props, isWorking: true } } as never)
+  await m.clock.advance(120_000)
+  expect(log).toEqual([])
+  expect(m.store.get('delayed:id')).toEqual({ at: SOON })
+  await $.ui.mount(UI)
+  await m.clock.advance(30_000)
+  expect(log[0]).toBe('/clear')
+  expect(m.store.has('delayed:id')).toBe(false)
+})
+
+for (const bad of [{}, { at: 'x' }, { at: 1e16 }, 'x'])
+  test(`a malformed wait (${JSON.stringify(bad)}) is no wait`, async ($, on) => {
+    const { m, log, ui } = await delayed($, on, 'продолжаем', new Map([['delayed:id', bad]]))
+    expect(await buttons(ui)).toEqual(['launch', 'details'])
+    await m.clock.advance(120_000)
+    expect(log).toEqual([])
+  })
+
+test('a throw before anything is launched puts the wait back', async ($, on) => {
+  const { m, log, state } = await delayed($, on, 'продолжаем', dueSoon())
+  state.broken = true // the draft cannot be read: startWorker throws before /clear
+  await m.clock.advance(SOON - NOW)
+  expect(log).toEqual([])
+  expect(m.store.get('delayed:id')).toEqual({ at: SOON })
+  state.broken = false
+  await m.clock.advance(30_000)
+  expect(log[0]).toBe('/clear')
+  expect(m.store.has('delayed:id')).toBe(false)
+})
+
+test('a launch that keeps throwing before /clear is retried once, then the wait is dropped', async ($, on) => {
+  const { m, log, state } = await delayed($, on, 'продолжаем', dueSoon())
+  state.broken = true
+  await m.clock.advance(SOON - NOW + 3 * 30_000)
+  expect(log).toEqual([])
+  expect(m.toasts.filter(t => t.includes('launch'))).toHaveLength(2)
+  expect(m.store.has('delayed:id')).toBe(false)
+})
+
+test('Cancel in the gap after /clear also removes the wait of the chat the row was drawn for', async ($, on) => {
+  const { m, ui } = await delayed($, on, 'продолжаем', dueSoon())
+  ids.now = 'other' // /clear has run no hook: the row still shows the old wait
+  await ui.press({ key: 'cancel-delay' })
+  expect(m.store.has('delayed:id')).toBe(false)
+})
+
+test('a /clear while a wait is pending: the new chat shows no wait, and the old chat keeps it', async ($, on) => {
+  const { m, log, ui } = await delayed($, on, 'продолжаем', dueSoon())
+  expect(await buttons(ui)).toEqual(['cancel-delay', 'details'])
+  ids.now = 'other'
+  await m.clock.advance(30_000)
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
+  await m.clock.advance(120_000)
+  expect(log).toEqual([])
+  expect(m.store.get('delayed:id')).toEqual({ at: SOON })
+})
+
+test('a /resume into a chat with a due wait shows it for a tick before it goes', async ($, on) => {
+  const { m, log, ui } = await delayed($, on, 'продолжаем', new Map([['delayed:other', { at: NOW }]]))
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
+  ids.now = 'other'
+  await m.clock.advance(30_000)
+  expect(log).toEqual([])
+  expect(await buttons(ui)).toEqual(['cancel-delay', 'details'])
+  await m.clock.advance(30_000)
+  expect(log[0]).toBe('/clear')
+})
+
+test('After reset and its Cancel act on the chat that is open now, with the time on the button', async ($, on) => {
+  const { m, ui } = await delayed($, on)
+  await ui.press({ key: 'launch' })
+  ids.now = 'other'
+  await ui.press({ key: 'after' })
+  expect(m.store.get('delayed:other')).toEqual({ at: AT })
+  expect(m.store.has('delayed:id')).toBe(false)
+  await ui.press({ key: 'cancel-delay' })
+  expect(m.store.has('delayed:other')).toBe(false)
+})
+
+test('the first reply of a new chat refreshes the savings, not the launch before it', async ($, on) => {
+  const log: string[] = []
+  let release!: () => void
+  box(on, 'продолжаем', log, new Promise<void>(r => (release = r)))
+  const answer = (a: string[]) =>
+    a[0] === 'handoff' ? ran(JSON.stringify({ text: 'h', path: 'C:/h/id.md' }))
+    : a[0] === 'savings' ? ran(JSON.stringify(a[2] === 'new' ? worker : { last: null, worker: { usd: 0, links: 0, calls: 0 }, project: null }))
+    : ran('{}')
+  const m = await started($, on, answer)
+  await m.clock.advance(3_000)
+  const ui = await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 140 } } as never)
+  await ui.press({ key: 'launch' })
+  const pressed = ui.press({ key: 'send' })
+  while (!log.some(l => l.startsWith('submit'))) await m.clock.advance(1)
+  ids.now = 'new' // /clear has changed the id
+  release()
+  await pressed
+  await m.clock.advance(0)
+  expect(ofCg(m, 'savings').filter(r => r.argv[2] === 'new')).toHaveLength(0)
+  expect((await texts(ui)).some((t: string) => t.includes(T.saved('$18.70')))).toBe(false)
+  await ($ as any).turn.complete(turn)
+  await m.clock.advance(0)
+  expect(ofCg(m, 'savings').filter(r => r.argv[2] === 'new')).toHaveLength(1)
+  expect((await texts(ui)).some((t: string) => t.includes(T.saved('$18.70')))).toBe(true)
+  await ($ as any).turn.complete(turn)
+  await m.clock.advance(0)
+  expect(ofCg(m, 'savings').filter(r => r.argv[2] === 'new')).toHaveLength(1) // only the first reply
+})
+
+test('the waiting row stays on one line at 60 columns and keeps its tokens', async ($, on) => {
+  await delayed($, on, 'продолжаем', dueSoon())
+  const ui = await atColumns($, 60)
+  expect(await texts(ui)).toContain(soonLabel)
+  expect(await buttons(ui)).toContain('cancel-delay')
+  expect(await rowWidth(ui)).toBeLessThanOrEqual(60)
+  const wide = await texts(await atColumns($, 140))
+  expect(wide).toContain(soonLabel)
+  expect(wide.some((t: string) => t.includes('512k'))).toBe(true) // the numbers stay while a worker waits
 })

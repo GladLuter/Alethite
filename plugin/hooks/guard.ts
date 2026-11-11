@@ -26,32 +26,15 @@ export const price = (model: string, tokens: number, isExpired: boolean) => {
 export const cacheState = (at: number | null, now: number) =>
   at === null ? 'unknown' : now - at >= CACHE_MS ? 'expired' : 'warm'
 
-const k = (tokens: number | null) => (tokens === null ? '?' : String(Math.round(tokens / 1000)))
+export const size = (tokens: number | null) => (tokens === null ? '?' : `${Math.round(tokens / 1000)}k`)
+// whole minutes the cache still lasts; the status line and the band both say it
+export const minutesLeft = (at: number | null, now: number) => Math.ceil((CACHE_MS - (now - (at ?? now))) / 60_000)
 
 export const statusText = (tokens: number | null, at: number | null, now: number) => {
   const state = cacheState(at, now)
-  const left = Math.ceil((CACHE_MS - (now - (at ?? now))) / 60_000)
-  const cache = state === 'warm' ? T.cacheLeft(left) : state === 'expired' ? T.cacheExpired : T.cacheUnknown
-  return T.ctx(`${k(tokens)}${tokens === null ? '' : 'k'}`, cache)
+  const cache = state === 'warm' ? T.cacheLeft(minutesLeft(at, now)) : state === 'expired' ? T.cacheExpired : T.cacheUnknown
+  return T.ctx(size(tokens), cache)
 }
 
 export const isStale = (s: Snap, minTokens: number, idleMinutes: number) =>
   s.at !== null && (s.tokens ?? 0) > minTokens && s.now - s.at > idleMinutes * 60_000
-
-const ago = (ms: number) => {
-  const min = Math.floor(ms / 60_000)
-  return min < 1 ? T.agoNow : min < 60 ? T.agoMin(min) : min < 2880 ? T.agoHours(Math.floor(min / 60)) : T.agoDays(Math.floor(min / 1440))
-}
-
-export const bandLines = (s: Snap, showLimits: boolean) => {
-  const state = cacheState(s.at, s.now)
-  const cost = (isExpired: boolean) => `$${price(s.model, s.tokens ?? 0, isExpired).toFixed(2)}`
-  const hot = T.sendHot(cost(false))
-  const cold = T.sendCold(cost(true))
-  const send = state === 'expired' ? cold : state === 'warm' ? hot : T.sendEither(hot, cold)
-  return [
-    T.head(k(s.tokens), s.at === null ? '?' : ago(s.now - s.at), T.bandCache[state]),
-    ...(s.tokens === null ? [] : [T.send(send)]),
-    ...(showLimits && s.limits.length ? [T.limits(s.limits.map(l => T.limit(T.limitNames[l.kind] ?? l.kind, l.percentUsed)).join(' · '))] : []),
-  ]
-}
