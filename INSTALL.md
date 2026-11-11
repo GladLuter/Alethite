@@ -305,7 +305,7 @@ What else to know:
 Off by default. `/al-cleanup on` turns it on, `/al-cleanup off` turns it off, `/al-cleanup` shows the state and how many chats (and MB) are waiting.
 
 - When on, the background job deletes from disk the transcript of an old chat after a New worker handoff, once everything from it is in the index (and synced, if sync is set) and the chat has not been touched for 60 minutes. Its statistics stay in the index. The current chat is never deleted.
-- Deletion is permanent. An old chat reopened with `claude --resume` and left idle for an hour is deleted too; its text stays in the long memory.
+- Deletion is permanent. An old chat reopened with `claude --resume` and left idle for an hour is deleted too. Its text stays in the long memory.
 - `/al-health` shows the state and how many chats were deleted.
 
 ## Only if you used an older build

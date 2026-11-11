@@ -20,11 +20,17 @@ test('cleanup reply: the state with the number of chats and megabytes rounded to
   expect(cleanupReply({ on: false, preview: { chats: 0, mb: 0 } })).toBe(T.cleanupState(false, 0, 0))
 })
 
+test('cleanup reply: an answer without a preview gets a plain text, not a TypeError', () => {
+  expect(cleanupReply({ on: true })).toBe(T.cleanupNoPreview(true))
+  expect(cleanupReply({ on: false })).toBe(T.cleanupNoPreview(false))
+})
+
 test('cleanup health: on says how many were deleted, off says off', () => {
   expect(cleanupHealth({ on: true, removed_total: 5 })).toContain('5')
   expect(cleanupHealth({ on: true, removed_total: 5 })).not.toBe(cleanupHealth({ on: false, removed_total: 5 }))
   const h = (cleanup?: unknown) => healthLines({ version: '2.1.295', index: cleanup ? { cleanup } : {}, memory: null, root: 'C:/w', embedCmd: '' })
   expect(h({ on: true, removed_total: 5 })).toContain(T.healthCleanup(true, 5))
   expect(h({ on: false, removed_total: 0 })).toContain(T.healthCleanup(false, 0))
+  expect(h(null).join(' ')).not.toContain(T.healthCleanup(false, 0))
   expect(h().join(' ')).not.toContain(T.healthCleanup(false, 0))
 })

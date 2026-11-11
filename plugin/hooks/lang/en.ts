@@ -253,12 +253,13 @@ export const en = {
   indexDirTimeout: 'did not finish in 10 minutes and was stopped. /al-health shows where the index is now. If it is not where you want it, run /al-index-dir again.',
 
   // deleting the old chat after a New worker handoff (/al-cleanup)
-  cgCleanupDescription: 'Delete the old chat from disk after a New worker handoff, once all of it is in the index. Off by default; deletion is permanent',
+  cgCleanupDescription: 'Delete the old chat from disk after a New worker handoff, once all of it is in the index. Off by default. Deletion is permanent',
   cgCleanupHint: '[on | off]',
   cgCleanupUsage: 'Use: /al-cleanup, /al-cleanup on or /al-cleanup off.',
   cleanupState: (on: boolean, chats: number, mb: number) =>
-    `${on ? 'Deleting old chats: on' : 'Deleting old chats: off'}. Waiting to be deleted now: ${chats} (${mb} MB). A chat is deleted only after a New worker handoff, when all of it is in the index (and synced, if sync is set) and it has been untouched for 60 minutes. The current chat is never deleted. Deletion is permanent, its text stays in the long memory.`,
-  cgCleanupFailed: 'al-cleanup: did not work, the reason is in the toast.',
+    `${on ? 'Deleting old chats: on' : 'Deleting old chats: off'}. Waiting for deletion now: ${chats} (${mb} MB). A chat is deleted only after a New worker handoff. All of it must be in the index (and in the shared folder, if sync is set), and nobody must have touched it for 60 minutes. The current chat is never deleted. Deletion is permanent. The text stays in the long memory.`,
+  cleanupNoPreview: (on: boolean) => `${on ? 'Deleting old chats: on' : 'Deleting old chats: off'}. cg.py gave no count of the chats waiting for deletion.`,
+  cgCleanupFailed: 'al-cleanup: it did not work. The reason is in the toast.',
   healthCleanup: (on: boolean, removed: number) => (on ? `Deleting old chats: on, deleted ${removed}` : `Deleting old chats: off (deleted ${removed})`),
 }
 
