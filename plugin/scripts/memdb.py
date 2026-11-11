@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS peers(machine TEXT PRIMARY KEY, last_batch INTEGER NO
 -- memory facts copied in from another computer: under which name here, from whom, and the hash they had when copied
 CREATE TABLE IF NOT EXISTS mem_files(project TEXT, name TEXT, source TEXT NOT NULL, src_name TEXT NOT NULL, hash TEXT NOT NULL,
   PRIMARY KEY(project, name));
+-- a chat removed from the disk (cleanup.py): the numbers of it the stats and the handoff savings still need; path relative to projects, JSON in the text fields
+CREATE TABLE IF NOT EXISTS removed(conv TEXT PRIMARY KEY, path TEXT NOT NULL, at TEXT NOT NULL, last_usage TEXT, read_new TEXT, chains TEXT NOT NULL);
 """
 # a table with a `conv` column and the parameter :p, json.dumps of None (every project) or of a list of project keys (a project and its
 # aliases); a subagent belongs to its parent's project

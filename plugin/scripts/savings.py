@@ -73,12 +73,18 @@ def _cached(cache, path, fn):
     return e['value']
 
 
-def link(paths, new, cache):
-    """{new, usd, first, old_tokens, new_tokens, calls} for the chat `new` if it starts with a handoff whose old transcript is still here, else None."""
+def _read(paths, cache, gone, conv, fn):
+    """fn of the transcript of `conv`; of a removed one, what cleanup.snapshot kept (`gone`)."""
+    if conv in paths:
+        return _cached(cache, paths[conv], fn)
+    return (gone or {}).get(conv, {}).get(fn.__name__)
+
+
+def link(paths, new, cache, gone=None):
+    """{new, usd, first, old_tokens, new_tokens, calls} for the chat `new` if it starts with a handoff whose old transcript is here or kept in `gone`, else None."""
     try:
-        r = new in paths and _cached(cache, paths[new], read_new)
-        old = r and paths.get(r['old'])
-        o = old and _cached(cache, old, last_usage)
+        r = _read(paths, cache, gone, new, read_new)
+        o = r and _read(paths, cache, gone, r['old'], last_usage)
     except OSError:  # a transcript removed or locked meanwhile counts as missing
         return None
     if not o:
@@ -113,7 +119,7 @@ def _paths(projects):
     return out
 
 
-def savings(projects, session, convs, cache_path):
+def savings(projects, session, convs, cache_path, gone=None):
     """{last, worker, project}; `convs` are the project's conversations from the index, None if it could not be read."""
     try:
         with open(cache_path, encoding='utf-8') as f:
@@ -124,15 +130,15 @@ def savings(projects, session, convs, cache_path):
         cache = {}
     paths = _paths(projects)
     chain, seen, cur = [], set(), session
-    while cur not in seen and (ln := link(paths, cur, cache)):
+    while cur not in seen and (ln := link(paths, cur, cache, gone)):
         seen.add(cur)
         chain.append(ln)
-        cur = _cached(cache, paths[cur], read_new)['old']
+        cur = _read(paths, cache, gone, cur, read_new)['old']
     project = None
     if convs is not None:
         links = {ln['new']: ln for ln in chain}
         for c in convs:
-            if c not in links and (ln := link(paths, c, cache)):
+            if c not in links and (ln := link(paths, c, cache, gone)):
                 links[c] = ln
         project = {'usd': sum(ln['usd'] for ln in links.values()), 'links': len(links)}
     tmp = None

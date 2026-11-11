@@ -270,15 +270,17 @@ def _last_turn(a):
 
 
 def _savings(a):
-    import savings
+    import cleanup, savings
+    gone = None
     try:
         conn = memdb.connect(a.db) if os.path.isfile(a.db) else None  # no index to open (or its place unknown): the project's figure is left out
         convs = [r[0] for r in conn.execute(
             "SELECT DISTINCT p.conv FROM conv_projects p JOIN convs c ON c.conv = p.conv WHERE COALESCE(c.parent, '') = '' AND p.project IN (SELECT value FROM json_each(?))",
             (json.dumps(project_keys(a.cwd, _aliases(a))),))]
+        gone = cleanup.gone(conn)
     except Exception:
         convs = None
-    return savings.savings(a.projects, _session(a.session), convs, os.path.join(os.path.dirname(crypto.settings_path(a.db)), 'savings-cache.json'))
+    return savings.savings(a.projects, _session(a.session), convs, os.path.join(os.path.dirname(crypto.settings_path(a.db)), 'savings-cache.json'), gone)
 
 
 def _handoff(a):
@@ -396,9 +398,10 @@ def _day(s):  # argparse reports a ValueError from a type function as a bad argu
 
 
 def _stats(a):
-    import stats, sync
+    import cleanup, stats, sync
     errors = []
-    m = stats.metrics(a.projects, memdb.connect(a.db), a.since, a.until, errors, a.machine or sync.machine_name())
+    conn = memdb.connect(a.db)
+    m = stats.metrics(a.projects, conn, a.since, a.until, errors, a.machine or sync.machine_name(), cleanup.saved_chains(conn))
     return {'metrics': m, 'note': stats.note_markdown(m, a.host, a.today, json.loads(a.limits), a.rule_chars, a.memory_tokens, a.compression),
             'errors': errors}
 

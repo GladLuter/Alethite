@@ -339,13 +339,25 @@ def grp_out(gd, total):
     return out
 
 
-def analyze(projects, since=None, until=None, visit=None):
-    """visit(path, obj) is called for every parsed line of every transcript read (not for files older than `since`)."""
+def _rel_path(root, s):
+    return os.path.join(root, *s['rel'].split('/'))
+
+
+def missing(projects, saved):
+    """The saved chains (cleanup.saved_chains) whose transcript is gone from the disk: a file that is still there wins over its snapshot."""
+    root = lp(projects)
+    return [s for s in saved or () if not os.path.exists(_rel_path(root, s))]
+
+
+def analyze(projects, since=None, until=None, visit=None, saved=None):
+    """visit(path, obj) is called for every parsed line of every transcript read (not for files older than `since`).
+    `saved` are the chains of removed chats: they go through the same loop, in order of path among the files, without reading."""
     t0 = time.time()
     root = lp(projects)
     if not os.path.isdir(root):
         raise SystemExit('projects dir not found: ' + str(projects))
-    files = sorted(os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs if f.endswith('.jsonl'))
+    kept = {_rel_path(root, s): s for s in missing(projects, saved)}
+    files = sorted([os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs if f.endswith('.jsonl')] + list(kept))
     A = {'calls': 0, 'cost': 0.0, 'dup_cost': 0.0, 'first': '', 'last': '', 'rows': [], 'cat': defaultdict(lambda: [0.0, 0.0]),
          'ttype': Counter(), 'odd': Counter(), 'unpriced': Counter(),
          'rw': {c: {'main': [0, 0.0], 'subagent': [0, 0.0], 'gaps': []} for c in REWRITE_CAUSES},
@@ -355,13 +367,13 @@ def analyze(projects, since=None, until=None, visit=None):
     ctx, seen_ids = Counter(), set()
     for p in files:
         # entries are never newer than the file mtime, so an older file cannot hold calls on/after --since
-        if since and time.strftime('%Y-%m-%d', time.gmtime(os.path.getmtime(p))) < since:
+        if since and time.strftime('%Y-%m-%d', time.gmtime(kept[p]['mtime'] if p in kept else os.path.getmtime(p))) < since:
             ctx['files_skipped_before_since'] += 1
             continue
         parts = re.split(r'[\\/]', p[len(root):].strip('\\/'))
         kind = 'subagent' if 'subagents' in parts[:-1] else 'main'
         try:
-            ev, ch = read_chain(p, ctx, visit)
+            ev, ch = (kept[p]['ev'], Counter(kept[p]['ch'])) if p in kept else read_chain(p, ctx, visit)
         except Exception as e:  # a line of an unexpected shape too: one file must not stop the whole measure
             ctx['files_unreadable'] += 1
             print('  unreadable file (%s)' % type(e).__name__, file=sys.stderr)
