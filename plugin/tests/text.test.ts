@@ -76,5 +76,5 @@ test('the memory rule: at most 80 words, and the CLAUDE.md sentence right after 
 })
 
 test('the band title is the same in every language', () => {
-  for (const texts of [en, ru, uk]) expect(texts.bandTitle).toBe('Alethite - 🛡 CacheGuard')
+  for (const texts of [en, ru, uk]) expect(texts.bandTitle).toBe('🛡 Alethite')
 })
