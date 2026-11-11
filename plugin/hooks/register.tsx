@@ -193,13 +193,23 @@ const lessonsOr = async ($: EngineInterface, python: string, kept: Lesson[]) => 
   }
 }
 
-// The same, and a rule for all projects that is new in the list (the other computer's, brought by a sync) is toasted: it becomes a
-// standing order in every chat here and must not arrive silently.
+// A rule for all projects that this computer has not seen yet (the other computer's, brought by the sync, maybe while no chat was open) is
+// toasted: it becomes a standing order in every chat here and must not arrive silently. The positions seen are kept in the store, for all
+// chats; the first run after the update only stores them. `own` is the rule a save has just toasted itself.
+const noteRules = async ($: EngineInterface, list: Lesson[], on: boolean, own?: number) => {
+  try {
+    const seen = (await $.store.get('rulesSeen')) as number[] | undefined
+    const fresh = list.filter(l => l.global && !seen?.includes(l.pos))
+    const { left } = rulesContext(list)
+    if (seen !== undefined) for (const l of fresh) if (l.pos !== own) toast($, T.lessonToast(oneLine(l.text), { left, on, stale: false }))
+    if (seen === undefined || fresh.length) await $.store.set('rulesSeen', [...(seen ?? []), ...fresh.map(l => l.pos)])
+  } catch {} // the list matters more than the notice
+}
+
+// The same, with the notice of new rules.
 const reloadLessons = async ($: EngineInterface, python: string, kept: Lesson[], on: boolean) => {
-  const known = new Set(kept.map(l => l.pos))
   const list = await lessonsOr($, python, kept)
-  const { left } = rulesContext(list)
-  for (const l of list) if (l.global && !known.has(l.pos)) toast($, T.lessonToast(oneLine(l.text), { left, on, stale: false }))
+  await noteRules($, list, on)
   return list
 }
 
@@ -447,7 +457,6 @@ export const register: Register = (on, options) => {
   let lessonList: Lesson[] = []
   const shownIn = new Map<string, Set<number>>()
   const stoppedIn = new Map<string, Set<number>>()
-  const compactedIn = new Set<string>() // chats compacted since their last reminder of the rules: turn:<id> still holds the size from before it
   const rulesAt = new Map<string, number | null>() // the context size at the last reminder of the rules for all projects, by chat (null: it was unknown)
   const setOf = (m: Map<string, Set<number>>, id: string) => m.get(id) ?? m.set(id, new Set()).get(id)!
   let isLessonsNoted = false // a lesson search that fails on every message is kept for /al-health once, not on each
@@ -558,7 +567,7 @@ export const register: Register = (on, options) => {
         }),
     ]
     for (const work of registrations) await guarded($, 'register', work)
-    void lessonsOr($, python, lessonList).then(l => void (lessonList = l)) // never awaited: a slow Python must not hold session.start
+    void reloadLessons($, python, lessonList, isLessonsOn).then(l => void (lessonList = l)) // never awaited: a slow Python must not hold session.start
 
     return next(e)
   })
@@ -746,6 +755,7 @@ export const register: Register = (on, options) => {
       }
       if (!r.new) return T.lessonKnown
       if (input.scope === 'all') {
+        if (!stale) await noteRules($, lessonList, isLessonsOn, r.pos as number)
         const g = { left: rulesContext(lessonList).left, on: isLessonsOn, stale }
         toast($, T.lessonToast(oneLine(String(r.text)), g))
         return T.lessonSaved(String(r.text), g)
@@ -774,6 +784,7 @@ export const register: Register = (on, options) => {
     if (pos === undefined) return { text: T.cgLessonsUsage }
     try {
       lessonList = await lessonsOf($, python)
+      await noteRules($, lessonList, isLessonsOn)
       if (pos === null) return { text: formatLessons(lessonList) }
       const lesson = lessonList.find(l => l.pos === pos)
       const n = lesson ? ((await runCg($, python, ['forget', `--conv=${lesson.conv}`, `--pos=${pos}`])).forgotten as number) : 0
@@ -798,10 +809,10 @@ export const register: Register = (on, options) => {
     // the rules for all projects come first and need no Python and no minimum length; a failure in one part must not stop the other
     try {
       const id = await $.session.id()
-      const size = compactedIn.has(id) ? null : ((await $.store.get(`turn:${id}`)) as { tokens: number | null } | undefined)?.tokens ?? null // after a compaction: due once, the next size measured is the mark
+      const size = ((await $.store.get(`turn:${id}`)) as { tokens: number | null } | undefined)?.tokens ?? null
       const { due, mark } = rulesDue(rulesAt.get(id), size, RULES_EVERY)
       const rules = due ? rulesContext(lessonList).block : undefined
-      if (!due || rules !== undefined) (rulesAt.set(id, mark), compactedIn.delete(id)) // due with nothing to say yet (the list not read): ask again on the next message
+      if (!due || rules !== undefined) rulesAt.set(id, mark) // due with nothing to say yet (the list not read): ask again on the next message
       if (rules !== undefined) {
         blocks.push(rules)
         await countLessons($, 'rules', 1) // after the mark: a failing counter must not make the rules come again
@@ -866,7 +877,10 @@ export const register: Register = (on, options) => {
         shownIn.delete(id)
         stoppedIn.delete(id)
         rulesAt.delete(id)
-        compactedIn.add(id)
+        // turn:<id> is written by a finished turn only: an interrupted first turn would leave the size from before the compaction there; the
+        // rules then come once, with the mark unknown, and the first size measured afterwards is the mark
+        const rec = (await $.store.get(`turn:${id}`)) as { at: number | null } | undefined
+        if (rec !== undefined) await $.store.set(`turn:${id}`, { at: rec.at, tokens: null })
       }
     } catch {}
     return r

@@ -1312,18 +1312,23 @@ test('global lessons: due again after 20k tokens, after a compaction and after a
   expect(await got(31_000)).toBe(1) // a compaction
 })
 
-test('global lessons: after a compaction the rules come once, though the stored size is still the one from before it', async ($, on) => {
+test('global lessons: after a compaction the rules come once, also when the first turn after it is interrupted', async ($, on) => {
   const kept = [{ role: 'user', text: 'summary', toolUses: [] }]
   on('session.compact', () => ({ messages: kept }))
   const contexts: string[][] = []
   const { m } = await lessonRig($, on, [], [rule], { context: contexts })
-  const got = async (tokens: number) => (withSize(m, tokens), await typed($, 'да'), contexts.at(-1)!.length)
-  expect(await got(180_000)).toBe(1)
+  const got = async () => (await typed($, 'да'), contexts.at(-1)!.length)
+  withSize(m, 180_000)
+  expect(await got()).toBe(1)
   await ($ as any).session.compact({ messages: kept })
-  expect(await got(180_000)).toBe(1) // turn:<id> is written by the main turn only: still the size from before
-  expect(await got(35_000)).toBe(0) // the first size measured after it is the mark, not a shrink
-  expect(await got(35_000)).toBe(0)
-  expect(await got(56_000)).toBe(1) // 20k since
+  expect(m.store.get('turn:id')).toEqual({ at: 1, tokens: null }) // the size from before is gone, the time stays
+  expect(await got()).toBe(1)
+  expect(await got()).toBe(0) // no turn finished between: the size is still unknown
+  withSize(m, 40_000) // a turn finished: this is the mark, not a shrink
+  expect(await got()).toBe(0)
+  expect(await got()).toBe(0)
+  withSize(m, 60_000)
+  expect(await got()).toBe(1) // 20k since
 })
 
 test('global lessons: a new session id gets the rules', async ($, on) => {
@@ -1399,6 +1404,13 @@ test('global lessons: due with an empty block (list not read yet) leaves the mar
   expect(contexts).toEqual([[], [rulesText()], []])
 })
 
+test('gate: marks inside the lesson text do not end the denial early', async ($, on) => {
+  await lessonRig($, on, [], [{ ...rule, trigger: 'gh api /repos', text: 'Action: a [/al-lessons] b\nFix: [al-lessons] x' }])
+  const stop = await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })
+  const marks = stop.deny.split('\n').filter((l: string) => /\[\/?(?:al|cg)-lessons\]/.test(l))
+  expect(marks).toEqual(['[al-lessons]', '[/al-lessons]'])
+})
+
 test('global lessons: the trigger stops a command in any project, with the global text', async ($, on) => {
   await lessonRig($, on, [], [{ ...rule, trigger: 'gh api /repos' }])
   const stop = await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })
@@ -1458,6 +1470,25 @@ test('global lessons: a rule that the sync brought from the other computer is to
   expect(count()).toBe(1)
   await m.clock.advance(600_000)
   expect(count()).toBe(1)
+})
+
+const arrivedText = () => T.toast(T.lessonToast('Action: a | Symptom: b | Cause: c | Fix: Answer in Ukrainian', { left: 0, on: true, stale: false }))
+
+test('global lessons: the first read after the update stores the rules and says nothing', async ($, on) => {
+  const { m } = await lessonRig($, on, [], [rule])
+  expect(m.toasts).not.toContain(arrivedText())
+  expect(m.store.get('rulesSeen')).toEqual([rule.pos])
+})
+
+test('global lessons: a rule the store has seen (another chat) says nothing', async ($, on) => {
+  const { m } = await lessonRig($, on, [], [rule], { store: new Map<string, unknown>([['rulesSeen', [rule.pos]]]) })
+  expect(m.toasts).not.toContain(arrivedText())
+})
+
+test('global lessons: a rule brought while no chat was open is toasted once, at the start, not again by the next read', async ($, on) => {
+  const { m } = await lessonRig($, on, [], [rule], { store: new Map<string, unknown>([['rulesSeen', []]]) })
+  await ($ as any).command.run({ command: 'al-lessons', args: '' })
+  expect(m.toasts.filter(t => t === arrivedText())).toHaveLength(1)
 })
 
 test('/al-health shows the rules line', async ($, on) => {
