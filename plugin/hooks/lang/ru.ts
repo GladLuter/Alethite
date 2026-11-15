@@ -221,6 +221,7 @@ export const ru: Partial<Texts> = {
   jobOnBattery: 'векторы ждут сети',
   jobEmbedBusy: 'векторы считал чат',
   jobSync: (up: number, down: number) => `синхронизация ↑${up} ↓${down}`,
+  jobCleanup: (removed: number, waiting: number, failed: number) => `удалено чатов ${removed} (ждут ${waiting}, не вышло ${failed})`,
   jobLast: (at: string, did: string, errors: number) => `Фоновая задача, последний запуск ${at}: ${did}${errors ? `; ошибок: ${errors}` : ''}`,
   jobError: (where: string, error: string) => `Ошибка фоновой задачи (${where}): ${error}`,
   jobNever: 'Фоновая задача: запусков ещё не было (/al-job on).',
@@ -249,4 +250,14 @@ export const ru: Partial<Texts> = {
   indexDirDone: (dir: string) => `Индекс теперь в ${dir}.`,
   indexDirUnfinished: 'al-index-dir: не закончено.',
   indexDirTimeout: 'не закончилось за 10 минут и было остановлено. /al-health покажет, где индекс сейчас. Если он не там, где нужно, запустите /al-index-dir ещё раз.',
+
+  // удаление старого чата после передачи в «Новый работник» (/al-cleanup)
+  cgCleanupDescription: 'Удалять старый чат с диска после передачи дел кнопкой «Новый работник», когда всё из него уже в индексе. По умолчанию выключено. Удаление необратимо',
+  cgCleanupHint: '[on | off]',
+  cgCleanupUsage: 'Используйте: /al-cleanup, /al-cleanup on или /al-cleanup off.',
+  cleanupState: (on: boolean, chats: number, mb: number) =>
+    `${on ? 'Удаление старых чатов: включено' : 'Удаление старых чатов: выключено'}. Сейчас ждут удаления: ${chats} (${mb} МБ). Удаляет фоновая задача (/al-job). Чат удаляется только после передачи дел кнопкой «Новый работник». Всё из него должно быть в индексе (и в общей папке, если включена синхронизация), и его не должны трогать 60 минут. Текущий чат не удаляется никогда. Удаление необратимо. Текст останется в долгой памяти.`,
+  cleanupNoPreview: (on: boolean) => `${on ? 'Удаление старых чатов: включено' : 'Удаление старых чатов: выключено'}. cg.py не дал числа чатов, ждущих удаления.`,
+  cgCleanupFailed: 'al-cleanup: не получилось. Причина в уведомлении.',
+  healthCleanup: (on: boolean, removed: number) => (on ? `Удаление старых чатов: включено, удалено ${removed}` : `Удаление старых чатов: выключено (удалено ${removed})`),
 }

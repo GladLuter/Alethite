@@ -24,6 +24,31 @@ def _num(u, k):
     return u.get(k) if isinstance(u.get(k), int) else 0
 
 
+def _start(o):
+    """What a parsed line says of the chat's start: None while it is not the owner's first text, () when that text holds no handoff,
+    else (the old chat's id, the time)."""
+    if o.get('type') != 'user' or o.get('isMeta'):
+        return None
+    texts = [b['text'] for b in _blocks(o.get('message', {}).get('content') if isinstance(o.get('message'), dict) else None)
+             if b.get('type') == 'text' and isinstance(b.get('text'), str) and b['text'].strip() and not INJECTED.match(b['text'])]
+    if not texts:
+        return None
+    block = HANDOFF_BLOCK.match(texts[0].lstrip())
+    uid = block and _UUID.search(block.group())
+    return (uid.group(), o.get('timestamp') or '') if uid else ()
+
+
+def old_of(path):
+    """The id of the chat a transcript is the handoff of, else None; reads the head up to the owner's first text only."""
+    with open(lp(path), 'rb') as f:
+        for raw in f:
+            o = _load(raw)
+            s = _start(o) if o else None
+            if s is not None:
+                return s[0] if s else None
+    return None
+
+
 def read_new(path):
     """The handoff a transcript starts with: {old, ts, model, tokens, usage: [input, cw5m, cw1h, cache_read], tail: [[model, cold, n], ...]}, else None."""
     old = ts = first = None
@@ -36,17 +61,12 @@ def read_new(path):
             if not o:
                 continue
             if old is None:
-                if o.get('type') != 'user' or o.get('isMeta'):
+                s = _start(o)
+                if s is None:
                     continue
-                texts = [b['text'] for b in _blocks(o.get('message', {}).get('content') if isinstance(o.get('message'), dict) else None)
-                         if b.get('type') == 'text' and isinstance(b.get('text'), str) and b['text'].strip() and not INJECTED.match(b['text'])]
-                if not texts:
-                    continue
-                block = HANDOFF_BLOCK.match(texts[0].lstrip())
-                uid = block and _UUID.search(block.group())
-                if not uid:
+                if not s:
                     return None
-                old, ts = uid.group(), o.get('timestamp') or ''
+                old, ts = s
                 continue
             c = _call(o)
             if not c or c[0] in seen:
@@ -73,12 +93,18 @@ def _cached(cache, path, fn):
     return e['value']
 
 
-def link(paths, new, cache):
-    """{new, usd, first, old_tokens, new_tokens, calls} for the chat `new` if it starts with a handoff whose old transcript is still here, else None."""
+def _read(paths, cache, gone, conv, fn):
+    """fn of the transcript of `conv`; of a removed one, what cleanup.snapshot kept (`gone`)."""
+    if conv in paths:
+        return _cached(cache, paths[conv], fn)
+    return (gone or {}).get(conv, {}).get(fn.__name__)
+
+
+def link(paths, new, cache, gone=None):
+    """{new, usd, first, old_tokens, new_tokens, calls} for the chat `new` if it starts with a handoff whose old transcript is here or kept in `gone`, else None."""
     try:
-        r = new in paths and _cached(cache, paths[new], read_new)
-        old = r and paths.get(r['old'])
-        o = old and _cached(cache, old, last_usage)
+        r = _read(paths, cache, gone, new, read_new)
+        o = r and _read(paths, cache, gone, r['old'], last_usage)
     except OSError:  # a transcript removed or locked meanwhile counts as missing
         return None
     if not o:
@@ -113,7 +139,7 @@ def _paths(projects):
     return out
 
 
-def savings(projects, session, convs, cache_path):
+def savings(projects, session, convs, cache_path, gone=None):
     """{last, worker, project}; `convs` are the project's conversations from the index, None if it could not be read."""
     try:
         with open(cache_path, encoding='utf-8') as f:
@@ -124,15 +150,15 @@ def savings(projects, session, convs, cache_path):
         cache = {}
     paths = _paths(projects)
     chain, seen, cur = [], set(), session
-    while cur not in seen and (ln := link(paths, cur, cache)):
+    while cur not in seen and (ln := link(paths, cur, cache, gone)):
         seen.add(cur)
         chain.append(ln)
-        cur = _cached(cache, paths[cur], read_new)['old']
+        cur = _read(paths, cache, gone, cur, read_new)['old']
     project = None
     if convs is not None:
         links = {ln['new']: ln for ln in chain}
         for c in convs:
-            if c not in links and (ln := link(paths, c, cache)):
+            if c not in links and (ln := link(paths, c, cache, gone)):
                 links[c] = ln
         project = {'usd': sum(ln['usd'] for ln in links.values()), 'links': len(links)}
     tmp = None

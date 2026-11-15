@@ -366,6 +366,28 @@ class MergeTest(unittest.TestCase):
         self.assertEqual([os.path.exists(p) for p in (self.src, self.src + '-journal', self.mark)], [False] * 3)
         self.free()
 
+    def test_a_removed_chat_of_the_temporary_index_comes_over(self):
+        self.two()
+        c = self.index(self.src)
+        d = self.index(self.db)
+        d.execute("INSERT INTO removed VALUES('S8', 'P/S8.jsonl', '2026-11-10T10:00:00+00:00', 'null', 'null', '[1]')")
+        d.commit()
+        c.execute("INSERT INTO removed VALUES('S8', 'P/S8.jsonl', '2026-11-11T10:00:00+00:00', 'null', 'null', '[2]')")  # the newer snapshot
+        c.execute("INSERT INTO removed VALUES('S9', 'P/S9.jsonl', '2026-11-11T10:00:00+00:00', 'null', 'null', '[]')")
+        c.commit()
+        self.merge()
+        self.assertEqual(self.index(self.db).execute('SELECT conv, chains FROM removed ORDER BY conv').fetchall(), [('S8', '[2]'), ('S9', '[]')])
+        self.free()
+
+    def test_a_temporary_index_without_the_removed_table_merges(self):
+        self.two()
+        c = self.index(self.src)
+        c.execute('DROP TABLE removed')  # made by a version of before 0.7.0
+        c.commit()
+        self.merge()
+        self.assertIsNone(memdb.meta(self.index(self.db), 'merge_error'))
+        self.free()
+
     def test_a_record_forgotten_here_after_the_copy_was_taken_does_not_come_back(self):
         self.say('S1', 'alpha one', 'beta two')
         d, c = self.index(self.db), self.index(self.src)

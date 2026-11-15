@@ -10,6 +10,8 @@ import { flush, notePath, summaryNote, summaryPath } from './notes'
 import type { Note } from './notes'
 import { encryptArgs, encryptHealth, encryptReply, isTimeout } from './encrypt'
 import type { EncryptResult, EncryptStatus } from './encrypt'
+import { cleanupArgs, cleanupReply } from './cleanup'
+import type { CleanupResult } from './cleanup'
 import { indexDirArgs, indexDirRefusal, indexDirReply } from './indexdir'
 import type { IndexDirResult } from './indexdir'
 import { healthLines, homeNotesOf, indexProblemOf, message, parseCg } from './py'
@@ -524,6 +526,7 @@ export const register: Register = (on, options) => {
       () => $.command.register({ name: 'al-job', description: T.cgJobDescription, argumentHint: T.cgJobHint }),
       () => $.command.register({ name: 'al-encrypt', description: T.cgEncryptDescription, argumentHint: T.cgEncryptHint }),
       () => $.command.register({ name: 'al-index-dir', description: T.cgIndexDirDescription, argumentHint: T.cgIndexDirHint }),
+      () => $.command.register({ name: 'al-cleanup', description: T.cgCleanupDescription, argumentHint: T.cgCleanupHint }),
       () =>
         $.tool.register({
           name: 'recall',
@@ -700,6 +703,17 @@ export const register: Register = (on, options) => {
       const cut = isTimeout(message(err)) ? T.indexDirTimeout : undefined
       await fail($, 'al-index-dir', cut ?? err)
       return { text: indexDirRefusal(cut ?? message(err)) }
+    }
+  })
+
+  on('command.run', { command: 'al-cleanup' }, async ($, e) => {
+    const args = cleanupArgs(e.args)
+    if (!args) return { text: T.cgCleanupUsage }
+    try {
+      return { text: cleanupReply((await runCg($, python, args, 60_000)) as unknown as CleanupResult) }
+    } catch (err) {
+      await fail($, 'al-cleanup', err)
+      return { text: T.cgCleanupFailed }
     }
   })
 

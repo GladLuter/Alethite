@@ -224,6 +224,7 @@ export const uk: Partial<Texts> = {
   jobOnBattery: 'вектори чекають на мережу',
   jobEmbedBusy: 'вектори рахував чат',
   jobSync: (up: number, down: number) => `синхронізація ↑${up} ↓${down}`,
+  jobCleanup: (removed: number, waiting: number, failed: number) => `видалено чатів ${removed} (чекають ${waiting}, не вийшло ${failed})`,
   jobLast: (at: string, did: string, errors: number) => `Фонове завдання, останній запуск ${at}: ${did}${errors ? `; помилок: ${errors}` : ''}`,
   jobError: (where: string, error: string) => `Помилка фонового завдання (${where}): ${error}`,
   jobNever: 'Фонове завдання: запусків ще не було (/al-job on).',
@@ -252,4 +253,14 @@ export const uk: Partial<Texts> = {
   indexDirDone: (dir: string) => `Індекс тепер у ${dir}.`,
   indexDirUnfinished: 'al-index-dir: не завершено.',
   indexDirTimeout: 'не завершилося за 10 хвилин і було зупинено. /al-health покаже, де індекс зараз. Якщо він не там, де потрібно, запустіть /al-index-dir ще раз.',
+
+  // видалення старого чату після передачі в «Новий працівник» (/al-cleanup)
+  cgCleanupDescription: 'Видаляти старий чат з диска після передачі справ кнопкою «Новий працівник», коли все з нього вже в індексі. Типово вимкнено. Видалення незворотне',
+  cgCleanupHint: '[on | off]',
+  cgCleanupUsage: 'Використовуйте: /al-cleanup, /al-cleanup on або /al-cleanup off.',
+  cleanupState: (on: boolean, chats: number, mb: number) =>
+    `${on ? 'Видалення старих чатів: увімкнено' : 'Видалення старих чатів: вимкнено'}. Зараз чекають видалення: ${chats} (${mb} МБ). Видаляє фонове завдання (/al-job). Чат видаляється лише після передачі справ кнопкою «Новий працівник». Усе з нього має бути в індексі (і в спільній папці, якщо синхронізацію ввімкнено), і його не мають чіпати 60 хвилин. Поточний чат не видаляється ніколи. Видалення незворотне. Текст лишиться в довгій пам'яті.`,
+  cleanupNoPreview: (on: boolean) => `${on ? 'Видалення старих чатів: увімкнено' : 'Видалення старих чатів: вимкнено'}. cg.py не дав числа чатів, що чекають видалення.`,
+  cgCleanupFailed: 'al-cleanup: не вийшло. Причина в сповіщенні.',
+  healthCleanup: (on: boolean, removed: number) => (on ? `Видалення старих чатів: увімкнено, видалено ${removed}` : `Видалення старих чатів: вимкнено (видалено ${removed})`),
 }

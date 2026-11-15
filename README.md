@@ -86,6 +86,7 @@ Type `/al-health` in a new chat to check it. Computing the vectors (it takes hou
 | `/al-job [on [minutes] \| off]` | The background job (Windows): on, off, its state |
 | `/al-encrypt [on \| join \| off \| status]` | Encryption of the index and the sync folder (Windows) |
 | `/al-index-dir [folder]` | Moves the index to another local disk (Windows). Without a folder, a window asks for one |
+| `/al-cleanup [on \| off]` | Deletes the old chat from disk after a New worker handoff, once all of it is in the index. Off by default. Permanent |
 
 ---
 

@@ -12,13 +12,16 @@ MOD_CATEGORIES = {cc_token_audit.tool_cat(n) for n in MOD_TOOLS}
 BASELINE = {'usd_per_owner_msg': 5.20, 'rewrite_share': 0.417, 'idle60_share': 0.319, 'median_main_context': 428000}  # weekly limit: t('stats_weekly_base')
 
 
-def metrics(projects, conn, since, until=None, errors=None, machine=None):
+def metrics(projects, conn, since, until=None, errors=None, machine=None, saved=None):
     """Figures for the API calls on/after `since` (and before `until`) in the transcripts under `projects`.
     What would make them wrong (unreadable transcripts, models without a price) is appended to the `errors` list, as the index reports its own."""
     errors = [] if errors is None else errors
     errors += memdb.update(conn, projects)['errors']  # the owner count comes from the index
-    load, visit = memory_load(since, until)
-    R = cc_token_audit.analyze(projects, since, until=until, visit=visit)
+    load, visit, add = memory_load(since, until)
+    kept = cc_token_audit.missing(projects, saved)  # once: the audit and the memory figures must agree on which chats are gone
+    R = cc_token_audit.analyze(projects, since, until=until, visit=visit, saved=kept)
+    for s in kept:  # a removed chat: its lines were counted when the snapshot was taken
+        add(s['mem'])
     meta = R['meta']
     if meta['files_unreadable']:
         errors.append({'path': 'audit', 'error': 'files_unreadable: %d' % meta['files_unreadable']})
@@ -38,30 +41,39 @@ def metrics(projects, conn, since, until=None, errors=None, machine=None):
             'handoffs': load['handoffs'], 'handoff_tokens': round(load['handoff_chars'] / cc_token_audit.CHARS_PER_TOKEN)}
 
 
+def _mem_event(path, o, ours):
+    """What one transcript line put into the context: [(kind, day, chars)], kind 'r' for the result of one of the mod's tools, 'h' for a handoff.
+    `ours` collects (transcript, tool_use id) of the mod's tools. A list, not one tuple: parallel results can share a line."""
+    m = o.get('message')
+    blocks = m.get('content') if isinstance(m, dict) else None
+    blocks = [{'type': 'text', 'text': blocks}] if isinstance(blocks, str) else blocks if isinstance(blocks, list) else []
+    day = str(o.get('timestamp') or '')[:10]
+    out = []
+    for b in (b for b in blocks if isinstance(b, dict)):
+        if o.get('type') == 'assistant' and b.get('type') == 'tool_use' and b.get('name') in MOD_TOOLS:
+            ours.add((path, b.get('id')))
+        elif o.get('type') == 'user' and b.get('type') == 'tool_result' and (path, b.get('tool_use_id')) in ours:
+            out.append(['r', day, cc_token_audit.result_chars(b.get('content'))])
+        elif (o.get('type') == 'user' and b.get('type') == 'text' and isinstance(b.get('text'), str)
+              and (block := HANDOFF_BLOCK.match(b['text'].lstrip()))):  # a message that only mentions the marker is no handoff
+            out.append(['h', day, len(block.group())])
+    return out
+
+
 def memory_load(since, until=None):
     """What the mod put into the context over the period: the calls of recall and recall_more and the characters they returned, the handoffs
-    sent to new workers and their characters. Returns (counts, visit): the audit calls visit(path, line) for every line of every transcript
-    it reads, so the transcripts are read once."""
+    sent to new workers and their characters. Returns (counts, visit, add): the audit calls visit(path, line) for every line of every transcript
+    it reads, so the transcripts are read once; add(events) counts the events kept in the index for a removed chat."""
     out = {'recall_calls': 0, 'recall_chars': 0, 'handoffs': 0, 'handoff_chars': 0}
-    ours = set()  # (transcript, tool_use id) of the mod's tools
+    ours = set()
 
-    def visit(path, o):
-        m = o.get('message')
-        blocks = m.get('content') if isinstance(m, dict) else None
-        blocks = [{'type': 'text', 'text': blocks}] if isinstance(blocks, str) else blocks if isinstance(blocks, list) else []
-        day = str(o.get('timestamp') or '')[:10]
-        inside = day >= since and (until is None or day < until)
-        for b in (b for b in blocks if isinstance(b, dict)):
-            if o.get('type') == 'assistant' and b.get('type') == 'tool_use' and b.get('name') in MOD_TOOLS:
-                ours.add((path, b.get('id')))
-            elif o.get('type') == 'user' and inside and b.get('type') == 'tool_result' and (path, b.get('tool_use_id')) in ours:
-                out['recall_calls'] += 1
-                out['recall_chars'] += cc_token_audit.result_chars(b.get('content'))
-            elif (o.get('type') == 'user' and inside and b.get('type') == 'text' and isinstance(b.get('text'), str)
-                  and (block := HANDOFF_BLOCK.match(b['text'].lstrip()))):  # a message that only mentions the marker is no handoff
-                out['handoffs'] += 1
-                out['handoff_chars'] += len(block.group())
-    return out, visit
+    def add(events):
+        for kind, day, chars in events:
+            if day >= since and (until is None or day < until):
+                out['recall_calls' if kind == 'r' else 'handoffs'] += 1
+                out['recall_chars' if kind == 'r' else 'handoff_chars'] += chars
+
+    return out, lambda path, o: add(_mem_event(path, o, ours)), add
 
 
 def _usd(x):
