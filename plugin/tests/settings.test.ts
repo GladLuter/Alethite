@@ -29,6 +29,12 @@ test('settings file: broken JSON or not one object is an error', () => {
   expect(() => withFile(options, 'null')).toThrow(T.settingsNotObject)
 })
 
+test('deleteOldChats in the file (/al-cleanup on) is not reported', () => {
+  const r = withFile(options, '{"language": "ru", "deleteOldChats": true}')
+  expect(r.options).toEqual({ ...options, language: 'ru' })
+  expect(r.bad).toEqual([])
+})
+
 test('projectAliases in the file is not reported', () => {
   const r = withFile(options, '{"language": "ru", "projectAliases": {"C:\\\\_git\\\\Alethite": ["C:\\\\_git\\\\Claude-CacheGuard"]}}')
   expect(r.options).toEqual({ ...options, language: 'ru' })

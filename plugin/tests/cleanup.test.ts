@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { cleanupArgs, cleanupHealth, cleanupReply } from '../hooks/cleanup'
+import { jobDid } from '../hooks/job'
 import { healthLines } from '../hooks/py'
 import { T } from '../hooks/text'
 
@@ -28,9 +29,16 @@ test('cleanup reply: an answer without a preview gets a plain text, not a TypeEr
 test('cleanup health: on says how many were deleted, off says off', () => {
   expect(cleanupHealth({ on: true, removed_total: 5 })).toContain('5')
   expect(cleanupHealth({ on: true, removed_total: 5 })).not.toBe(cleanupHealth({ on: false, removed_total: 5 }))
-  const h = (cleanup?: unknown) => healthLines({ version: '2.1.295', index: cleanup ? { cleanup } : {}, memory: null, root: 'C:/w', embedCmd: '' })
+  const h = (cleanup?: unknown) => healthLines({ version: '2.1.295', index: cleanup === undefined ? {} : { cleanup }, memory: null, root: 'C:/w', embedCmd: '' })
   expect(h({ on: true, removed_total: 5 })).toContain(T.healthCleanup(true, 5))
   expect(h({ on: false, removed_total: 0 })).toContain(T.healthCleanup(false, 0))
   expect(h(null).join(' ')).not.toContain(T.healthCleanup(false, 0))
   expect(h().join(' ')).not.toContain(T.healthCleanup(false, 0))
+})
+
+test('job run: the cleanup step shows deleted, waiting and failed; a run without it shows nothing of it', () => {
+  const run = { at: '2026-11-15T10:00:00Z', index: null, embed: null, sync: null, errors: [] }
+  expect(jobDid({ ...run, cleanup: { removed: 2, mb: 1.5, waiting: 5, errors: 1 } })).toBe(T.jobCleanup(2, 5, 1))
+  expect(jobDid({ ...run, cleanup: null })).toBe('')
+  expect(jobDid(run)).toBe('')
 })

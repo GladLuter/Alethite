@@ -7,6 +7,7 @@ export type JobRun = {
   index: { rows: number; errors: number } | null
   embed: { done: number; pending: number | null; errors: number } | { skipped: 'battery' | 'busy' } | null
   sync: { pushed: number; pulled: number; errors: number } | null
+  cleanup?: { removed: number; mb: number; waiting: number; errors: number } | null
   errors: { where: string; error: string }[]
 }
 
@@ -25,6 +26,7 @@ export const jobDid = (r: JobRun) =>
     ...(r.index ? [T.jobIndex(r.index.rows)] : []),
     ...(r.embed === null ? [] : 'skipped' in r.embed ? [r.embed.skipped === 'battery' ? T.jobOnBattery : T.jobEmbedBusy] : [T.jobEmbed(r.embed.done, r.embed.pending ?? 0)]),
     ...(r.sync ? [T.jobSync(r.sync.pushed, r.sync.pulled)] : []),
+    ...(r.cleanup ? [T.jobCleanup(r.cleanup.removed, r.cleanup.waiting, r.cleanup.errors)] : []),
   ].join(', ')
 
 // The /al-health lines of the job: its last run, and the first error of it.

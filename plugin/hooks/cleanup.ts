@@ -2,7 +2,7 @@
 // Everything that touches `$` (runCg, the toasts) lives in register.tsx: the loader follows `$` only inside its own file.
 import { T } from './text'
 
-export type CleanupResult = { on: boolean; preview?: { chats: number; mb: number } }
+export type CleanupResult = { on: boolean; preview?: { chats: number; mb: number } | null }
 export type CleanupStatus = { on: boolean; removed_total: number }
 
 // No word is the state; null is a word that is neither on, off nor status.
