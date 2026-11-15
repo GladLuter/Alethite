@@ -379,6 +379,15 @@ class MergeTest(unittest.TestCase):
         self.assertEqual(self.index(self.db).execute('SELECT conv, chains FROM removed ORDER BY conv').fetchall(), [('S8', '[2]'), ('S9', '[]')])
         self.free()
 
+    def test_a_temporary_index_without_the_removed_table_merges(self):
+        self.two()
+        c = self.index(self.src)
+        c.execute('DROP TABLE removed')  # made by a version of before 0.7.0
+        c.commit()
+        self.merge()
+        self.assertIsNone(memdb.meta(self.index(self.db), 'merge_error'))
+        self.free()
+
     def test_a_record_forgotten_here_after_the_copy_was_taken_does_not_come_back(self):
         self.say('S1', 'alpha one', 'beta two')
         d, c = self.index(self.db), self.index(self.src)

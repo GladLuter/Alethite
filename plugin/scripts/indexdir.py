@@ -182,7 +182,8 @@ def _absorb(conn):
                  'ON CONFLICT(conv) DO UPDATE SET first_ts = min(first_ts, excluded.first_ts), last_ts = max(last_ts, excluded.last_ts)')
     conn.execute('INSERT OR IGNORE INTO main.conv_projects(conv, project) SELECT conv, project FROM tmp.conv_projects')
     conn.execute('INSERT OR IGNORE INTO main.mem_files(project, name, source, src_name, hash) SELECT project, name, source, src_name, hash FROM tmp.mem_files')
-    conn.execute('INSERT OR REPLACE INTO main.removed SELECT * FROM tmp.removed')
+    if conn.execute("SELECT 1 FROM tmp.sqlite_master WHERE name = 'removed'").fetchone():  # a temporary index of before 0.7.0 has no such table
+        conn.execute('INSERT OR REPLACE INTO main.removed SELECT * FROM tmp.removed')
     # how far each transcript was read: without it the next update reads again what came over, and adds it as new records
     conn.execute('INSERT INTO main.files(path, size, offset) SELECT path, size, offset FROM tmp.files WHERE true '
                  'ON CONFLICT(path) DO UPDATE SET size = excluded.size, offset = excluded.offset WHERE excluded.offset > files.offset')
