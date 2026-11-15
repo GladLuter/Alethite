@@ -190,14 +190,14 @@ test('Details opens the columns in a frame, remembers it, and the next press bri
   wire(on, [], () => ({ value: usage }), undefined, store)
   const ui = await mountBand($)
   await ui.press({ key: 'details' })
-  const frame = ((await ui.drawn()) as unknown as Drawn).children[0]!
+  const frame = ((await ui.drawn()) as unknown as Drawn).children[0]!.children[0]! // the engine wraps the part of the mod: [part: [frame, the engine's slot for what is beneath]]
   expect(frame).toMatchObject({ type: 'Box', props: { borderStyle: 'round' } })
   expect(frame.children[0]).toMatchObject({ type: 'Text', props: { bold: true }, children: [T.bandTitle] })
   expect(await texts(ui)).toContain(T.col.chat)
   expect(store.get('details')).toBe(true)
   await ui.press({ key: 'details' })
   expect(store.get('details')).toBe(false)
-  expect(((await ui.drawn()) as unknown as Drawn).children[0]!.props?.borderStyle).toBeUndefined()
+  expect(((await ui.drawn()) as unknown as Drawn).children[0]!.children[0]!.props?.borderStyle).toBeUndefined()
 })
 
 test('Details stays open after a restart of the mod', async ($, on) => {
@@ -217,7 +217,7 @@ test('desktop Details draws the columns as Text, with the rule Svg first; the te
   const term = await mountBand($)
   expect(await term.findAll({ type: 'Svg' })).toHaveLength(0)
   const ui = await $.ui.mount({ plugin: 'alethite', surface: 'desktop', component: 'AbovePrompt', props } as never)
-  expect(((await ui.drawn()) as unknown as Drawn).children[0]).toMatchObject({ type: 'Svg' })
+  expect(((await ui.drawn()) as unknown as Drawn).children[0]!.children[0]).toMatchObject({ type: 'Svg' })
   await ui.press({ key: 'details' })
   expect(await ui.findAll({ type: 'Svg' })).toHaveLength(1)
   expect(await texts(ui)).toContain(T.col.chat)
