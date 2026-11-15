@@ -13,32 +13,48 @@ import stats
 from transcripts import last_usage, lp
 
 
+def _ids(c):
+    return {e[1]['id'] for e in c['ev'] if e[0] == 'c'}
+
+
 def snapshot(conn, projects, path):
-    """Write (or rewrite) the row of the main transcript `path` (absolute) with its subagents' chains."""
+    """Write (or rewrite) the row of the main transcript `path` (absolute) with the chains of every .jsonl of its folder (nested workflow agents too)."""
     root = lp(projects)
     conv = os.path.basename(path)[:-6]
     chains = []
-    subs = os.path.join(path[:-6], 'subagents')
-    for p in [path] + [os.path.join(subs, n) for n in sorted(os.listdir(lp(subs)) if os.path.isdir(lp(subs)) else []) if n.endswith('.jsonl')]:
+    for p in (q for q in _files(path) if q.endswith('.jsonl')):  # the same list the gate checks, the main transcript first
         mem, ours = [], set()
         ev, ch = cc_token_audit.read_chain(p, Counter(), lambda q, o: mem.extend(stats._mem_event(q, o, ours)))
-        chains.append({'rel': os.path.relpath(lp(p), root).replace(os.sep, '/'), 'kind': 'main' if p == path else 'subagent',
-                       'mtime': os.path.getmtime(lp(p)), 'ev': ev, 'ch': dict(ch), 'mem': mem})
-    row = conn.execute('SELECT chains FROM removed WHERE conv = ?', (conv,)).fetchone()
-    # a pass that failed half-way left files gone: their chains are only in the old row
-    chains += [c for c in json.loads(row[0]) if not os.path.exists(lp(os.path.join(projects, c['rel'])))] if row else []
+        chains.append({'rel': os.path.relpath(p, root).replace(os.sep, '/'), 'mtime': os.path.getmtime(p), 'ev': ev, 'ch': dict(ch), 'mem': mem})
+    row = conn.execute('SELECT chains, read_new FROM removed WHERE conv = ?', (conv,)).fetchone()
+    read_new = savings.read_new(path)
+    if row:
+        fresh = set().union(*map(_ids, chains))
+        for c in json.loads(row[0]):
+            if not os.path.exists(lp(os.path.join(projects, c['rel']))):  # a pass that failed half-way left files gone: their chains are only in the old row
+                chains.append(c)
+            elif not _ids(c) <= fresh:  # the transcript came back holding only new lines: the old chain stays under a name no file has
+                chains.append(dict(c, rel='%s#%d' % (c['rel'], c['mtime'])))
+        read_new = read_new or json.loads(row[1] or 'null')
     conn.execute('INSERT OR REPLACE INTO removed VALUES(?,?,?,?,?,?)',
                  (conv, chains[0]['rel'], datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'),
-                  json.dumps(last_usage(path)), json.dumps(savings.read_new(path)), json.dumps(chains)))
+                  json.dumps(last_usage(path)), json.dumps(read_new), json.dumps(chains)))
     conn.commit()
 
 
+def _load(s):
+    try:
+        return json.loads(s)
+    except ValueError:  # a damaged row is skipped, the other chats still count
+        return None
+
+
 def saved_chains(conn):
-    return [c for (s,) in conn.execute('SELECT chains FROM removed ORDER BY conv') for c in json.loads(s)]
+    return [c for (s,) in conn.execute('SELECT chains FROM removed ORDER BY conv') for c in _load(s) or ()]
 
 
 def gone(conn):
-    return {conv: {'last_usage': json.loads(u), 'read_new': json.loads(n)} for conv, u, n in conn.execute('SELECT conv, last_usage, read_new FROM removed')}
+    return {conv: {'last_usage': _load(u), 'read_new': _load(n)} for conv, u, n in conn.execute('SELECT conv, last_usage, read_new FROM removed')}
 
 
 def _old(path):
@@ -53,7 +69,7 @@ def candidates(conn, projects):
     (a removed chat names its old one too). The current chat is none of them: nothing hands off from it yet."""
     paths = savings._paths(projects)
     olds = {o for p in paths.values() if (o := _old(p))}
-    olds |= {r['old'] for (s,) in conn.execute('SELECT read_new FROM removed') if (r := json.loads(s or 'null'))}
+    olds |= {r['old'] for (s,) in conn.execute('SELECT read_new FROM removed') if (r := _load(s or 'null'))}
     return [paths[c] for c in sorted(olds) if c in paths]
 
 
@@ -109,7 +125,7 @@ def run(conn, projects, synced, handoffs_dir=None, now=time.time):
                 shutil.rmtree(lp(path[:-6]))  # first: a folder that fails to go keeps the transcript, so the next pass is a candidate again
             os.remove(lp(path))
             out['removed'], out['mb'] = out['removed'] + 1, out['mb'] + mb
-        except OSError as e:
+        except Exception as e:  # one chat must not stop the pass: an odd transcript or a busy index keeps it for the next one
             out['errors'].append({'path': path, 'error': '%s: %s' % (type(e).__name__, e)})
     for conv, _ in _gone_rows(conn, projects) if handoffs_dir else []:  # also the retry of a handoff text that could not be removed with its chat
         md = os.path.join(handoffs_dir, conv + '.md')

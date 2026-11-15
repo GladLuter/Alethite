@@ -351,12 +351,13 @@ def missing(projects, saved):
 
 def analyze(projects, since=None, until=None, visit=None, saved=None):
     """visit(path, obj) is called for every parsed line of every transcript read (not for files older than `since`).
-    `saved` are the chains of removed chats: they go through the same loop, in order of path among the files, without reading."""
+    `saved` are the chains of removed chats whose file is gone (the caller picks them with `missing`): they go through the same loop,
+    in order of path among the files, without reading."""
     t0 = time.time()
     root = lp(projects)
     if not os.path.isdir(root):
         raise SystemExit('projects dir not found: ' + str(projects))
-    kept = {_rel_path(root, s): s for s in missing(projects, saved)}
+    kept = {_rel_path(root, s): s for s in saved or ()}
     files = sorted([os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs if f.endswith('.jsonl')] + list(kept))
     A = {'calls': 0, 'cost': 0.0, 'dup_cost': 0.0, 'first': '', 'last': '', 'rows': [], 'cat': defaultdict(lambda: [0.0, 0.0]),
          'ttype': Counter(), 'odd': Counter(), 'unpriced': Counter(),

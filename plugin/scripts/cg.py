@@ -252,23 +252,13 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
         except Exception as e:
             fault('sync', e)
     if s.get('deleteOldChats') is True:
-        try:
-            held = memdb.lock(a.db, 'cleanup', 0)
-        except sqlite3.OperationalError as e:
-            if 'locked' in str(e):
-                out['cleanup'] = {'skipped': 'busy'}
-            else:
-                fault('cleanup', e)
-        else:
-            try:  # what the share does not hold yet is not removed: the chat's text must be on the other computers first
-                r = cleanup.run(conn, a.projects, not (sync_dir and sync.pending(conn)), os.path.join(os.path.dirname(a.db), 'handoffs'))
-                out['cleanup'] = dict(removed=r['removed'], mb=r['mb'], waiting=r['waiting'], errors=len(r['errors']))
-                if r['errors']:
-                    out['errors'].append({'where': 'cleanup', 'error': '%s: %s' % (r['errors'][0]['path'], r['errors'][0]['error'])})
-            except Exception as e:
-                fault('cleanup', e)
-            finally:
-                held.close()
+        try:  # what the share does not hold yet is not removed: the chat's text must be on the other computers first
+            r = cleanup.run(conn, a.projects, not (sync_dir and sync.pending(conn)), os.path.join(os.path.dirname(a.db), 'handoffs'))
+            out['cleanup'] = dict(removed=r['removed'], mb=r['mb'], waiting=r['waiting'], errors=len(r['errors']))
+            if r['errors']:
+                out['errors'].append({'where': 'cleanup', 'error': '%s: %s' % (r['errors'][0]['path'], r['errors'][0]['error'])})
+        except Exception as e:
+            fault('cleanup', e)
     conn.execute("INSERT OR REPLACE INTO meta VALUES('job_last', ?)", (json.dumps(out, ensure_ascii=False),))
     return out
 
@@ -296,9 +286,12 @@ def _savings(a):
         convs = [r[0] for r in conn.execute(
             "SELECT DISTINCT p.conv FROM conv_projects p JOIN convs c ON c.conv = p.conv WHERE COALESCE(c.parent, '') = '' AND p.project IN (SELECT value FROM json_each(?))",
             (json.dumps(project_keys(a.cwd, _aliases(a))),))]
-        gone = cleanup.gone(conn)
     except Exception:
         convs = None
+    try:
+        gone = cleanup.gone(conn)
+    except Exception:  # no removed chats known: the chats on the disk still count
+        pass
     return savings.savings(a.projects, _session(a.session), convs, os.path.join(os.path.dirname(crypto.settings_path(a.db)), 'savings-cache.json'), gone)
 
 
@@ -311,7 +304,11 @@ def _cleanup(a):
     import cleanup
     if a.action != 'status':
         crypto.set_fields(crypto.settings_path(a.db), {'deleteOldChats': True if a.action == 'on' else None})
-    return {'on': _cleanup_on(a), 'preview': cleanup.preview(memdb.connect(a.db), a.projects)}
+    try:
+        preview = cleanup.preview(memdb.connect(a.db), a.projects)
+    except Exception:  # the setting is written: the answer says so and leaves the number out
+        preview = None
+    return {'on': _cleanup_on(a), 'preview': preview}
 
 
 def _handoff(a):

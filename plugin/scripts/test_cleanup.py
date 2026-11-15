@@ -7,6 +7,7 @@ import time
 import unittest
 from unittest import mock
 
+import cc_token_audit
 import cg
 import cleanup
 import crypto
@@ -88,10 +89,52 @@ class CleanupTest(unittest.TestCase):
         self.write('P/%s.jsonl' % A, [call('a3', '2026-11-09T11:00:00.000Z', cr=OLD)], 'a')
         cleanup.snapshot(self.conn, self.projects, self.path(A))
         self.assertEqual(self.conn.execute('SELECT count(*) FROM removed').fetchone()[0], 1)
-        main = next(c for c in cleanup.saved_chains(self.conn) if c['kind'] == 'main')
+        main = next(c for c in cleanup.saved_chains(self.conn) if c['rel'] == 'P/%s.jsonl' % A)
         self.assertEqual(len([e for e in main['ev'] if e[0] == 'c']), 3)
         self.assertEqual(len(cleanup.saved_chains(self.conn)), 2)  # the main chat and its subagent
         self.assertEqual(self.conn.execute('SELECT path FROM removed').fetchone()[0], 'P/%s.jsonl' % A)
+
+    def totals(self):
+        """The token audit of the disk and the snapshots together: what /al-stats is made of."""
+        return cc_token_audit.analyze(self.projects, SINCE, saved=cc_token_audit.missing(self.projects, cleanup.saved_chains(self.conn)))
+
+    def test_nested_workflow_agent_kept_in_snapshot(self):
+        self.chat_a()
+        self.write('P/%s/subagents/workflows/wf_1/agent-2.jsonl' % A, [call('w1', T, cr=OLD, out=9), call('w2', MIN10, cr=OLD, out=9)])
+        self.write('P/%s.jsonl' % B, [user(block(A), HOUR2), call('b1', HOUR2, cc=60586, inp=2)])
+        before = self.totals()
+        cleanup.snapshot(self.conn, self.projects, self.path(A))
+        self.remove(A)
+        after = self.totals()
+        self.assertEqual(len(cleanup.saved_chains(self.conn)), 3)
+        self.assertEqual((after['totals'], after['cache_rewrites']['total']), (before['totals'], before['cache_rewrites']['total']))
+
+    def test_transcript_that_came_back_keeps_first_snapshot(self):
+        self.chat_a()
+        cleanup.snapshot(self.conn, self.projects, self.path(A))
+        before = len(self.conn.execute('SELECT read_new FROM removed').fetchone()[0]), self.totals()['totals']
+        self.remove(A)
+        self.write('P/%s.jsonl' % A, [call('a9', '2026-11-09T12:00:00.000Z', cr=OLD)])  # the resumed chat appends: only the new line is there
+        cleanup.snapshot(self.conn, self.projects, self.path(A))
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM removed').fetchone()[0], 1)
+        self.assertEqual(len(self.conn.execute('SELECT read_new FROM removed').fetchone()[0]), before[0])
+        self.remove(A)
+        self.assertEqual(self.totals()['totals']['calls'], before[1]['calls'] + 1)
+
+    def test_saved_chain_before_since_is_skipped(self):
+        self.chat_a()
+        for p in (self.path(A), os.path.join(self.projects, 'P', A, 'subagents', 'agent-1.jsonl')):
+            os.utime(p, (time.time() - 90 * 86400,) * 2)
+        cleanup.snapshot(self.conn, self.projects, self.path(A))
+        self.remove(A)
+        self.assertEqual(self.totals()['meta']['files_skipped_before_since'], 2)  # by the stored mtime: the file is not there to ask
+
+    def test_damaged_saved_row_is_skipped(self):
+        self.chat_a()
+        cleanup.snapshot(self.conn, self.projects, self.path(A))
+        self.conn.execute("INSERT INTO removed VALUES('X', 'P/X.jsonl', '2026-11-11T10:00:00+00:00', '{', '{', '{')")
+        self.assertEqual(len(cleanup.saved_chains(self.conn)), 2)
+        self.assertEqual(set(cleanup.gone(self.conn)), {A, 'X'})
 
     # the job's removal
 
@@ -163,6 +206,23 @@ class CleanupTest(unittest.TestCase):
         self.assertEqual((out['removed'], len(out['errors']), out['errors'][0]['path']), (0, 1, self.path(A)))
         self.assertTrue(os.path.exists(self.path(A)))
         self.assertEqual(self.run_cleanup()['removed'], 1)
+
+    def test_odd_chat_does_not_stop_the_pass(self):
+        self.ready()
+        self.write('P/%s.jsonl' % C, [call('c1', T, cc=50000, inp=2)])  # chat A was handed off from it: a second candidate, after A
+        memdb.update(self.conn, self.projects)
+        real = cleanup.snapshot
+
+        def odd(conn, projects, path):
+            if path == self.path(A):
+                raise ValueError('odd line')
+            return real(conn, projects, path)
+
+        with mock.patch('cleanup.snapshot', odd):
+            out = self.run_cleanup()
+        self.assertEqual((out['removed'], len(out['errors'])), (1, 1))
+        self.assertTrue(os.path.exists(self.path(A)))
+        self.assertFalse(os.path.exists(self.path(C)))
 
     def test_failed_folder_keeps_chat_for_next_pass(self):
         self.ready()
@@ -277,6 +337,12 @@ class CleanupTest(unittest.TestCase):
         crypto.set_fields(crypto.settings_path(self.db), {'deleteOldChats': True})
         out = self.maintain()
         self.assertEqual((out['cleanup']['waiting'], out['errors']), (1, []))  # the files are fresh: not cold yet
+
+    def test_cli_on_answers_without_preview_when_it_fails(self):
+        self.ready()
+        a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'cleanup', 'on'])
+        with mock.patch('cleanup.preview', side_effect=OSError('denied')):
+            self.assertEqual(a.fn(a), {'on': True, 'preview': None})
 
     def test_cli_on_off_writes_setting(self):
         self.ready()

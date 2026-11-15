@@ -18,8 +18,9 @@ def metrics(projects, conn, since, until=None, errors=None, machine=None, saved=
     errors = [] if errors is None else errors
     errors += memdb.update(conn, projects)['errors']  # the owner count comes from the index
     load, visit, add = memory_load(since, until)
-    R = cc_token_audit.analyze(projects, since, until=until, visit=visit, saved=saved)
-    for s in cc_token_audit.missing(projects, saved):  # a removed chat: its lines were counted when the snapshot was taken
+    kept = cc_token_audit.missing(projects, saved)  # once: the audit and the memory figures must agree on which chats are gone
+    R = cc_token_audit.analyze(projects, since, until=until, visit=visit, saved=kept)
+    for s in kept:  # a removed chat: its lines were counted when the snapshot was taken
         add(s['mem'])
     meta = R['meta']
     if meta['files_unreadable']:
