@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="400" viewBox="0 0 880 400" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-label="Four weeks with Alethite: one message cost 54% less; the first message after an hour-long pause fell from 32% to 3% of all spend; cache rewrites fell from 41% to 4%.">
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="400" viewBox="0 0 880 400" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-label="Four weeks with Alethite: one message cost 54% less. The first message after an hour-long pause fell from 32% to 3% of all spend. Cache rewrites fell from 41% to 4%.">
 <rect x="0.5" y="0.5" width="879" height="399" rx="12" fill="#fcfcfb" stroke="rgba(11,11,11,0.10)"/>
 <text x="32" y="48" font-size="22" font-weight="600" fill="#0b0b0b">Four weeks with Alethite</text>
 <text x="32" y="74" font-size="14" fill="#52514e">My own Claude Code work on one computer, at API prices. Without Alethite: May 25 to Oct 13. With it: Oct 19 to Nov 15.</text>

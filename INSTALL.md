@@ -53,7 +53,7 @@ On this page:
    & $CC plugin install alethite@alethite
    ```
    Each command prints a short confirmation. An error here usually means `$CC` is empty: repeat step 1. Then quit the desktop app completely (including its tray icon, if it sits there) and open it again. The plugin builds the index of this computer's conversations by itself 3 seconds after a chat starts. The first time takes a few minutes. No command is needed.
-3. **Language.** By default the plugin speaks English: the interface, the texts the plugin gives to Claude, and the handoff (the summary of an old chat that goes into a new one). Open a new chat first: the settings file is created at the first start. Open it with `notepad $env:USERPROFILE\.claude\alethite\settings.json`, set `"language": "ru"` in it and type `/reload-plugins` in the chat box. For Ukrainian, set `"uk"`. The option `--lang ru` or `--lang uk` before `index` sets the language of the scripts' messages and errors in the terminal. Without it they are in English.
+3. **Language.** By default the plugin speaks English: the interface, the texts the plugin gives to Claude, and the handoff (the summary of an old chat that goes into a new one). Open a new chat first: the settings file is created at the first start. Open it with `notepad $env:USERPROFILE\.claude\alethite\settings.json`, set `"language": "ru"` in it and type `/reload-plugins` in the chat box. For Ukrainian, set `"uk"`. The option `--lang ru` or `--lang uk` before `index` sets the language of the scripts' messages and errors in the terminal. Without it they are in English. This option needs a clone (see "Working from a clone").
 4. **Check:** in a new chat type `/al-health` into the Claude Code chat box (all the `/al-...` commands are typed there). It should show the version, the index, the auto-memory folder, the project, the vectors "N of M" and a sync line. "Vectors 0 of N" is fine until you do step 5. A line that reports an error means a step above did not work.
 5. **Compute the vectors.** Optional and slow: it takes hours. The vectors let the search find conversations by meaning. You can skip this step now and run it later or overnight. It needs Ollama with the model from "What you need first". On an entry-level Intel processor about 25 thousand pieces of history took about 6 hours. Once stopped, it goes on from where it was:
    ```powershell
@@ -88,13 +88,14 @@ Use this path to change the code or to run `cg.py` by hand. The plugin is then r
 
 ## Updating
 
-The plugin installed from GitHub updates in three steps.
+The plugin installed from GitHub updates in four steps.
 
-1. Set `$CC` as in "Installing", step 1, then update the marketplace:
+1. Set `$CC` as in "Installing", step 1, then refresh the catalog and update the plugin:
    ```powershell
    & $CC plugin marketplace update alethite
+   & $CC plugin update alethite@alethite
    ```
-2. Type `/reload-plugins` in every open chat.
+2. Quit the desktop app completely and open it again. The update applies after the restart.
 3. Check: type `/al-health`.
 
 ### With a clone
@@ -157,7 +158,7 @@ The plugin is then read straight from the clone folder, so an update is a `git p
 
 ## Optional features
 
-Everything below, up to "Only if you used an older build", is optional. Skip it on the first install.
+Everything below, up to "Only if you used an older build", is optional. Skip it on the first install. The `cg.py` commands below run from a clone (see "Working from a clone"). Without a clone, use the slash commands.
 
 ### The background job
 
@@ -273,7 +274,7 @@ The index (with its backup `index.before-stage2.db`, if there is one) and everyt
    - The index and its backup are encrypted. With `sqlcipher` the unencrypted copies (`index.db.plain`) are deleted only after Yes. After No they stay, and `/al-encrypt on` asks again.
    - With `efs` the plugin folder and the index folder go under the encryption of Windows, and a SQLCipher index becomes an ordinary database under EFS with 16 KB pages. There is never an unencrypted copy outside EFS, so there is no question about `index.db.plain`.
    - The sync folder: the computer puts its own subfolder out again, in the cipher you chose. The older data there (unencrypted or in another cipher) is deleted only after Yes, and only once the new data is fully out.
-4. **The second computer:** `git pull`, its own ciphers in `settings.json` (step 1), `/reload-plugins`, `/al-encrypt join`. The recovery code is entered in a window with hidden input. One key serves all computers, so `on` on the second one refuses and points to `join`.
+4. **The second computer:** `git pull` in the clone (without a clone, the plugin update from "Updating"), its own ciphers in `settings.json` (step 1), `/reload-plugins`, `/al-encrypt join`. The recovery code is entered in a window with hidden input. One key serves all computers, so `on` on the second one refuses and points to `join`.
    - If you change the cipher of the folder on the first computer (for example, SQLCipher to AES-GCM), join the second one only after that. Otherwise it will see a SQLCipher generation, which it cannot open under Smart App Control.
 5. **Check:** `/al-health` on both computers says, for example, "Encryption: on (index: EFS, sync folder: AES-GCM)". If something is unfinished, the lines under it say what to repeat. `/al-encrypt status` shows the state alone.
 

@@ -93,7 +93,7 @@ Restart the app and type `/al-health` in a new chat to check it. The plugin buil
 
 <br>
 
-The file `%USERPROFILE%\.claude\alethite\settings.json` is one per computer. The plugin creates it at the first start with all the current values, so you only open it and edit. A key that is missing the plugin adds itself at the start of a chat, with the value from `/config`. The background job reads only the file. Its values win over `/config`. After an edit, type `/reload-plugins`. Backslashes in JSON are doubled.
+The file `%USERPROFILE%\.claude\alethite\settings.json` is one per computer. The plugin creates it at the first start with all the current values, so you only open it and edit. The plugin adds a missing key itself at the start of a chat, with the value from `/config`. The background job reads only the file. Its values win over `/config`. After an edit, type `/reload-plugins`. Backslashes in JSON are doubled.
 
 | Key | What it sets | Default |
 |---|---|---|
@@ -162,7 +162,7 @@ Alethite ships five agent types (`scout`, `researcher`, `reviewer`, `coder`, `re
 
 ## 🔒 Privacy
 
-The index and the vectors hold your conversations. They stay on your computers and your network folder. They are never in this repository and never sent anywhere else. The only network calls go to your local Ollama and to your shared folder and, for `/al-stats`, to your Obsidian MCP server.
+The index and the vectors hold your conversations. They stay on your computers and your network folder. They are never in this repository and never sent anywhere else. The only network calls go to your local Ollama, to your shared folder and, for `/al-stats`, to your Obsidian MCP server.
 
 ## 📄 License
 
