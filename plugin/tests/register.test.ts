@@ -853,6 +853,11 @@ test('language ru: the mod speaks Russian to the owner and to the model, and so 
   expect((await ($ as any).prompt.compose(facts)).sections).toEqual([{ id: 'alethite:lean-agents', text: ru.leanRule, scope: 'session' }, { id: 'alethite:memory-rule', text: ru.memoryRule, scope: 'session' }])
 })
 
+test('leanRule: terse prompts phrase, and the rule stays short in every language', async () => {
+  expect(T.leanRule).toContain('terse')
+  for (const rule of [T.leanRule, ru.leanRule, uk.leanRule]) expect(rule.length).toBeLessThanOrEqual(1200)
+})
+
 test('language uk: Ukrainian to the owner and to the model, and to cg.py', { options: { language: 'uk' } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'embed' ? embedded() : indexed()))
   await m.clock.advance(3_000)

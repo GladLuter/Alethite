@@ -324,6 +324,8 @@ The table was tested on Windows. The types with `PowerShell` in their tools were
 
 A lean agent has no Skill tool. When it needs a skill, give the path of that skill's `SKILL.md` in its prompt and tell it to read and follow it.
 
+Prompts to lean agents and their final replies are written in terse English, because only the main chat reads them.
+
 Use `alethite:<name>`, for example `alethite:scout`. `resident` is expensive: it keeps a one-hour cache (a cache write costs 1.6 times more than the 5-minute one). Take it only when several tasks share one big picture of the project and pause for 5 to 60 minutes between them, and continue it with SendMessage. After an hour start a new one. Otherwise take `reviewer`. In a workflow, `agent()` takes the type in its `agentType` option. The new types show up after `/reload-plugins` or in a new chat, because Claude Code reads the agent list only at session start and on reload.
 
 ## Only if you used an older build

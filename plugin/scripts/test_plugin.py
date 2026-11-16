@@ -44,6 +44,9 @@ class ManifestTest(unittest.TestCase):
             self.assertEqual(fm.get('omitClaudeMd'), 'true' if name == 'scout' else None)
             self.assertIn('no MCP tools', fm['description'])
             self.assertEqual('foreground' in text.split('---', 2)[2], name in ('coder', 'reviewer', 'resident'))
+            body = text.split('---', 2)[2]
+            self.assertIn('terse', body)
+            self.assertIn('verbatim', body)
             self.assertEqual('experimental' in fm, name == 'resident')
             self.assertEqual('cacheTtl: 1h' in head, name == 'resident')
             self.assertNotIn('effort', fm)
