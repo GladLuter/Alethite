@@ -828,6 +828,77 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(self.a.sync()['errors'], [])
         self.assertEqual((os.listdir(own), memdb.meta(self.a.conn, 'restart_share')), (['gen-0001'], None))
 
+    SECRET = 'пароль zq-0123456789 тут'
+
+    def test_a_forgotten_text_stays_out_under_a_new_conv(self):  # a resumed session copies its history into a new transcript
+        self.a.say('SS', self.SECRET, 'ок')
+        self.exchange()
+        memdb.forget(self.a.conn, 'SS', self.a.q('SELECT pos FROM chunks WHERE text = ?', self.SECRET))
+        self.a.sync()
+        self.a.say('SS2', self.SECRET, 'ок')
+        self.a.index()
+        self.assertEqual(self.a.q('SELECT count(*) FROM chunks WHERE text = ?', self.SECRET), 0)
+        before = self.a.q('SELECT count(*) FROM outbox')
+        self.a.sync()
+        self.assertEqual(self.a.q('SELECT count(*) FROM outbox'), before)
+        self.assertNotIn('zq-0123456789', json.dumps(self.gen_lines(self.a, 1), ensure_ascii=False))
+
+    def test_a_peer_chunk_of_a_forgotten_text_under_another_conv_is_skipped(self):
+        self.b.say('SX', self.SECRET, 'ок')
+        self.ready(self.b)
+        self.b.sync()
+        self.a.say('SS', self.SECRET, 'ок')
+        self.ready(self.a)
+        memdb.forget(self.a.conn, 'SS', self.a.q('SELECT pos FROM chunks WHERE text = ?', self.SECRET))
+        self.assertEqual(self.a.sync()['errors'], [])
+        self.assertEqual(self.a.q('SELECT count(*) FROM chunks WHERE text = ?', self.SECRET), 0)
+
+    def test_an_applied_forget_removes_our_copies_under_other_convs(self):
+        self.a.say('SS', self.SECRET, 'ок')
+        self.b.say('SX', self.SECRET, 'ок')
+        self.exchange()
+        self.assertEqual(self.b.q('SELECT count(*) FROM chunks WHERE text = ?', self.SECRET), 2)
+        memdb.forget(self.a.conn, 'SS', self.a.q('SELECT pos FROM chunks WHERE text = ? AND conv = ?', self.SECRET, 'SS'))
+        self.a.sync()
+        self.assertEqual(self.b.sync()['errors'], [])
+        self.assertEqual(self.b.q('SELECT count(*) FROM chunks WHERE text = ?', self.SECRET), 0)
+        self.assertEqual(self.b.q('SELECT count(*) FROM outbox'), 0)  # applied, not sent on
+
+    def test_a_failing_cleanup_does_not_stop_the_pull(self):
+        self.ready(self.a, self.b)
+        self.a.sync()
+        self.b.sync()
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        self.b.say('SB', 'кэш протух на ноутбуке', 'ответ про кэш', 'ещё одна строка')
+        self.b.index()
+        self.b.sync()
+        with mock.patch.object(cgsync, 'delete', side_effect=OSError('in use')):
+            r = self.a.sync()
+        self.assertEqual(([e['where'] for e in r['errors']], 'ещё одна строка' in self.a.texts()), (['cleanup'], True))
+        self.assertEqual(memdb.meta(self.a.conn, 'restart_share'), 'old')
+        self.assertEqual(self.a.sync()['errors'], [])
+        self.assertEqual(os.listdir(os.path.join(self.share, 'HOMEPC')), ['gen-0001'])
+
+    def test_cleanup_clears_share_unfinished_old(self):
+        self.ready(self.a)
+        self.a.sync()
+        self.a.conn.execute("INSERT INTO meta VALUES('share_unfinished', 'old')")
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        self.a.sync()
+        self.assertIsNone(memdb.meta(self.a.conn, 'share_unfinished'))
+
+    def test_a_killed_start_with_a_forgotten_text_is_repaired_without_a_new_label(self):
+        self.ready(self.a)
+        self.a.sync()
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        with mock.patch.object(cgsync, '_restart'):
+            self.start(self.a)  # the label is out, the reset is not
+        self.assertEqual(memdb.meta(self.a.conn, 'restart_share'), '1')
+        self.assertEqual(self.a.sync()['errors'], [])
+        own = os.path.join(self.share, 'HOMEPC')
+        self.assertEqual((os.listdir(own), memdb.meta(self.a.conn, 'restart_share')), (['gen-0001'], None))  # no gen-0002
+        self.assertNotIn('тумане', json.dumps(self.gen_lines(self.a, 1), ensure_ascii=False))
+
     def test_forget_of_a_record_read_back_from_our_folder_restarts_the_share(self):
         self.ready(self.a)
         self.a.sync()

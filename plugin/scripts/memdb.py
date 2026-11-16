@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS keys(id INTEGER PRIMARY KEY, conv TEXT NOT NULL, cls 
   origin TEXT, pushed INTEGER NOT NULL DEFAULT 0, vec_pushed INTEGER NOT NULL DEFAULT 0, UNIQUE(conv, cls, hash, n));
 -- keys deleted on purpose (cg.py forget, a text the secret filter now hides): never added again, here or from a batch
 CREATE TABLE IF NOT EXISTS forgotten(conv TEXT, cls TEXT, hash TEXT, n INTEGER, PRIMARY KEY(conv, cls, hash, n));
+-- a forgotten text is out in every conv: looked up by (cls, hash)
+CREATE INDEX IF NOT EXISTS forgotten_text ON forgotten(cls, hash);
+CREATE INDEX IF NOT EXISTS keys_text ON keys(cls, hash);
 -- forget lines for our next batch
 CREATE TABLE IF NOT EXISTS outbox(seq INTEGER PRIMARY KEY, line TEXT NOT NULL);
 -- every computer whose folder we read, ourselves included: the last batch taken in, the ones skipped by hand, what its batches said;
@@ -175,17 +178,23 @@ def forget_key(conn, conv, cls, h, n, push=True):
         conn.execute('INSERT INTO outbox(line) VALUES(?)', (json.dumps({'type': 'forget', 'key': [conv, cls, h, n]}, ensure_ascii=False),))
 
 
+def forget_text(conn, cls, h, push=True):
+    """Forget every copy of a text (class, hash) in any conv and any occurrence. Inside the caller's transaction. The number of keys taken."""
+    keys = conn.execute('SELECT conv, n FROM keys WHERE cls = ? AND hash = ?', (cls, h)).fetchall()
+    for conv, n in keys:
+        forget_key(conn, conv, cls, h, n, push)
+    return len(keys)
+
+
 def forget(conn, conv, pos):
     """The one way to delete from the index (a secret the filter missed): every record at `pos` of `conv` and every copy of its text in any
     conv (a resumed session copies its history into a new transcript), here and, through our next batch, on the other computers. The
     number of records forgotten."""
     conn.execute('BEGIN IMMEDIATE')
     with conn:
-        keys = conn.execute('SELECT DISTINCT o.conv, o.cls, o.hash, o.n FROM keys k JOIN chunks c ON c.rowid = k.id '
-                            'JOIN keys o ON o.cls = k.cls AND o.hash = k.hash WHERE k.conv = ? AND c.pos = ?', (conv, pos)).fetchall()
-        for k in keys:
-            forget_key(conn, *k)
-    return len(keys)
+        texts = conn.execute('SELECT DISTINCT k.cls, k.hash FROM keys k JOIN chunks c ON c.rowid = k.id WHERE k.conv = ? AND c.pos = ?',
+                             (conv, pos)).fetchall()
+        return sum(forget_text(conn, *x) for x in texts)
 
 
 def _records(conn, conv, recs, whole, replace):
@@ -219,7 +228,8 @@ def _records(conn, conv, recs, whole, replace):
                 orphans.setdefault((pos, key[0]), []).append((rid, key))
     added, report = 0, None
     for i, (r, kind, text, key) in enumerate(plan):
-        if key in gone:
+        # a forgotten text stays out under any conv (a resumed session copies its history into a new transcript)
+        if key in gone or conn.execute('SELECT 1 FROM forgotten WHERE cls = ? AND hash = ?', key[:2]).fetchone():
             continue
         if key in have:
             rid = have[key][0]

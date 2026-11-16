@@ -566,9 +566,19 @@ class MemdbTest(unittest.TestCase):
         pos = self.conn.execute("SELECT pos FROM chunks WHERE conv = 'S1' AND kind = 'owner'").fetchone()[0]
         self.assertEqual(memdb.forget(self.conn, 'S1', pos), 2)
         self.assertEqual(search(self.conn, 'секрет'), [])
-        self.assertEqual([self.kinds_of(c) for c in ('S1', 'S2', 'S3')], [['claude']] * 3)  # the other class at that pos stays
+        self.assertEqual([self.kinds_of(c) for c in ('S1', 'S2', 'S3')], [['claude']] * 3)  # 'ответ' is another record at another pos: it stays
         self.assertEqual(sorted(json.loads(l)['key'][0] for (l,) in self.conn.execute('SELECT line FROM outbox')), ['S1', 'S2', 'S3'])
         self.assertFalse(self.conn.in_transaction)
+
+    def test_forget_takes_other_occurrences_and_keeps_the_text_out_under_a_new_conv(self):
+        self.write('P/S.jsonl', [owner_line('секрет 42'), claude_line('ответ'), owner_line('секрет 42')])  # n = 0 and 1 of one text
+        self.update()
+        pos = self.conn.execute("SELECT min(pos) FROM chunks WHERE kind = 'owner'").fetchone()[0]
+        self.assertEqual(memdb.forget(self.conn, 'S', pos), 2)
+        self.assertEqual(self.kinds_of('S'), ['claude'])
+        self.write('P/S2.jsonl', [owner_line('секрет 42'), claude_line('ответ')])  # a resumed session: the same text under a new conv
+        self.update()
+        self.assertEqual((self.kinds_of('S2'), search(self.conn, 'секрет')), (['claude'], []))
 
     def test_stage_1_index_gets_keys_and_home_projects_once(self):
         path = os.path.join(os.path.dirname(self.db), 'old.db')

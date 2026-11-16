@@ -347,7 +347,7 @@ def _import(conn, path, peer, gen, n, own, key, model, digest, report):
                     conv, cls, h, k = o['key']
                     if memdb.text_hash(o['text']) != h:
                         raise ValueError(t('bad_hash'))
-                    if conn.execute('SELECT 1 FROM forgotten WHERE conv = ? AND cls = ? AND hash = ? AND n = ?', (conv, cls, h, k)).fetchone():
+                    if conn.execute('SELECT 1 FROM forgotten WHERE cls = ? AND hash = ?', (cls, h)).fetchone():
                         continue
                     row = conn.execute('SELECT id FROM keys WHERE conv = ? AND cls = ? AND hash = ? AND n = ?', (conv, cls, h, k)).fetchone()
                     if row:
@@ -385,6 +385,7 @@ def _import(conn, path, peer, gen, n, own, key, model, digest, report):
                     conn.execute('INSERT OR REPLACE INTO vecs VALUES(?, ?, ?, ?)', (rid, o['part'], o['key'][0], vec))
                 elif kind == 'forget':
                     memdb.forget_key(conn, *o['key'], push=False)
+                    memdb.forget_text(conn, *o['key'][1:3], push=False)  # our copies under other convs too
                     counts['forgets'] += 1
                 # another type is of a later format: left for the version that knows it
             except (ValueError, KeyError, TypeError) as e:
@@ -684,7 +685,8 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
         if _BAD_NAME.search(machine) or not machine:
             raise ValueError(t('sync_bad_machine', name=machine))
         # for memdb.forget_key: a record read back from our own folder (origin our name) is in our batches as well
-        conn.execute("INSERT OR REPLACE INTO meta VALUES('machine', ?)", (machine,))
+        if memdb.meta(conn, 'machine') != machine:
+            conn.execute("INSERT OR REPLACE INTO meta VALUES('machine', ?)", (machine,))
         try:
             peers = sorted(d for d in os.listdir(sync_dir) if d != machine and os.path.isdir(os.path.join(sync_dir, d)))
         except OSError as e:
@@ -698,11 +700,6 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
         if gen:
             pull(gen)
             _push(conn, gen, machine, key, digest_once, deadline, now, report)
-            # a forget is an erase: once the new generation holds all of ours, the older ones (never read again) leave the share
-            if memdb.meta(conn, 'restart_share') == 'old' and not pending(conn) and generation(own).n == gen.n:
-                for path in old_generations(own):
-                    delete(path)
-                conn.execute("DELETE FROM meta WHERE key = 'restart_share'")
         for peer in peers:
             _pull(conn, os.path.join(sync_dir, peer), peer, False, key, model, digest_once, deadline, now, report)
         if memory_dir and gen:  # none of it while our own new generation is blocked: where our facts would go is not decided yet
@@ -712,6 +709,16 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
                     gens[p] = generation(os.path.join(sync_dir, p))
             report['memory'] = sync_memory(conn, sync_dir, machine, peers, memory_dir, project_key(project_cwd or os.getcwd(), home), gens, key,
                                            report['errors'])
+        if gen:  # after the pulls: a delete that fails (a file open on the other computer) must not stop them
+            try:
+                # a forget is an erase: once the new generation holds all of ours, the older ones (never read again) leave the share
+                if memdb.meta(conn, 'restart_share') == 'old' and not pending(conn) and generation(own).n == gen.n:
+                    for path in old_generations(own):
+                        delete(path)
+                    conn.execute("DELETE FROM meta WHERE key = 'restart_share'")
+                    conn.execute("DELETE FROM meta WHERE key = 'share_unfinished' AND value = 'old'")
+            except (OSError, ValueError) as e:
+                report['errors'].append({'where': 'cleanup', 'error': str(e) or '%s: %s' % (type(e).__name__, e)})
     except Exception as e:
         report['errors'].append({'where': 'sync', 'error': str(e) if isinstance(e, (OSError, ValueError)) and str(e) else '%s: %s' % (type(e).__name__, e)})
     report['peers'] = {m: last for m, last in conn.execute('SELECT machine, last_batch FROM peers WHERE machine != ? ORDER BY machine', (machine,))}
