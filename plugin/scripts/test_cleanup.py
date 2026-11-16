@@ -116,6 +116,13 @@ class CleanupTest(unittest.TestCase):
         self.assertEqual([gone[c]['agents'] for c in ('bad', 'old', 'list')], [[], [], []])
         self.assertEqual(gone['x']['agents'], [ag])
 
+    def test_snapshot_survives_an_agents_value_that_is_not_an_object(self):
+        self.chat_a()
+        cleanup.snapshot(self.conn, self.projects, self.path(A))
+        self.conn.execute("UPDATE removed SET agents = '[1]'")
+        cleanup.snapshot(self.conn, self.projects, self.path(A))
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM removed').fetchone()[0], 1)
+
     def test_an_index_made_without_the_agents_column_opens_and_gone_works(self):
         path = os.path.join(os.path.dirname(self.db), 'old.db')
         old = sqlite3.connect(path)

@@ -38,7 +38,8 @@ def snapshot(conn, projects, path):
             elif not _ids(c) <= fresh:  # the transcript came back holding only new lines: the old chain stays under a name no file has
                 chains.append(dict(c, rel='%s#%d' % (c['rel'], c['mtime'])))
         read_new = read_new or json.loads(row[1] or 'null')
-        for rel, a in (_load(row[2] or 'null') or {}).items():
+        old = _load(row[2] or 'null')
+        for rel, a in (old.items() if isinstance(old, dict) else ()):
             if not os.path.exists(lp(os.path.join(projects, rel))):  # the same half-failed pass: a file gone keeps its start
                 agents.setdefault(rel, a)
     conn.execute('INSERT OR REPLACE INTO removed(conv, path, at, last_usage, read_new, chains, agents) VALUES(?,?,?,?,?,?,?)',
