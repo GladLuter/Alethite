@@ -25,7 +25,7 @@ export const en = {
   saved: (usd: string) => `saved ≤ ${usd}`,
   dearer: (usd: string) => `${usd} dearer`,
   upTo: (usd: string) => `up to ${usd}`,
-  reviewHint: 'before the handoff: /ponytail-review',
+  reviewHint: (edits: number) => `This chat is ready for a handoff to a New worker, and ponytail counts ${edits} code edits here since the last /ponytail-review. Before the handoff, ask the owner once whether to run /ponytail-review (the ponytail:ponytail-review skill). Do not run it unasked.`,
   baseTrouble: 'base !',
   col: { chat: 'This chat', last: 'Last handoff', worker: 'Whole worker', limits: 'Limits', base: 'Base' },
   spent: (usd: string) => `spent ${usd}`,

@@ -26,7 +26,7 @@ export const ru: Partial<Texts> = {
   saved: (usd: string) => `экономия ≤ ${usd}`,
   dearer: (usd: string) => `дороже на ${usd}`,
   upTo: (usd: string) => `до ${usd}`,
-  reviewHint: 'перед передачей: /ponytail-review',
+  reviewHint: (edits: number) => `Этот чат готов к передаче новому работнику, а по счёту ponytail с последнего /ponytail-review в нём ${edits} правок кода. Перед передачей один раз спроси владельца, провести ли /ponytail-review (навык ponytail:ponytail-review). Сам его не запускай.`,
   baseTrouble: 'база !',
   col: { chat: 'Этот чат', last: 'Последняя передача', worker: 'Весь работник', limits: 'Лимиты', base: 'База' },
   spent: (usd: string) => `потрачено ${usd}`,

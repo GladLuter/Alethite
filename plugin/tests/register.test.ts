@@ -2305,25 +2305,66 @@ test('guard: a name given at the spawn is the agent id', async ($, on) => {
   expect(flag(ofCg(m, 'agent-age')[0]!.argv, '--agent')).toBe(AG)
 })
 
-const hintRig = async ($: any, on: any, reply: string) => started($, on, a => (a[0] === 'review-hint' ? ran(reply) : noTurn()))
+let hintReply = ''
+const hintRig = async ($: any, on: any, reply: string) => {
+  hintReply = reply
+  return started($, on, a => (a[0] === 'review-hint' ? ran(hintReply) : noTurn()))
+}
+const submits = (on: any) => {
+  const contexts: string[][] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => (contexts.push([...(e.context ?? [])]), { text: e.text }))
+  return contexts
+}
+const hintText = (n: number) => ['[al-lessons]', T.reviewHint(n), '[/al-lessons]'].join('\n')
+const turnTo = async ($: any, m: any, id: string) => ((ids.now = id), await m.clock.advance(30_000)) // the tick refreshes the snap, the band asks for that chat
 
-test('review hint: asked when New worker becomes ready, drawn on the row, not asked again on a redraw', async ($, on) => {
+test('review hint: asked when New worker becomes ready, not on a redraw; the next prompt carries it once, the band shows nothing of it', async ($, on) => {
+  const contexts = submits(on)
   const m = await hintRig($, on, '{"ponytail":true,"edits":6}')
   await $.command.run(typedCmd('al-band'))
-  const ui = await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props: { ...props, bodyColumns: 140 } } as never) // the hint goes before the cache and the size in a tight row
+  const ui = await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props: { ...props, bodyColumns: 140 } } as never)
   expect(ofCg(m, 'review-hint')).toHaveLength(1)
   expect(flag(ofCg(m, 'review-hint')[0]!.argv, '--session')).toBe('id')
   await ui.press({ key: 'details' })
-  await ui.press({ key: 'details' }) // two more draws, still ready
+  await ui.press({ key: 'details' })
   expect(ofCg(m, 'review-hint')).toHaveLength(1)
-  expect(await texts(ui)).toContain(`· ${T.reviewHint}`)
+  expect((await texts(ui)).join(' ')).not.toContain('ponytail')
+  await typed($, 'first')
+  await typed($, 'second')
+  expect(contexts).toEqual([[hintText(6)], []])
+})
+
+test('review hint: edits fall under 5, then rise again: said once more', async ($, on) => {
+  const contexts = submits(on)
+  const m = await hintRig($, on, '{"ponytail":true,"edits":5}')
+  await mountBand($)
+  await typed($, 'a')
+  hintReply = '{"ponytail":true,"edits":2}'
+  await turnTo($, m, 'id2')
+  await turnTo($, m, 'id')
+  hintReply = '{"ponytail":true,"edits":6}'
+  await turnTo($, m, 'id2')
+  await turnTo($, m, 'id')
+  await typed($, 'b')
+  await typed($, 'c')
+  expect(contexts).toEqual([[hintText(5)], [hintText(6)], []])
+})
+
+test('review hint: still at 5 or more after it was said: not said again', async ($, on) => {
+  const contexts = submits(on)
+  const m = await hintRig($, on, '{"ponytail":true,"edits":5}')
+  await mountBand($)
+  await typed($, 'a')
+  await turnTo($, m, 'id2')
+  await turnTo($, m, 'id')
+  await typed($, 'b')
+  expect(contexts).toEqual([[hintText(5)], []])
 })
 
 test('review hint: asked again for the next chat, with its session', async ($, on) => {
   const m = await hintRig($, on, '{"ponytail":true,"edits":6}')
   await mountBand($)
-  ids.now = 'id2'
-  await m.clock.advance(30_000) // the tick refreshes the snap
+  await turnTo($, m, 'id2')
   expect(ofCg(m, 'review-hint')).toHaveLength(2)
   expect(flag(ofCg(m, 'review-hint')[1]!.argv, '--session')).toBe('id2')
 })
@@ -2331,23 +2372,35 @@ test('review hint: asked again for the next chat, with its session', async ($, o
 test('review hint: no ponytail is not asked again for the next chat', async ($, on) => {
   const m = await hintRig($, on, '{"ponytail":false,"edits":0}')
   await mountBand($)
-  ids.now = 'id2'
-  await m.clock.advance(30_000)
+  await turnTo($, m, 'id2')
   expect(ofCg(m, 'review-hint')).toHaveLength(1)
 })
 
 test('review hint: not asked while the model works', async ($, on) => {
+  const contexts = submits(on)
   const m = await hintRig($, on, '{"ponytail":true,"edits":6}')
   await $.command.run(typedCmd('al-band'))
-  const ui = await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props: { ...props, isWorking: true } } as never)
+  await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props: { ...props, isWorking: true } } as never)
   expect(ofCg(m, 'review-hint')).toHaveLength(0)
-  expect(await texts(ui)).not.toContain(`· ${T.reviewHint}`)
+  await typed($, 'a')
+  expect(contexts).toEqual([[]])
 })
 
 for (const reply of ['{"ponytail":true,"edits":4}', '{"ponytail":false,"edits":9}'])
-  test(`review hint: ${reply} draws nothing`, async ($, on) => {
+  test(`review hint: ${reply} gives the model nothing`, async ($, on) => {
+    const contexts = submits(on)
     const m = await hintRig($, on, reply)
-    const ui = await mountBand($)
+    await mountBand($)
     expect(ofCg(m, 'review-hint')).toHaveLength(1)
-    expect(await texts(ui)).not.toContain(`· ${T.reviewHint}`)
+    await typed($, 'a')
+    expect(contexts).toEqual([[]])
   })
+
+test('review hint: cg.py fails: the prompt goes through without it', async ($, on) => {
+  const contexts = submits(on)
+  const m = await started($, on, a => (a[0] === 'review-hint' ? { deny: 'boom' } : noTurn()))
+  await mountBand($)
+  expect(ofCg(m, 'review-hint')).toHaveLength(1)
+  await typed($, 'a')
+  expect(contexts).toEqual([[]])
+})
