@@ -28,6 +28,10 @@ I audited my own Claude Code transcripts (May to October 2026, at API prices) to
 
 The money goes on coming back to a big idle chat. Alethite shows you the price before you pay it, and keeps a memory of your past chats so a fresh one starts informed.
 
+After four weeks with Alethite (October 19 to November 15, same computer, API prices) each message I sent cost about half as much, subagents included. The first message after a long pause went from 32% of all spend to 3%. This is a before-and-after count on one person's work, not a controlled test.
+
+The same count showed where the money goes now. Subagents grew to 44% of all spend, and nearly half of their cost is the start every agent pays before it does any work. A general-purpose agent starts with about 64k tokens of tool descriptions, skill lists and instructions. Alethite now ships lean agent types that start with 5-16k.
+
 ---
 
 ## ✨ What you get
