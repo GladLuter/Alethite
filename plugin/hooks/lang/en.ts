@@ -30,7 +30,7 @@ export const en = {
   spent: (usd: string) => `spent ${usd}`,
   coldPrice: (cost: string) => `cold ${cost}`,
   workerSub: (links: number, calls: number) => `handoffs: ${links} · calls: ${calls}`,
-  leanSub: (usd: string, n: number) => `of it lean agents ${usd} (${n})`,
+  leanSub: (usd: string, n: number) => `of which lean agents ${usd} (${n})`,
   projectSub: (usd: string, links: number) => `project: ${usd} (${links})`,
   resets: (when: string) => `resets ${when}`,
   baseConvs: (n: number) => `conversations: ${n}`,
@@ -166,7 +166,7 @@ export const en = {
 
   // lean agents: the rule the model reads in every prompt, to pick the cheap subagent types
   leanRule:
-    'Subagents (Alethite). A subagent that needs no browser, Obsidian, other MCP tools or skills gets a lean type: alethite:coder, alethite:reviewer, alethite:scout or alethite:researcher. They start 5-10 times cheaper. general-purpose only when it needs those. In workflow scripts the same goes for agent(prompt, { agentType }). alethite:resident is costly (1-hour cache, each write 1.6 times dearer): only when one big picture of the project serves several tasks with pauses over 5 minutes, continue it with SendMessage. Continue another finished agent with SendMessage only if it finished under 5 minutes ago and the next task needs what it read. Otherwise start a new lean agent: a cooled agent rewrites its whole context (median about 100k tokens).',
+    'Subagents (Alethite). A subagent that needs no browser, Obsidian, other MCP tools or skills gets a lean type: alethite:coder, alethite:reviewer, alethite:scout or alethite:researcher. They start 4-13 times cheaper. general-purpose only when it needs those. In workflow scripts the same goes for agent(prompt, { agentType }). alethite:resident is costly (1-hour cache, each write 1.6 times dearer): only when one big picture of the project serves several tasks with pauses over 5 minutes, continue it with SendMessage. Continue a finished agent with SendMessage only if it ended under 5 minutes ago and the next task needs what it read. Otherwise start a new lean one: a cold agent rewrites its whole context (median about 100k tokens).',
 
   // short memory: the rule the model reads in every prompt, and the owner's note that a fact was saved
   memoryRule:

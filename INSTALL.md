@@ -204,7 +204,7 @@ The plugin compresses what it puts into the model's context itself: the results 
   ```powershell
   python C:\_git\Alethite\plugin\scripts\cg.py compress --level ultra --file note.txt
   ```
-- **How much memory is in the context:** `/al-stats` writes a "Memory in context" section into its note: the memory rule, `MEMORY.md`, the results of `recall` and their cost, the handoffs. The same note has a line on the subagents of the period: how many were lean (`alethite:*`) and what they saved. The band and Details count this saving too. `/al-health` shows the compression level and the size of `MEMORY.md`.
+- **How much memory is in the context:** `/al-stats` writes a "Memory in context" section into its note: the memory rule, `MEMORY.md`, the results of `recall` and their cost, the handoffs. The same note has a line on the subagents of the period (this is where you see the lean share): how many were lean (`alethite:*`) and what they saved. The band and Details count this saving too. `/al-health` shows the compression level and the size of `MEMORY.md`.
 - If Claude understands the compressed excerpts worse, set `full` or `lite`.
 
 ### Encryption

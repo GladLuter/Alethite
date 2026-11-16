@@ -89,7 +89,10 @@ export const columns = (s: Snap, info: Info | null, showLimits: boolean): Col[] 
     key: 'worker', label: T.col.worker, value: sv ? (wm ? upTo(wm) : '—') : '?', tone: wm?.tone,
     sub: sv ? [...(w && w.links > 0 ? [T.workerSub(w.links, w.calls)] : []), ...(w && w.lean.agents > 0 ? [T.leanSub(money(w.lean.usd).text, w.lean.agents)] : []), ...(sv.project ? [T.projectSub(upTo(money(sv.project.usd)), sv.project.links)] : [])] : [],
   }
-  if (sv?.project && money(sv.project.usd).tone) workerCol.subTone = { [workerCol.sub.length - 1]: 'error' } // the project line is the last one
+  const dearer: Record<number, 'error'> = {}
+  if (w && w.lean.agents > 0 && money(w.lean.usd).tone) dearer[w.links > 0 ? 1 : 0] = 'error'
+  if (sv?.project && money(sv.project.usd).tone) dearer[workerCol.sub.length - 1] = 'error' // the project line is the last one
+  if (Object.keys(dearer).length) workerCol.subTone = dearer
 
   const [first, ...rest] = s.limits
   const limitsCol: Col[] = showLimits && first

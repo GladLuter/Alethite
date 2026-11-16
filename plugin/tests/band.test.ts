@@ -133,3 +133,10 @@ test('columns: the worker column names the lean agents, the project line stays l
   expect(w.sub).toEqual(['передач: 7 · вызовов: 412', T.leanSub(money(2.5).text, 3), 'проект: дороже на $0.40 (4)'])
   expect(w.subTone).toEqual({ 2: 'error' })
 })
+test('columns: a negative lean sum is an error line, the project line stays last and keeps its tone', () => {
+  const sv = savings({ worker: { usd: 1, links: 7, calls: 412, lean: { usd: -0.3, agents: 2 } }, project: { usd: -0.4, links: 4, lean: { usd: 0, agents: 0 } } })
+  const w = columns(snap(), info({ savings: sv }), true).find(x => x.key === 'worker')!
+  expect(w.sub[1]).toBe(T.leanSub(T.dearer('$0.30'), 2))
+  expect(w.sub[2]).toBe('проект: дороже на $0.40 (4)')
+  expect(w.subTone).toEqual({ 1: 'error', 2: 'error' })
+})
