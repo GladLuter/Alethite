@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="400" viewBox="0 0 880 400" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-label="Four weeks with Alethite: one message cost 54% less; the first message after an hour-long pause fell from 32% to 3% of all spend; cache rewrites fell from 41% to 4%.">
+<rect x="0.5" y="0.5" width="879" height="399" rx="12" fill="#fcfcfb" stroke="rgba(11,11,11,0.10)"/>
+<text x="32" y="48" font-size="22" font-weight="600" fill="#0b0b0b">Four weeks with Alethite</text>
+<text x="32" y="74" font-size="14" fill="#52514e">My own Claude Code work on one computer, at API prices. Without Alethite: May 25 to Oct 13. With it: Oct 19 to Nov 15.</text>
+<text x="32" y="210" font-size="64" font-weight="600" fill="#0b0b0b">&#8722;54%</text>
+<text x="32" y="240" font-size="14" fill="#52514e">cost of one message I sent</text>
+<text x="32" y="260" font-size="13" fill="#898781">subagents included</text>
+<line x1="300" y1="120" x2="300" y2="330" stroke="#e1e0d9"/>
+<text x="360" y="130" font-size="13" fill="#898781">Share of all spend</text>
+<line x1="360.0" y1="150" x2="360.0" y2="300" stroke="#e1e0d9"/>
+<text x="360.0" y="318" font-size="12" text-anchor="middle" fill="#898781">0%</text>
+<line x1="456.0" y1="150" x2="456.0" y2="300" stroke="#e1e0d9"/>
+<text x="456.0" y="318" font-size="12" text-anchor="middle" fill="#898781">10%</text>
+<line x1="552.0" y1="150" x2="552.0" y2="300" stroke="#e1e0d9"/>
+<text x="552.0" y="318" font-size="12" text-anchor="middle" fill="#898781">20%</text>
+<line x1="648.0" y1="150" x2="648.0" y2="300" stroke="#e1e0d9"/>
+<text x="648.0" y="318" font-size="12" text-anchor="middle" fill="#898781">30%</text>
+<line x1="744.0" y1="150" x2="744.0" y2="300" stroke="#e1e0d9"/>
+<text x="744.0" y="318" font-size="12" text-anchor="middle" fill="#898781">40%</text>
+<line x1="840.0" y1="150" x2="840.0" y2="300" stroke="#e1e0d9"/>
+<text x="840.0" y="318" font-size="12" text-anchor="middle" fill="#898781">50%</text>
+<line x1="360" y1="300" x2="840" y2="300" stroke="#c3c2b7"/>
+<text x="360" y="180" font-size="14" fill="#0b0b0b">First message after a pause of an hour or more</text>
+<line x1="389.76" y1="200" x2="663.36" y2="200" stroke="#c3c2b7" stroke-width="2"/>
+<circle cx="663.36" cy="200" r="7" fill="#fcfcfb" stroke="#7aa7ea" stroke-width="3"/>
+<circle cx="389.76" cy="200" r="7" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<text x="679.36" y="205" font-size="14" font-weight="600" fill="#0b0b0b">32%</text>
+<text x="375.76" y="205" font-size="14" font-weight="600" text-anchor="end" fill="#0b0b0b">3%</text>
+<text x="360" y="250" font-size="14" fill="#0b0b0b">All cache rewrites (context written again)</text>
+<line x1="402.24" y1="270" x2="757.44" y2="270" stroke="#c3c2b7" stroke-width="2"/>
+<circle cx="757.44" cy="270" r="7" fill="#fcfcfb" stroke="#7aa7ea" stroke-width="3"/>
+<circle cx="402.24" cy="270" r="7" fill="#2a78d6" stroke="#fcfcfb" stroke-width="2"/>
+<text x="773.44" y="275" font-size="14" font-weight="600" fill="#0b0b0b">41%</text>
+<text x="388.24" y="275" font-size="14" font-weight="600" text-anchor="end" fill="#0b0b0b">4%</text>
+<circle cx="366" cy="352" r="6" fill="#fcfcfb" stroke="#7aa7ea" stroke-width="3"/>
+<text x="380" y="357" font-size="13" fill="#52514e">Without Alethite</text>
+<circle cx="520" cy="352" r="6" fill="#2a78d6"/>
+<text x="534" y="357" font-size="13" fill="#52514e">With Alethite</text>
+<text x="32" y="384" font-size="12" fill="#898781">A before-and-after count on one person's work, not a controlled test.</text>
+</svg>
