@@ -855,14 +855,16 @@ class SyncTest(unittest.TestCase):
 
     def test_an_applied_forget_removes_our_copies_under_other_convs(self):
         self.a.say('SS', self.SECRET, 'ок')
-        self.b.say('SX', self.SECRET, 'ок')
         self.exchange()
+        self.b.say('SX', self.SECRET, 'ок')  # a copy the i3 never saw: its forget line names SS only
+        self.b.index()
         self.assertEqual(self.b.q('SELECT count(*) FROM chunks WHERE text = ?', self.SECRET), 2)
         memdb.forget(self.a.conn, 'SS', self.a.q('SELECT pos FROM chunks WHERE text = ? AND conv = ?', self.SECRET, 'SS'))
         self.a.sync()
         self.assertEqual(self.b.sync()['errors'], [])
         self.assertEqual(self.b.q('SELECT count(*) FROM chunks WHERE text = ?', self.SECRET), 0)
         self.assertEqual(self.b.q('SELECT count(*) FROM outbox'), 0)  # applied, not sent on
+        self.assertEqual(memdb.meta(self.b.conn, 'restart_share'), '1')  # the laptop pushed SX before it pulled the forget
 
     def test_a_failing_cleanup_does_not_stop_the_pull(self):
         self.ready(self.a, self.b)
@@ -886,6 +888,40 @@ class SyncTest(unittest.TestCase):
         memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
         self.a.sync()
         self.assertIsNone(memdb.meta(self.a.conn, 'share_unfinished'))
+
+    def test_a_forget_during_the_cleanup_keeps_its_restart(self):
+        self.ready(self.a)
+        self.a.sync()
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        other = connect(self.a.db, home=self.a.home)  # another chat's cg.py forget
+        self.addCleanup(other.close)
+        real, done = cgsync.delete, []
+
+        def delete(path):
+            real(path)
+            if not done:  # the old generation is half deleted when the owner forgets a record that is out in gen-0001
+                done.append(memdb.forget(other, 'SA', other.execute("SELECT pos FROM chunks WHERE text = 'ответ про ёжика'").fetchone()[0]))
+        with mock.patch.object(cgsync, 'delete', delete):
+            self.assertEqual(self.a.sync()['errors'], [])
+        self.assertEqual((done, memdb.meta(self.a.conn, 'restart_share')), ([1], '1'))
+        self.a.sync()  # gen-0002 starts, and gen-0001 goes once it is all out
+        self.assertNotIn('ответ про ёжика', json.dumps(self.gen_lines(self.a, 2), ensure_ascii=False))
+
+    def test_a_memory_step_that_fails_does_not_keep_the_old_generation(self):  # the cleanup comes before it
+        self.ready(self.a)
+        self.a.sync()
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        with mock.patch.object(cgsync, 'sync_memory', side_effect=OSError('the share hiccups')):
+            self.a.sync()
+        self.assertEqual((os.listdir(os.path.join(self.share, 'HOMEPC')), memdb.meta(self.a.conn, 'restart_share')), (['gen-0001'], None))
+
+    def test_a_failed_cleanup_is_told_in_the_owners_words(self):
+        self.ready(self.a)
+        self.a.sync()
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        with mock.patch.object(cgsync, 'delete', side_effect=OSError('in use')):
+            r = self.a.sync()
+        self.assertEqual(r['errors'], [{'where': 'cleanup', 'error': t('share_cleanup_failed', e='OSError: in use')}])
 
     def test_a_killed_start_with_a_forgotten_text_is_repaired_without_a_new_label(self):
         self.ready(self.a)

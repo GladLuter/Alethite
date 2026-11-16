@@ -83,7 +83,12 @@ def _typed(text, kind):
     """What a person (or, in a subagent, the parent agent) wrote, without injected parts."""
     if not isinstance(text, str):
         return []
-    text = _LESSONS.sub('', _REMINDER.sub('', strip_handoff(text))).strip()
+    for _ in range(3):  # a pass takes the innermost block of a nested one: a few passes, each linear
+        cut = _LESSONS.sub('', _REMINDER.sub('', strip_handoff(text)))
+        if cut == text:
+            break
+        text = cut
+    text = text.strip()
     text = '' if INJECTED.match(text) or text.startswith('[Request interrupted by user') else text  # what is left still starts like injected text: an unclosed reminder, a slash command, an Esc interrupt
     return [(kind, text, None)] if text else []
 

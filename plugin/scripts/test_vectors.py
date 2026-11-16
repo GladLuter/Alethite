@@ -329,7 +329,7 @@ class VectorsTest(unittest.TestCase):
         r = embed_pending(self.conn, embed_fn=restores_meanwhile, batch=2)
         self.assertEqual((self.q('SELECT vec = ? FROM vecs WHERE chunk = ?', restored, last), r['done']), (1, self.records - 1))  # not embedded again
 
-    def test_search_vectors_scope_and_order(self):
+    def test_search_many_scope_and_order(self):
         embed_pending(self.conn, embed_fn=fake)
         conv_of = lambda rowid: self.q('SELECT conv FROM chunks WHERE rowid = ?', rowid)
         qvec = pack(fake(['ёжик в тумане'])[0])
@@ -360,7 +360,7 @@ class VectorsTest(unittest.TestCase):
         self.assertEqual((self.q('SELECT count(*) FROM vecs'), vector_status(self.conn)['model']), (n, MODEL))
         self.assertEqual(r['pending'], self.records)  # all of it is still to be recomputed for the new model
 
-    def test_search_vectors_ignores_wrong_length_blobs(self):
+    def test_search_many_ignores_wrong_length_blobs(self):
         embed_pending(self.conn, embed_fn=fake)
         tool = self.q("SELECT rowid FROM chunks WHERE kind = 'tool'")
         self.conn.execute("INSERT INTO vecs VALUES(?, 0, 'S1', X'0102')", (tool,))

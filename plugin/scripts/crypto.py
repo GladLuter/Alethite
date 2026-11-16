@@ -72,7 +72,7 @@ def moved(path):
     p, old = os.path.abspath(path), norm(OLD_HOME_DIR)
     if os.path.exists(OLD_HOME_DIR) or not (norm(p) == old or norm(p).startswith(old + os.sep)):
         return path
-    return str(pathlib.Path(HOME_DIR, p[len(old):].lstrip(os.sep)))
+    return str(pathlib.Path(HOME_DIR, os.path.relpath(p, OLD_HOME_DIR)))  # not p[len(old):]: a lower-cased name can be longer ('İ')
 
 
 def settings_path(db):
@@ -194,7 +194,7 @@ def set_fields(settings, updates, wait=5, fill=False):
     try:
         s = _read(settings)
         if fill:
-            updates = {k: v for k, v in updates.items() if k not in s}
+            updates = {k: v for k, v in updates.items() if k not in s and v is not None}
         for k, v in updates.items():
             if v is None:
                 s.pop(k, None)
@@ -203,9 +203,7 @@ def set_fields(settings, updates, wait=5, fill=False):
         if updates:
             atomic_write(settings, json.dumps(s, ensure_ascii=False, indent=2).encode('utf-8'))
     finally:
-        lock.close()
-        with contextlib.suppress(OSError):  # a waiter still holds it open (Windows refuses): the next writer removes it
-            os.remove(settings + '.settings.lock')  # shortcut: on POSIX a waiter could lock the removed file's inode, the app is Windows-first
+        lock.close()  # the lock file stays, like every memdb.lock file: removing it would let a waiter lock a file nobody else sees
     return list(updates)
 
 

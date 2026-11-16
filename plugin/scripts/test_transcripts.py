@@ -138,6 +138,7 @@ class TranscriptsTest(unittest.TestCase):
             strip_handoff('a' + mark * 5000)
             self.assertLess(time.time() - t0, 1, mark)
         self.assertEqual(_typed('x <system-reminder>r</system-reminder> y [al-lessons]l[/al-lessons] z [al-handoff]h[/al-handoff]', 'owner'), [('owner', 'x  y  z', None)])
+        self.assertEqual(_typed('x <system-reminder>a<system-reminder>b</system-reminder>c</system-reminder> y', 'owner'), [('owner', 'x  y', None)])  # nested
 
     def test_tool_summary_and_edit(self):
         path = self.write('s.jsonl', [

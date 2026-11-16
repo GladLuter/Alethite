@@ -175,6 +175,12 @@ class HomeTest(unittest.TestCase):
             self.assertEqual(crypto.moved(join(self.old, 'far')), join(self.new, 'far'))
             self.assertEqual(crypto.moved('D:\\elsewhere'), 'D:\\elsewhere')
 
+    def test_moved_cuts_by_the_path_not_by_its_lower_case(self):  # before 3.12 normcase is .lower(), and 'İ'.lower() is two characters
+        join, old = os.path.join, os.path.join(os.path.dirname(self.old), 'İLKİN', 'cacheguard')
+        with mock.patch.object(crypto, 'OLD_HOME_DIR', old), mock.patch.object(crypto, 'norm', lambda p: os.path.abspath(p).lower()):
+            self.assertEqual(crypto.moved(join(old, 'handoffs', 'x.md')), join(self.new, 'handoffs', 'x.md'))
+            self.assertEqual(crypto.moved(old), self.new)
+
     def test_moved_keeps_path_when_old_exists(self):
         os.makedirs(self.old)
         path = os.path.join(self.old, 'far')
@@ -229,6 +235,12 @@ class SettingsTest(unittest.TestCase):
         held.close()
         crypto.set_fields(self.path, {'b': 2})
         self.assertEqual(json.loads(self.raw()), {'a': 1, 'b': 2})
+
+    def test_set_fields_fill_names_only_what_it_writes_and_keeps_its_lock_file(self):  # removing it opened a race on POSIX
+        self.write('{"a": 1}')
+        self.assertEqual(crypto.set_fields(self.path, {'a': 2, 'b': None, 'c': 3}, fill=True), ['c'])
+        self.assertEqual(json.loads(self.raw()), {'a': 1, 'c': 3})
+        self.assertTrue(os.path.exists(self.path + '.settings.lock'))
 
     def test_set_fields_puts_the_bytes_on_the_disk_before_the_replace(self):
         calls = []

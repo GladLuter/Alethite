@@ -20,7 +20,7 @@ from compress import LEVELS, compress
 from transcripts import find_session, last_usage, project_key, project_keys
 
 
-INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings', 'agent-age', 'review-hint')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
+INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings', 'agent-age', 'review-hint', 'settings-fill')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
 SHORT = (*INDEX_FREE, 'lessons-match')  # the runs that do not merge, nor open the index again to keep forgets (lessons-match reads it and writes no forget)
 
 
@@ -596,7 +596,7 @@ def main(argv):
         texts.lang = a.lang
         if a.db is not None:
             a.db = os.path.abspath(a.db)  # a bare name has no folder: the settings and locks lie beside the index
-        if a.db is None:
+        else:
             # job is imported (it costs time) only when the old folder or --follow-job asks for it; the flag finds an old task that outlived the move
             minutes = (os.path.isdir(crypto.OLD_HOME_DIR) or a.follow_job) and _job_step(home_notes, 'home_old_task_failed', _old_task_off)
             if minutes is None and os.path.isdir(crypto.OLD_HOME_DIR) and not os.path.exists(crypto.HOME_DIR):  # None: the old task stays
@@ -634,7 +634,7 @@ def main(argv):
         elif a.where and a.where.configured and a.cmd not in SHORT:
             # forgets made on C: while the settings were unreadable; never on the per-prompt path, and a busy index takes them on the next run
             with contextlib.suppress(Exception):
-                indexdir.apply_forgets(a.db)
+                indexdir.apply_forgets(a.db, push=True)  # that home index is never merged: its outbox line would stay there
         try:
             out, code = a.fn(a), 0
         finally:

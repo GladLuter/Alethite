@@ -112,6 +112,16 @@ class CgTest(unittest.TestCase):
         with open(path, 'rb') as f:
             self.assertEqual(f.read(), before)
 
+    def test_settings_fill_needs_no_index(self):  # indexDir away and C: below the stand-in minimum: the settings are written all the same
+        os.makedirs(crypto.HOME_DIR, exist_ok=True)
+        path = os.path.join(crypto.HOME_DIR, 'settings.json')
+        self.addCleanup(lambda: [os.remove(p) for p in (path, path + '.settings.lock') if os.path.exists(p)])
+        with mock.patch.object(indexdir, 'resolve', side_effect=ValueError('no index')):
+            code, out, _ = self.capture(['--projects', self.projects, 'settings-fill', '--values={"syncDir": "D:\\\\s"}'])
+        self.assertEqual((code, out.get('added')), (0, ['syncDir']))
+        with open(path, encoding='utf-8') as f:
+            self.assertEqual(json.load(f), {'syncDir': 'D:\\s'})
+
     def agent_file(self, aid, calls, meta=True):
         # calls: (message id, time, 5m write, 1h write, read)
         def line(mid, ts, c5, c1, cr):
@@ -1211,7 +1221,8 @@ class CgTest(unittest.TestCase):
             self.assertEqual(self.main_home('lessons', '--all')[0], 0)  # a busy index: the command works, the forget waits
         self.assertEqual(self.secret_in(os.path.join(far, 'index.db')), (1, 0, 0))
         self.assertEqual(self.main_home('lessons', '--all')[0], 0)
-        self.assertEqual(self.secret_in(os.path.join(far, 'index.db')), (0, 1, 0))
+        # and its line for the other computers: the home index of that time is never merged (no mark), its outbox stays there
+        self.assertEqual(self.secret_in(os.path.join(far, 'index.db')), (0, 1, 1))
 
     def test_unreadable_settings_tells_owner(self):
         far, home = self.forgotten_in_the_folder(old_copy=True)
@@ -1329,7 +1340,7 @@ class CgTest(unittest.TestCase):
         self.move_ui(True)
         code, out, _ = self.main_home('index-dir', '--path', os.path.join(self.tmp, 'far'))
         self.assertEqual((code, out['done'], out['notes']), (0, True, []))  # a lock file still open would have been index_old_busy
-        self.assertEqual(os.listdir(home), ['settings.json'])
+        self.assertEqual(os.listdir(home), ['settings.json', 'settings.json.settings.lock'])  # the settings lock stays, as every lock file does
 
     @unittest.skipUnless(os.name == 'nt', 'the move is Windows only')
     def test_a_busy_index_stops_the_move_before_anything_and_none_of_the_locks_is_kept(self):

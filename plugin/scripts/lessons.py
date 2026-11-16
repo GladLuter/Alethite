@@ -71,6 +71,8 @@ def save(conn, project, fields, now=None):
     conn.execute('BEGIN IMMEDIATE')
     with conn:
         h = memdb.text_hash(text)
+        if conn.execute('SELECT 1 FROM forgotten WHERE cls = ? AND hash = ?', (KIND, h)).fetchone():  # every other computer would skip it
+            raise ValueError(t('lesson_forgotten'))
         row = conn.execute('SELECT c.rowid, c.pos FROM keys k JOIN chunks c ON c.rowid = k.id WHERE k.conv = ? AND k.cls = ? AND k.hash = ? AND c.text = ?',
                            (conv, KIND, h, text)).fetchone()
         if row:
@@ -80,8 +82,7 @@ def save(conn, project, fields, now=None):
         pos = max(int(stamp.timestamp() * 1000), last + 1)
         conn.execute('INSERT INTO convs VALUES(?, ?, ?, ?) ON CONFLICT(conv) DO UPDATE SET last_ts = max(last_ts, excluded.last_ts)', (conv, '', ts, ts))
         conn.execute('INSERT OR IGNORE INTO conv_projects VALUES(?, ?)', (conv, project))
-        n = conn.execute('SELECT (SELECT count(*) FROM keys WHERE conv = ? AND cls = ? AND hash = ?) + '
-                         '(SELECT count(*) FROM forgotten WHERE conv = ? AND cls = ? AND hash = ?)', (conv, KIND, h) * 2).fetchone()[0]
+        n = conn.execute('SELECT count(*) FROM keys WHERE conv = ? AND cls = ? AND hash = ?', (conv, KIND, h)).fetchone()[0]
         rid = conn.execute('INSERT INTO chunks(text, conv, pos, ts, kind) VALUES(?, ?, ?, ?, ?)', (text, conv, pos, ts, KIND)).lastrowid
         conn.execute('INSERT INTO keys(id, conv, cls, hash, n) VALUES(?, ?, ?, ?, ?)', (rid, conv, KIND, h, n))
     return {'id': rid, 'conv': conv, 'pos': pos, 'text': text, 'new': True}

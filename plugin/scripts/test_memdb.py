@@ -122,7 +122,7 @@ class EncryptedIndexTest(unittest.TestCase):
             connect(self.db)
         self.assertEqual(str(cm.exception), t('key_missing'))
         self.assertEqual(hashlib.sha1(self.raw()).hexdigest(), before)
-        self.assertEqual(sorted(os.listdir(os.path.dirname(self.db))), ['index.db', 'settings.json'])
+        self.assertEqual(sorted(os.listdir(os.path.dirname(self.db))), ['index.db', 'settings.json', 'settings.json.settings.lock'])  # the lock of save_key, not of connect
 
     def test_connect_no_key_no_db_is_plain(self):
         connect(self.db).close()
@@ -569,6 +569,34 @@ class MemdbTest(unittest.TestCase):
         self.assertEqual([self.kinds_of(c) for c in ('S1', 'S2', 'S3')], [['claude']] * 3)  # 'ответ' is another record at another pos: it stays
         self.assertEqual(sorted(json.loads(l)['key'][0] for (l,) in self.conn.execute('SELECT line FROM outbox')), ['S1', 'S2', 'S3'])
         self.assertFalse(self.conn.in_transaction)
+
+    def test_forget_takes_both_records_of_one_pos_in_every_copy(self):  # a text block and a tool call in one assistant line
+        line = claude_line('секрет 42')
+        line['message']['content'].append(tool_line('Bash', command='echo секрет-77')['message']['content'][0])
+        for conv in ('S1', 'S2'):
+            self.write('P/%s.jsonl' % conv, [owner_line('вопрос'), line])
+        self.update()
+        pos = self.conn.execute("SELECT pos FROM chunks WHERE conv = 'S1' AND kind = 'claude'").fetchone()[0]
+        self.assertEqual(self.conn.execute("SELECT count(*) FROM chunks WHERE conv = 'S1' AND pos = ?", (pos,)).fetchone(), (2,))
+        self.assertEqual(memdb.forget(self.conn, 'S1', pos), 4)
+        self.assertEqual([self.kinds_of(c) for c in ('S1', 'S2')], [['owner']] * 2)
+
+    def test_connect_sweeps_the_copies_an_old_forget_left_once(self):  # 0.9.1 and earlier forgot one conv only
+        for conv in ('S1', 'S2'):
+            self.write('P/%s.jsonl' % conv, [owner_line('секрет 42'), claude_line('ответ')])
+        self.update()
+        memdb.forget_key(self.conn, 'S1', 'owner', memdb.text_hash('секрет 42'), 0)
+        self.conn.execute('UPDATE keys SET pushed = 1')
+        self.conn.execute("DELETE FROM meta WHERE key IN ('forget_sweep', 'restart_share')")  # as a 0.9.1 index has it
+        self.conn.close()
+        self.conn = connect(self.db)
+        self.addCleanup(self.conn.close)
+        self.assertEqual([self.kinds_of(c) for c in ('S1', 'S2')], [['claude']] * 2)
+        self.assertEqual([memdb.meta(self.conn, k) for k in ('forget_sweep', 'restart_share')], ['1', '1'])  # the S2 copy was out: the share starts anew
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM outbox').fetchone(), (1,))  # the 0.9.1 line only: every computer sweeps its own
+        with mock.patch.object(memdb, 'forget_text') as sweep:
+            connect(self.db).close()
+        sweep.assert_not_called()
 
     def test_forget_takes_other_occurrences_and_keeps_the_text_out_under_a_new_conv(self):
         self.write('P/S.jsonl', [owner_line('секрет 42'), claude_line('ответ'), owner_line('секрет 42')])  # n = 0 and 1 of one text

@@ -158,7 +158,21 @@ def connect(path=None, home=None):
     _add_column(conn, 'removed', 'agents', 'TEXT')
     if meta(conn, 'schema') != '2':
         _migrate(conn, home)
+    if meta(conn, 'forget_sweep') != '1':
+        _sweep_forgets(conn)
     return conn
+
+
+def _sweep_forgets(conn):
+    """0.9.2, once: a forget of 0.9.1 or earlier took one conv only, so the copies of a forgotten text under other convs go now. Each computer
+    sweeps its own index from its own `forgotten`, so nothing goes to the outbox; a swept copy out in our batches restarts the share."""
+    conn.execute('BEGIN IMMEDIATE')
+    with conn:
+        if meta(conn, 'forget_sweep') == '1':  # another process got here first
+            return
+        for cls, h in conn.execute('SELECT DISTINCT f.cls, f.hash FROM forgotten f JOIN keys k ON k.cls = f.cls AND k.hash = f.hash').fetchall():
+            forget_text(conn, cls, h, push=False)
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('forget_sweep', '1')")
 
 
 def forget_key(conn, conv, cls, h, n, push=True):

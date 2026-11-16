@@ -79,7 +79,7 @@ def task_xml(command, arguments, minutes, start, user=None):
 def _schtasks(args, run):
     r = run(['schtasks', *args], capture_output=True, timeout=3)  # a hung scheduler must not hold the 8 s hooks: a step that waits twice (old task, new task) still ends under it
     out = (r.stdout or b'') + (r.stderr or b'')
-    return r.returncode, out.decode('oem', errors='replace') if isinstance(out, bytes) else out  # schtasks speaks the OEM code page
+    return r.returncode, out.decode('oem' if os.name == 'nt' else 'utf-8', errors='replace') if isinstance(out, bytes) else out  # schtasks speaks the OEM code page; the codec is Windows-only
 
 
 def install(folder, minutes=MINUTES, python=sys.executable, run=subprocess.run, now=datetime.datetime.now, supported=is_supported):

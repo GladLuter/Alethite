@@ -702,6 +702,17 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
             _push(conn, gen, machine, key, digest_once, deadline, now, report)
         for peer in peers:
             _pull(conn, os.path.join(sync_dir, peer), peer, False, key, model, digest_once, deadline, now, report)
+        if gen:  # after the pulls: a delete that fails (a file open on the other computer) must not stop them
+            try:
+                # a forget is an erase: once the new generation holds all of ours, the older ones (never read again) leave the share
+                if memdb.meta(conn, 'restart_share') == 'old' and not pending(conn) and generation(own).n == gen.n:
+                    for path in old_generations(own):
+                        delete(path)
+                    # only the value acted on: a forget during the deletes set '1', and its restart still has to come
+                    conn.execute("DELETE FROM meta WHERE key = 'restart_share' AND value = 'old'")
+                    conn.execute("DELETE FROM meta WHERE key = 'share_unfinished' AND value = 'old'")
+            except (OSError, ValueError) as e:
+                report['errors'].append({'where': 'cleanup', 'error': t('share_cleanup_failed', e='%s: %s' % (type(e).__name__, e))})
         if memory_dir and gen:  # none of it while our own new generation is blocked: where our facts would go is not decided yet
             gens = {machine: gen}
             for p in peers:
@@ -709,16 +720,6 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
                     gens[p] = generation(os.path.join(sync_dir, p))
             report['memory'] = sync_memory(conn, sync_dir, machine, peers, memory_dir, project_key(project_cwd or os.getcwd(), home), gens, key,
                                            report['errors'])
-        if gen:  # after the pulls: a delete that fails (a file open on the other computer) must not stop them
-            try:
-                # a forget is an erase: once the new generation holds all of ours, the older ones (never read again) leave the share
-                if memdb.meta(conn, 'restart_share') == 'old' and not pending(conn) and generation(own).n == gen.n:
-                    for path in old_generations(own):
-                        delete(path)
-                    conn.execute("DELETE FROM meta WHERE key = 'restart_share'")
-                    conn.execute("DELETE FROM meta WHERE key = 'share_unfinished' AND value = 'old'")
-            except (OSError, ValueError) as e:
-                report['errors'].append({'where': 'cleanup', 'error': str(e) or '%s: %s' % (type(e).__name__, e)})
     except Exception as e:
         report['errors'].append({'where': 'sync', 'error': str(e) if isinstance(e, (OSError, ValueError)) and str(e) else '%s: %s' % (type(e).__name__, e)})
     report['peers'] = {m: last for m, last in conn.execute('SELECT machine, last_batch FROM peers WHERE machine != ? ORDER BY machine', (machine,))}
