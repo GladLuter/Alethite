@@ -1,13 +1,12 @@
 // Pure side of the band: the one line, the Details columns, the time for the delayed worker. No `$`, so the tests call it directly.
-import type { Info, Review, Snap } from '../types'
+import type { Info, Snap } from '../types'
 import { cacheState, minutesLeft, price, size } from './guard'
 import { T } from './text'
 
 export type Tone = 'error' | 'warning'
-export type Token = { key: 'size' | 'cache' | 'send' | 'saved' | 'review' | 'base'; text: string; tone?: Tone }
+export type Token = { key: 'size' | 'cache' | 'send' | 'saved' | 'base'; text: string; tone?: Tone }
 export type Col = { key: string; label: string; value: string; sub: string[]; subTone?: Record<number, Tone>; tone?: Tone }
 
-export const REVIEW_EDITS = 5 // unreviewed code edits from which the band suggests /ponytail-review
 export const SHIELD = '🛡' // the title shortened to this when the row is tight
 const usd = (n: number) => `$${n.toFixed(2)}`
 const asRec = (v: unknown) => (v && typeof v === 'object' ? (v as Record<string, any>) : undefined)
@@ -40,8 +39,7 @@ export const baseTrouble = (status: Record<string, unknown> | null, isSyncOn: bo
   )
 }
 
-// `isReady`: the New worker button is on the row; the hint is for the moment before the handoff only
-export const lineTokens = (s: Snap, info: Info | null, isStaleLit: boolean, review: Review | null = null, isReady = false): Token[] => {
+export const lineTokens = (s: Snap, info: Info | null, isStaleLit: boolean): Token[] => {
   const state = cacheState(s.at, s.now)
   const warn = isStaleLit ? ('warning' as const) : undefined
   const worker = info?.savings?.worker
@@ -51,7 +49,6 @@ export const lineTokens = (s: Snap, info: Info | null, isStaleLit: boolean, revi
     { key: 'cache', text: cacheText(s) },
     ...(s.tokens === null ? [] : [{ key: 'send' as const, text: T.sendHere(usd(price(s.model, s.tokens, state === 'expired' || isStaleLit))), tone: warn }]),
     ...(saved ? [{ key: 'saved' as const, text: saved.tone ? saved.text : T.saved(saved.text), tone: saved.tone }] : []),
-    ...(isReady && review?.ponytail && review.edits >= REVIEW_EDITS ? [{ key: 'review' as const, text: T.reviewHint }] : []),
     ...(baseTrouble(info?.status ?? null, info?.isSyncOn ?? false) ? [{ key: 'base' as const, text: T.baseTrouble, tone: 'warning' as const }] : []),
   ]
 }
@@ -59,10 +56,10 @@ export const lineTokens = (s: Snap, info: Info | null, isStaleLit: boolean, revi
 // The cells the tokens take once joined with " · ".
 export const tokensWidth = (tokens: Token[]) => tokens.map(x => x.text).join(' · ').length
 
-// Drops the savings, the price, the review hint, the cache and the size, in that order, until the line fits; the base alarm stays.
+// Drops the savings, the price, the cache and the size, in that order, until the line fits; the base alarm stays.
 export const fitTokens = (tokens: Token[], budget: number) => {
   let out = tokens
-  for (const key of ['saved', 'send', 'review', 'cache', 'size']) if (tokensWidth(out) > budget) out = out.filter(t => t.key !== key)
+  for (const key of ['saved', 'send', 'cache', 'size']) if (tokensWidth(out) > budget) out = out.filter(t => t.key !== key)
   return out
 }
 

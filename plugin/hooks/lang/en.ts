@@ -25,7 +25,7 @@ export const en = {
   saved: (usd: string) => `saved ≤ ${usd}`,
   dearer: (usd: string) => `${usd} dearer`,
   upTo: (usd: string) => `up to ${usd}`,
-  reviewHint: 'before the handoff: /ponytail-review',
+  reviewHint: (edits: number) => `Alethite: this chat is ready for a handoff to a New worker, and Alethite counts ${edits} code edits here since the last /ponytail-review. Before the handoff, ask the owner once whether to run /ponytail-review (the ponytail:ponytail-review skill). Do not run it unasked.`,
   baseTrouble: 'base !',
   col: { chat: 'This chat', last: 'Last handoff', worker: 'Whole worker', limits: 'Limits', base: 'Base' },
   spent: (usd: string) => `spent ${usd}`,
@@ -202,6 +202,7 @@ export const en = {
     `Alethite stopped this command once: it holds the trigger of a lesson ${isGlobal ? 'for all projects' : 'of this project'}. ${lesson}. If the lesson does not apply now, run the command again and it passes.`,
   coldAgent: (minutes: number, tokens: string, usd: string) =>
     `Alethite stopped this message once: the agent finished ${minutes} min ago and its cache has gone cold, so continuing it rewrites its whole context (${tokens} tokens, about ${usd}). A new lean alethite:* agent for the next step is cheaper. If this agent is really needed, send the same message again and it goes through.`,
+  bgDenied: 'Alethite: lean agents run commands in the foreground. Run it again without run_in_background, with a timeout up to 600000 ms, and read the result.',
   noLessons: 'No lessons in this project yet.',
   cgLessonsDescription: 'The lessons of this project and the ones for all projects (forget <pos>: delete one here and on the other computers)',
   cgLessonsHint: '[forget <pos>]',

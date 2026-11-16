@@ -26,7 +26,7 @@ export const ru: Partial<Texts> = {
   saved: (usd: string) => `экономия ≤ ${usd}`,
   dearer: (usd: string) => `дороже на ${usd}`,
   upTo: (usd: string) => `до ${usd}`,
-  reviewHint: 'перед передачей: /ponytail-review',
+  reviewHint: (edits: number) => `Alethite: этот чат готов к передаче новому работнику, а по счёту Alethite с последнего /ponytail-review в нём ${edits} правок кода. Перед передачей один раз спроси владельца, провести ли /ponytail-review (навык ponytail:ponytail-review). Сам его не запускай.`,
   baseTrouble: 'база !',
   col: { chat: 'Этот чат', last: 'Последняя передача', worker: 'Весь работник', limits: 'Лимиты', base: 'База' },
   spent: (usd: string) => `потрачено ${usd}`,
@@ -200,6 +200,7 @@ export const ru: Partial<Texts> = {
     `Alethite один раз остановил эту команду: в ней триггер урока ${isGlobal ? 'для всех проектов' : 'этого проекта'}. ${lesson}. Если урок сейчас ни при чём, запусти команду ещё раз — она пройдёт.`,
   coldAgent: (minutes: number, tokens: string, usd: string) =>
     `Alethite один раз остановил это сообщение: агент закончил ${minutes} мин назад, его кэш остыл, и продолжение перепишет весь его контекст (${tokens} токенов, примерно ${usd}). Новый лёгкий агент alethite:* на следующий шаг обойдётся дешевле. Если этот агент действительно нужен, отправь то же сообщение ещё раз — оно пройдёт.`,
+  bgDenied: 'Alethite: лёгкие агенты запускают команды на переднем плане. Запусти ещё раз без run_in_background, с тайм-аутом до 600000 мс, и прочитай результат.',
   noLessons: 'В этом проекте уроков пока нет.',
   cgLessonsDescription: 'Уроки этого проекта и уроки для всех проектов (forget <pos>: удалить урок здесь и на других компьютерах)',
   cgLessonsHint: '[forget <pos>]',

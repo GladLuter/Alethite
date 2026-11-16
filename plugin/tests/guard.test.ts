@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { isStale, price, shouldStop, statusText } from '../hooks/guard'
+import { isStale, price, shouldDenyBackground, shouldStop, statusText } from '../hooks/guard'
 import { setLanguage } from '../hooks/text'
 import type { Snap } from '../types'
 
@@ -48,4 +48,14 @@ test('shouldStop: only a found, idle, not yet stopped agent older than its limit
   expect(shouldStop(a, false, true)).toBe(false)
   expect(shouldStop({ ...a, age: 300 }, false, false)).toBe(false)
   expect(shouldStop({ ...a, age: null }, false, false)).toBe(false)
+})
+
+test('shouldDenyBackground: only an alethite:* type with run_in_background true', () => {
+  expect(shouldDenyBackground('alethite:coder', true)).toBe(true)
+  expect(shouldDenyBackground('alethite:coder', 'true')).toBe(true)
+  expect(shouldDenyBackground('alethite:coder', 'false')).toBe(false)
+  expect(shouldDenyBackground('alethite:coder', false)).toBe(false)
+  expect(shouldDenyBackground('alethite:coder', undefined)).toBe(false)
+  expect(shouldDenyBackground('general-purpose', true)).toBe(false)
+  expect(shouldDenyBackground(undefined, true)).toBe(false)
 })

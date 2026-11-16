@@ -12,6 +12,7 @@ export type LaunchIO = {
   fill: (text: string) => Promise<void>
   emptyBox: (draft: string) => Promise<void>
   toast: (text: string) => void
+  currentModel: () => Promise<string>
   switchModel: (model: string) => Promise<boolean> // true: the chat is now on that model
 }
 
@@ -36,7 +37,7 @@ export const launch = async (io: LaunchIO, mode: 'send' | 'fill', model?: Model)
     let isSwitched = false
     let why = ''
     try {
-      isSwitched = await io.switchModel(model)
+      isSwitched = (await io.currentModel()).includes(model) || (await io.switchModel(model)) // already on it: no /model
     } catch (err) {
       why = message(err) // a throw counts as a model that did not switch
     }

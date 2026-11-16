@@ -36,7 +36,6 @@ declare module 'claude-code' {
       isDetails: boolean
       calmId: string
       delayedAt: number | null
-      review: Review | null
     }
   }
 }

@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Review, Savings, Snap } from '../types'
 import { columns, delayAt, money, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
-import { isStale, shouldStop, size, statusText } from './guard'
+import { isStale, shouldDenyBackground, shouldStop, size, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
 import { flush, notePath, summaryNote, summaryPath } from './notes'
@@ -37,7 +37,6 @@ const info = atom({ plugin: 'alethite', key: 'info' } as const, null)
 const isDetails = atom({ plugin: 'alethite', key: 'isDetails' } as const, false)
 const calmId = atom({ plugin: 'alethite', key: 'calmId' } as const, '')
 const delayedAt = atom({ plugin: 'alethite', key: 'delayedAt' } as const, null)
-const review = atom({ plugin: 'alethite', key: 'review' } as const, null)
 
 // The helpers below take `$` and so stay in this file: the loader follows `$` only into functions declared here, never across an import.
 
@@ -418,6 +417,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
         toast($, text)
         told = text
       },
+      currentModel: () => $.session.model(),
       switchModel: async m => (await $.command.run({ command: 'model', args: m }), (await $.session.model()).includes(m)),
     }
     outcome = await launch(io, mode, model)
@@ -466,6 +466,9 @@ export const register: Register = (on, options) => {
   const rulesAt = new Map<string, number | null>() // the context size at the last reminder of the rules for all projects, by chat (null: it was unknown)
   const setOf = (m: Map<string, Set<number>>, id: string) => m.get(id) ?? m.set(id, new Set()).get(id)!
   let readyIn = '' // the chat whose New worker button was ready at the last draw ('' when none)
+  const REVIEW_EDITS = 5 // unreviewed code edits from which the main chat is told to offer /ponytail-review
+  const reviewDue = new Map<string, number>() // by chat: the edits count of a review hint the main chat has not been told yet
+  const reviewSaid = new Set<string>() // chats told since their count was last under the limit; in memory only, a reload may say it once more
   let isPonytailOff = false // the last hint said ponytail is not installed: stop asking
   let isLessonsNoted = false // a lesson search that fails on every message is kept for /al-health once, not on each
 
@@ -587,10 +590,12 @@ export const register: Register = (on, options) => {
   const ended = new Map<string, number>()
   const stoppedAgent = new Set<string>()
   const agentNames = new Map<string, string>()
+  const agentTypes = new Map<string, string>()
 
   on('agent.spawn', async (_, e, next) => {
     const r = await next(e)
     if (e.name !== undefined && r.agentId !== undefined) agentNames.set(e.name, r.agentId)
+    if (r.agentId !== undefined) agentTypes.set(r.agentId, e.subagentType)
     return r
   })
 
@@ -848,8 +853,28 @@ export const register: Register = (on, options) => {
     const kind = (e.origin as { kind?: string } | undefined)?.kind
     const isOwners = kind === undefined || kind === 'composer' || kind === 'bridge' || kind === 'sdk' || kind === 'unclassified'
     if (isOwners && !e.isMeta) await recheck($, python)
-    if (!isLessonsOn || e.command !== undefined || e.isMeta || !isOwners) return next(e)
+    // the review hint rides the owner's next message once; a failure here costs nothing but the hint
     const blocks: string[] = []
+    let hint: [id: string, edits: number] | undefined
+    // a dropped prompt never reached the model: the hint comes back for the next one
+    const pass = async () => {
+      const r = await next(blocks.length ? { ...e, context: [...(e.context ?? []), ...blocks] } : e)
+      if (hint && r.drop !== undefined) (reviewDue.set(hint[0], hint[1]), reviewSaid.delete(hint[0]))
+      return r
+    }
+    if (isOwners && !e.isMeta && e.command === undefined) {
+      try {
+        const id = await $.session.id()
+        const edits = reviewDue.get(id)
+        if (edits !== undefined) {
+          reviewDue.delete(id)
+          reviewSaid.add(id)
+          hint = [id, edits]
+          blocks.push([START, T.reviewHint(edits), END].join('\n'))
+        }
+      } catch {}
+    }
+    if (!isLessonsOn || e.command !== undefined || e.isMeta || !isOwners) return pass()
     // the rules for all projects come first and need no Python and no minimum length; a failure in one part must not stop the other
     try {
       const id = await $.session.id()
@@ -888,7 +913,16 @@ export const register: Register = (on, options) => {
         isLessonsNoted = true
       }
     }
-    return next(blocks.length ? { ...e, context: [...(e.context ?? []), ...blocks] } : e)
+    return pass()
+  })
+
+  // A lean agent asking for a background command is refused with the way to run it in the foreground; the main chat, other types, unknown
+  // ids and any failure pass.
+  on('tool.call', { tool: ['Bash', 'PowerShell'] }, async (_, e, next) => {
+    try {
+      if (e.agentId !== undefined && shouldDenyBackground(agentTypes.get(e.agentId), e.run_in_background)) return { deny: T.bgDenied }
+    } catch {}
+    return next(e)
   })
 
   // A Bash or PowerShell command that holds a lesson's trigger is stopped once in a chat, with the lesson; the same command again passes.
@@ -970,7 +1004,6 @@ export const register: Register = (on, options) => {
     const armed = await read($, isArmed)
     const busy = await read($, isBusy)
     const wait = await read($, delayedAt)
-    const hint = await read($, review)
     const data = await read($, info)
     const isOpen = await read($, isDetails)
 
@@ -1023,14 +1056,19 @@ export const register: Register = (on, options) => {
     const launchLabel = busy ? T.busy : T.newWorker
     // the hint is asked of cg.py when the New worker button becomes ready, not on every redraw; a draw while it stays ready asks nothing
     const readyId = wait === null && !isWorking && !busy ? s.id : ''
-    const isReady = readyId !== ''
     if (readyId !== readyIn) {
       readyIn = readyId
       if (readyId && !isPonytailOff)
         void guarded($, 'review', async () => {
-          const r = (await runCg($, python, ['review-hint', '--session', await $.session.id()], 8_000)) as unknown as Review
-          await update($, review, () => r)
+          const id = await $.session.id()
+          const r = (await runCg($, python, ['review-hint', '--session', id], 8_000)) as unknown as Review
           isPonytailOff = r.ponytail === false
+          if (r.ponytail && r.edits >= REVIEW_EDITS) {
+            if (!reviewSaid.has(id)) reviewDue.set(id, r.edits)
+          } else {
+            reviewSaid.delete(id) // under the count again: the next time it reaches it, the model hears of it once more
+            reviewDue.delete(id)
+          }
         })
     }
     const detailsLabel = isOpen ? T.compact : T.details
@@ -1053,7 +1091,7 @@ export const register: Register = (on, options) => {
       // the row is the title, the tokens ("· " + text), a spacer and the buttons, one gap between neighbours; a Button draws `[ label ]`, its label plus 4.
       // The tokens' ' · ' joins in tokensWidth are 3 cells short of what they take in the row, and the spacer's gap is one more.
       const room = (rowTitle: string) => (e.surface === 'terminal' ? e.props.bodyColumns - rowTitle.length - buttons.join('').length - 5 * buttons.length - 4 : Infinity)
-      const all = lineTokens(s, data, isLit, hint, isReady)
+      const all = lineTokens(s, data, isLit)
       let [rowTitle, left] = [T.bandTitle, room(T.bandTitle)]
       let tokens = fitTokens(all, left)
       if (tokensWidth(tokens) > left) [rowTitle, left, tokens] = [SHIELD, room(SHIELD), fitTokens(all, room(SHIELD))] // not even the base alarm fits beside the name: the shield alone
