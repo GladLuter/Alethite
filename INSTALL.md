@@ -88,7 +88,7 @@ Use this path to change the code or to run `cg.py` by hand. The plugin is then r
 
 ## Updating
 
-The plugin installed from GitHub updates in four steps.
+The plugin installed from GitHub updates in three steps.
 
 1. Set `$CC` as in "Installing", step 1, then refresh the catalog and update the plugin:
    ```powershell
