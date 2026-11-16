@@ -33,6 +33,7 @@ const fake = (o: { draft?: string; handoffError?: string; clearError?: string; s
     },
     emptyBox: async () => void calls.push('emptyBox'),
     toast: text => void (calls.push('toast'), toasts.push(text)),
+    currentModel: async () => 'haiku',
     switchModel: async m => (calls.push(`model ${m}`), !o.modelFails),
   }
   return { io, calls, toasts, sent, filled }
@@ -121,6 +122,17 @@ test('a model is switched after the handoff, before /clear; one that did not swi
   expect(await launch(bad.io, 'send', 'sonnet')).toBe('failed')
   expect(bad.calls).toEqual(['draft', 'handoff', 'model sonnet', 'toast'])
   expect(bad.toasts).toEqual([T.modelSwitchFailed('sonnet')])
+})
+
+test('the chosen model is already current: no /model, the launch goes on; another model is switched as before', async () => {
+  const same = fake()
+  same.io.currentModel = async () => 'claude-sonnet-5-5'
+  expect(await launch(same.io, 'send', 'sonnet')).toBe('sent')
+  expect(same.calls).toEqual(['draft', 'handoff', 'clear', 'submit', 'emptyBox'])
+  const other = fake()
+  other.io.currentModel = async () => 'claude-sonnet-5-5'
+  expect(await launch(other.io, 'send', 'opus')).toBe('sent')
+  expect(other.calls).toContain('model opus')
 })
 
 test('a /model that throws keeps its reason in the toast', async () => {

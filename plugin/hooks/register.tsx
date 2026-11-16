@@ -417,6 +417,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
         toast($, text)
         told = text
       },
+      currentModel: () => $.session.model(),
       switchModel: async m => (await $.command.run({ command: 'model', args: m }), (await $.session.model()).includes(m)),
     }
     outcome = await launch(io, mode, model)
