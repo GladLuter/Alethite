@@ -48,6 +48,7 @@ class ManifestTest(unittest.TestCase):
             self.assertIn('verbatim', body)
             self.assertIn('code and quotes', body)
             self.assertEqual('still running' in body, name in ('coder', 'reviewer', 'resident'))
+            self.assertEqual('wait for it in the foreground' in body, name in ('coder', 'reviewer', 'resident'))
             self.assertEqual('report file' in body, name in ('reviewer', 'resident'))
             self.assertEqual('experimental' in fm, name == 'resident')
             self.assertEqual('cacheTtl: 1h' in head, name == 'resident')
