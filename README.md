@@ -155,17 +155,7 @@ Full walkthrough: [INSTALL.md](INSTALL.md).
 
 ## 🪶 Lean agent types
 
-Alethite ships five agent types. Each starts with only the tools it needs, so a helper costs far less than the built-in `general-purpose` (about 64k tokens at start). The main chat is told to pick them. Start is the measured size of the first call.
-
-| Type | Tools | Model | CLAUDE.md | Start |
-|---|---|---|---|---|
-| `scout` | Read, Grep, Glob | haiku | no | 4.8k |
-| `researcher` | Read, Grep, Glob, WebSearch, WebFetch | sonnet | yes | 11.3k |
-| `reviewer` | Read, Grep, Glob, Bash, PowerShell | sonnet | yes | 15.6k |
-| `coder` | Read, Edit, Write, Bash, PowerShell, Grep, Glob | sonnet | yes | 16.2k |
-| `resident` (expensive) | Read, Grep, Glob, Bash, PowerShell | sonnet | yes | 15.6k |
-
-Use `alethite:<name>`, for example `alethite:scout`. `resident` is expensive: it keeps a one-hour cache (a cache write costs 1.6 times more). Take it only when several tasks share one big picture of the project and pause for more than 5 minutes between them, and continue it with SendMessage. Otherwise take `reviewer`. In a workflow, `agent()` takes the type in its `agentType` option. The new types show up after `/reload-plugins` or in a new chat, because Claude Code reads the agent list only at session start and on reload.
+Alethite ships five agent types (`scout`, `researcher`, `reviewer`, `coder`, `resident`) that start with only the tools they need. They start with 5-16k tokens, against about 64k for the built-in `general-purpose` on the author's computer. The main chat is told to pick them. Types, tools and details are in [INSTALL.md](INSTALL.md#lean-agent-types).
 
 ## 📋 Requirements
 

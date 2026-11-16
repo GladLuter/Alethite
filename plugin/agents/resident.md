@@ -1,6 +1,6 @@
 ---
 name: resident
-description: Long-lived reviewer, expensive (1 hour cache, a cache write costs 1.6 times more). Use it only when one big picture of the project serves several tasks with pauses longer than 5 minutes, and keep going with it through SendMessage. Otherwise use reviewer. It has Read, Grep, Glob, Bash, PowerShell, no MCP tools, no skills.
+description: Long-lived reviewer, expensive (1 hour cache, a cache write costs 1.6 times more than the 5-minute one). Use it only when one big picture of the project serves several tasks with pauses of 5 to 60 minutes, and keep going with it through SendMessage. After an hour start a new one. Otherwise use reviewer. It has Read, Grep, Glob, Bash, PowerShell, no MCP tools, no skills.
 tools: Read, Grep, Glob, Bash, PowerShell
 model: sonnet
 experimental:
