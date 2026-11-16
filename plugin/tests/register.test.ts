@@ -676,6 +676,7 @@ const fakeVault = (on: any) => {
   return v
 }
 
+const outboxKeys = (m: { store: Map<string, unknown> }) => [...m.store.keys()].filter(k => k.startsWith('outbox:'))
 const statsRig = async ($: any, on: any, answer: (a: string[]) => unknown = () => ran(JSON.stringify({ metrics: {}, note: NOTE, errors: [] })), env: Record<string, string> = { COMPUTERNAME: 'PC-1' }) => {
   const vault = fakeVault(on)
   const m = await started($, on, a => (a[0] === 'stats' ? answer(a) : ran('{}')), undefined, undefined, env)
@@ -719,7 +720,7 @@ test('/al-stats: Obsidian up: the note and the summary are written, the outbox i
   expect(summary).toContain('PC-2')
   expect(summary.split('\n').filter(l => /^\| 2026/.test(l))).toHaveLength(2) // the summary does not list itself
   expect(vault.calls[0]).toBe(`obsidian create_vault_file ${notePath('PC-1', today())}`)
-  expect(m.store.get('outbox')).toEqual([])
+  expect(outboxKeys(m)).toEqual([])
   expect(m.toasts).toEqual([])
   expect(text).toContain(T.cgStatsSent(1))
 })
@@ -731,7 +732,7 @@ test('/al-stats: Obsidian down: the error is shown, the note waits in the outbox
   expect(m.toasts).toHaveLength(1)
   expect(m.toasts[0]).toContain(T.failed('al-stats', '').trim())
   expect(m.store.get('lastError')).toMatchObject({ where: 'al-stats' })
-  expect(m.store.get('outbox')).toEqual([{ path: notePath('PC-1', today()), content: NOTE }])
+  expect(outboxKeys(m)).toEqual([`outbox:${notePath('PC-1', today())}`])
   expect(text).toContain(T.cgStatsQueued(1))
   expect(text).toContain('| метрика | база | сейчас |') // the figures are not lost with the vault
   expect(vault.files.size).toBe(0)
@@ -739,7 +740,7 @@ test('/al-stats: Obsidian down: the error is shown, the note waits in the outbox
   vault.fail = () => false
   expect((await stats()).text).toContain(T.cgStatsSent(1)) // the same day: the new note replaces the queued one, not doubles it
   expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
-  expect(m.store.get('outbox')).toEqual([])
+  expect(outboxKeys(m)).toEqual([])
 })
 
 test("/al-stats: an answer with isError is a failure too, with the server's words", async ($, on) => {
@@ -748,7 +749,7 @@ test("/al-stats: an answer with isError is a failure too, with the server's word
   vault.failure = 'isError'
   await stats()
   expect(m.toasts[0]).toContain('vault locked')
-  expect((m.store.get('outbox') as unknown[]).length).toBe(1)
+  expect(outboxKeys(m)).toHaveLength(1)
 })
 
 test('/al-stats: what waited from an earlier day goes first', async ($, on) => {
@@ -756,12 +757,12 @@ test('/al-stats: what waited from an earlier day goes first', async ($, on) => {
   const old = { path: notePath('PC-1', '2026-01-01'), content: 'old' }
   await m.store.set('outbox', [old])
   const duringSend: unknown[] = []
-  vault.onWrite = () => duringSend.push(m.store.get('outbox'))
+  vault.onWrite = () => duringSend.push(outboxKeys(m))
   const { text } = await stats()
-  expect(duringSend[0]).toEqual([old, { path: notePath('PC-1', today()), content: NOTE }]) // saved before the first send, in case the send is cut short
+  expect(duringSend[0]).toEqual([`outbox:${old.path}`, `outbox:${notePath('PC-1', today())}`]) // saved before the first send, in case the send is cut short
   expect(vault.calls.slice(0, 2)).toEqual([`obsidian create_vault_file ${old.path}`, `obsidian create_vault_file ${notePath('PC-1', today())}`])
   expect(vault.files.get(old.path)).toBe('old')
-  expect(m.store.get('outbox')).toEqual([])
+  expect(outboxKeys(m)).toEqual([])
   expect(text).toContain(T.cgStatsSent(2))
 })
 
@@ -772,7 +773,7 @@ test('/al-stats: the vault dies after the first of two: only the rest stays queu
   vault.fail = () => vault.files.size === 1
   const { text } = await stats()
   expect(vault.files.has(old.path)).toBe(true)
-  expect(m.store.get('outbox')).toEqual([{ path: notePath('PC-1', today()), content: NOTE }])
+  expect(outboxKeys(m)).toEqual([`outbox:${notePath('PC-1', today())}`])
   expect(text).toContain(T.cgStatsQueued(1))
 })
 
@@ -781,7 +782,7 @@ test('/al-stats: the summary cannot be built: the note is safe, the owner is tol
   vault.fail = tool => tool === 'list_vault_files'
   const { text } = await stats()
   expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
-  expect(m.store.get('outbox')).toEqual([])
+  expect(outboxKeys(m)).toEqual([])
   expect(m.toasts[0]).toContain('al-stats-summary')
   expect(m.store.get('lastError')).toMatchObject({ where: 'al-stats-summary' })
   expect(text).toContain(T.cgStatsSummaryFailed)
@@ -1242,7 +1243,7 @@ test('lessons: a command with a trigger is stopped once with the lesson, then pa
   expect(stop).toEqual({ deny: gateText() })
   expect(await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/owner/x --paginate' })).toEqual({ result: 'ran' })
   expect(await ($ as any).tool.call({ tool: 'Bash', command: 'git status' })).toEqual({ result: 'ran' })
-  expect(m.store.get('lessonCounts')).toEqual({ stopped: 1 })
+  expect(m.store.get('lessonCounts:id')).toEqual({ stopped: 1 })
 })
 
 test('lessons: a PowerShell command is stopped once as well', async ($, on) => {
@@ -1291,7 +1292,7 @@ test('/al-health: how many lessons, how often they came back and what that cost'
   const { m } = await lessonRig($, on)
   await typed($, 'опять 429 на сборке, что делать?')
   await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })
-  const counts = m.store.get('lessonCounts') as Record<string, number>
+  const counts = m.store.get('lessonCounts:id') as Record<string, number>
   const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
   expect(text).toContain(T.healthLessons(1, 1, counts.chars!, 1, true))
 })
@@ -1399,7 +1400,7 @@ test('global lessons: a failure in the rules part does not stop the project less
 
 test('global lessons: the rules are marked as sent before the counters, so a failing counter does not resend them', async ($, on) => {
   const contexts: string[][] = []
-  const { m } = await lessonRig($, on, [], [rule], { context: contexts, store: refusing('lessonCounts') })
+  const { m } = await lessonRig($, on, [], [rule], { context: contexts, store: refusing('lessonCounts:id') })
   withSize(m, 50_000)
   await typed($, 'да')
   await typed($, 'да')
@@ -1448,7 +1449,7 @@ test('global lessons: rules that no longer fit show in the save toast and in /al
   await typed($, 'да')
   await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
   expect(m.toasts).toEqual([T.toast(T.lessonToast('Action: x | Symptom: y | Cause: z', { left: 1, on: true, stale: false }))])
-  const counts = m.store.get('lessonCounts') as Record<string, number>
+  const counts = m.store.get('lessonCounts:id') as Record<string, number>
   const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
   expect(text).toContain(T.healthRules(4, 1, counts.rulesChars!, 1, true))
 })
@@ -1495,7 +1496,8 @@ const arrivedText = () => T.toast(T.lessonToast('Action: a | Symptom: b | Cause:
 test('global lessons: the first read after the update stores the rules and says nothing', async ($, on) => {
   const { m } = await lessonRig($, on, [], [rule])
   expect(m.toasts).not.toContain(arrivedText())
-  expect(m.store.get('rulesSeen')).toEqual([rule.pos])
+  expect(m.store.get(`rulesSeen:${rule.pos}`)).toBe(true)
+  expect(m.store.has('rulesSeen')).toBe(false)
 })
 
 test('global lessons: a rule the store has seen (another chat) says nothing', async ($, on) => {
@@ -1512,7 +1514,7 @@ test('global lessons: a rule brought while no chat was open is toasted once, at 
 test('/al-health shows the rules line', async ($, on) => {
   const { m } = await lessonRig($, on, [], [rule])
   await typed($, 'да')
-  const counts = m.store.get('lessonCounts') as Record<string, number>
+  const counts = m.store.get('lessonCounts:id') as Record<string, number>
   expect(counts.rules).toBe(1)
   expect(counts.rulesChars).toBeGreaterThan(0)
   const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
@@ -2041,6 +2043,8 @@ test('a wait with a model that does not switch: nothing is sent, the draft stays
   expect(log).toEqual(['/model sonnet'])
   expect(state.text).toBe('продолжаем')
   expect(m.toasts).toContain(T.toast(T.modelSwitchFailed('sonnet')))
+  expect(m.store.get('delayed:id')).toEqual({ at: SOON, model: 'sonnet' }) // nothing was launched: the wait is back once
+  await m.clock.advance(3 * 30_000)
   expect(m.store.has('delayed:id')).toBe(false)
 })
 
@@ -2060,10 +2064,10 @@ test('cancel-delay removes the wait', async ($, on) => {
 })
 
 test("another chat's wait is left alone", async ($, on) => {
-  const { m, log } = await delayed($, on, 'x', new Map([['delayed:other', { at: 1 }]]))
+  const { m, log } = await delayed($, on, 'x', new Map([['delayed:other', { at: NOW }]]))
   await m.clock.advance(60_000)
   expect(log).toEqual([])
-  expect(m.store.get('delayed:other')).toEqual({ at: 1 })
+  expect(m.store.get('delayed:other')).toEqual({ at: NOW })
 })
 
 test('a wait survives a restart', async ($, on) => {
@@ -2534,4 +2538,80 @@ test('a failing review-hint is recorded once per chat', async ($, on) => {
   await turnTo($, m, 'id') // the same chat fails again
   expect(ofCg(m, 'review-hint')).toHaveLength(3)
   expect(m.store.get('lastError')).toMatchObject({ where: 'sync' })
+})
+
+test('the summary reads only new notes', async ($, on) => {
+  const { vault, stats, today } = await statsRig($, on)
+  await stats() // only to learn the day of the mock clock
+  const day = (back: number) => new Date(Date.parse(today()) - back * 86_400_000).toISOString().slice(0, 10)
+  const old = `${T.statsFolder}/${day(5)} PC-2.md`
+  const recent = `${T.statsFolder}/${day(1)} PC-3.md`
+  vault.files.set(old, OTHER)
+  vault.files.set(recent, OTHER)
+  await stats()
+  const reads = () => vault.calls.filter(c => c.startsWith('obsidian get_note_properties')).map(c => c.slice('obsidian get_note_properties '.length))
+  expect(reads()).toContain(old)
+  vault.calls.length = 0
+  await stats()
+  expect(reads()).not.toContain(old)
+  expect(reads()).toContain(recent) // the last two days are read again
+  expect(vault.files.get(summaryPath())).toContain('PC-2') // the kept row is still in the table
+})
+
+test('old rulesSeen and outbox are carried over', async ($, on) => {
+  const store = new Map<string, unknown>([['rulesSeen', [5, 7]]])
+  const { m } = await lessonRig($, on, [], [], { store })
+  expect([...m.store.keys()].filter(k => k.startsWith('rulesSeen'))).toEqual(expect.arrayContaining(['rulesSeen:5', 'rulesSeen:7']))
+  expect(m.store.has('rulesSeen')).toBe(false)
+})
+
+test('old outbox is carried over into one key per note', async ($, on) => {
+  const { vault, m, stats, today } = await statsRig($, on)
+  vault.fail = () => true
+  const n1 = { path: notePath('PC-1', '2026-01-01'), content: 'old' }
+  await m.store.set('outbox', [n1])
+  await stats()
+  expect(outboxKeys(m)).toEqual([`outbox:${n1.path}`, `outbox:${notePath('PC-1', today())}`])
+  expect(m.store.has('outbox')).toBe(false)
+  expect(m.store.get(`outbox:${n1.path}`)).toEqual(n1)
+})
+
+test('two chats counting at once lose nothing', async ($, on) => {
+  const { m } = await lessonRig($, on)
+  await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })
+  ids.now = 'other'
+  await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })
+  expect(m.store.get('lessonCounts:id')).toEqual({ stopped: 1 })
+  expect(m.store.get('lessonCounts:other')).toEqual({ stopped: 1 })
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
+  expect(text).toContain(T.healthLessons(1, 0, 0, 2, true))
+})
+
+test('a chat that is pruned folds its counters into the total', async ($, on) => {
+  const store = new Map<string, unknown>([['lessonCounts', { stopped: 1 }], ['lessonCounts:c1', { stopped: 2, shown: 1 }]])
+  for (let i = 1; i <= 200; i++) store.set(`turn:c${i}`, { at: i, tokens: i })
+  wire(on, [], () => ({ value: usage }), undefined, store)
+  await ($ as any).turn.complete(turn)
+  expect(store.get('lessonCounts')).toEqual({ stopped: 3, shown: 1 })
+  expect(store.has('lessonCounts:c1')).toBe(false)
+})
+
+test('stale After-reset waits are removed at the start', async ($, on) => {
+  const store = new Map<string, unknown>([['delayed:x', { at: NOW - 25 * 3_600_000 }], ['delayed:y', { at: NOW + 3_600_000 }]])
+  const { m } = await delayed($, on, 'x', store)
+  expect(m.store.has('delayed:x')).toBe(false)
+  expect(m.store.get('delayed:y')).toEqual({ at: NOW + 3_600_000 })
+})
+
+test('a failed handoff puts the After-reset wait back once', async ($, on) => {
+  const log: string[] = []
+  const store = dueSoon()
+  box(on, 'продолжаем', log)
+  const m = await started($, on, a => (a[0] === 'handoff' ? failed('no transcript') : ran('{}')), [], nearLimit(), {}, noTurn, store)
+  await $.ui.mount(UI)
+  await m.clock.advance(SOON - NOW)
+  expect(m.store.get('delayed:id')).toEqual({ at: SOON }) // back with the same time
+  await m.clock.advance(3 * 30_000)
+  expect(m.store.has('delayed:id')).toBe(false) // the second failure with the same time is not put back
+  expect(log).toEqual([])
 })

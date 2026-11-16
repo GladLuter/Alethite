@@ -198,13 +198,22 @@ const lessonsOr = async ($: EngineInterface, python: string, kept: Lesson[]) => 
 // A rule for all projects that this computer has not seen yet (the other computer's, brought by the sync, maybe while no chat was open) is
 // toasted: it becomes a standing order in every chat here and must not arrive silently. The positions seen are kept in the store, for all
 // chats; the first run after the update only stores them. `own` is the rule a save has just toasted itself.
-const noteRules = async ($: EngineInterface, list: Lesson[], on: boolean, own?: number) => {
+// One store key per position (`rulesSeen:<pos>`, so two chats never overwrite each other) and a `rulesSeen:init` marker for "not the first run".
+// The old single array `rulesSeen` is carried over into keys on its first read.
+let rulesChain: Promise<void> = Promise.resolve() // one run at a time in this process: two at once would each take the other's half-written keys for news
+const noteRules = ($: EngineInterface, list: Lesson[], on: boolean, own?: number) => (rulesChain = rulesChain.then(() => noteRulesNow($, list, on, own)))
+const noteRulesNow = async ($: EngineInterface, list: Lesson[], on: boolean, own?: number) => {
   try {
-    const seen = (await $.store.get('rulesSeen')) as number[] | undefined
-    const fresh = list.filter(l => l.global && !seen?.includes(l.pos))
+    const old = (await $.store.get('rulesSeen')) as number[] | undefined
+    const keys = new Set((await $.store.keys()).filter(k => k.startsWith('rulesSeen:')))
+    const isFirst = old === undefined && keys.size === 0
+    const key = (pos: number) => `rulesSeen:${pos}`
+    const fresh = list.filter(l => l.global && !keys.has(key(l.pos)) && !old?.includes(l.pos))
     const { left } = rulesContext(list)
-    if (seen !== undefined) for (const l of fresh) if (l.pos !== own) toast($, T.lessonToast(oneLine(l.text), { left, on, stale: false }))
-    if (seen === undefined || fresh.length) await $.store.set('rulesSeen', [...(seen ?? []), ...fresh.map(l => l.pos)])
+    if (!isFirst) for (const l of fresh) if (l.pos !== own) toast($, T.lessonToast(oneLine(l.text), { left, on, stale: false }))
+    if (isFirst || old !== undefined) await $.store.set('rulesSeen:init', true)
+    for (const pos of [...(old ?? []), ...fresh.map(l => l.pos)]) if (!keys.has(key(pos))) await $.store.set(key(pos), true)
+    if (old !== undefined) await $.store.delete('rulesSeen') // after the keys are written: a cut run carries over again
   } catch {} // the list matters more than the notice
 }
 
@@ -216,18 +225,36 @@ const reloadLessons = async ($: EngineInterface, python: string, kept: Lesson[],
 }
 
 // How often the lessons came back, on this computer, for /al-health: what they cost and whether they stop anything.
+// One key per chat (`lessonCounts:<id>`): two chats counting at once never overwrite each other. `lessonCounts` is the total of the chats pruneTurns folded in.
+type Counts = Record<string, number>
 const countLessons = async ($: EngineInterface, key: 'shown' | 'chars' | 'stopped' | 'rules' | 'rulesChars', n: number) => {
-  const all = ((await $.store.get('lessonCounts')) as Record<string, number> | undefined) ?? {}
-  await $.store.set('lessonCounts', { ...all, [key]: (all[key] ?? 0) + n })
+  const at = `lessonCounts:${await $.session.id()}`
+  const all = ((await $.store.get(at)) as Counts | undefined) ?? {}
+  await $.store.set(at, { ...all, [key]: (all[key] ?? 0) + n })
+}
+const sumCounts = async ($: EngineInterface) => {
+  const total: Counts = {}
+  for (const k of (await $.store.keys()).filter(k => k === 'lessonCounts' || k.startsWith('lessonCounts:')))
+    for (const [f, n] of Object.entries(((await $.store.get(k)) as Counts | undefined) ?? {})) total[f] = (total[f] ?? 0) + n
+  return total
 }
 
-// The turn size is kept for the last 200 chats; the oldest by `at` go first.
+// The turn size is kept for the last 200 chats; the oldest by `at` go first, their counters are folded into the total.
 const KEEP_TURNS = 200
 const pruneTurns = async ($: EngineInterface) => {
   const keys = (await $.store.keys()).filter(k => k.startsWith('turn:'))
   if (keys.length <= KEEP_TURNS) return
   const ats = await Promise.all(keys.map(async k => [k, ((await $.store.get(k)) as { at: number | null } | undefined)?.at ?? 0] as const))
-  for (const [k] of ats.sort((a, b) => a[1] - b[1]).slice(0, keys.length - KEEP_TURNS)) await $.store.delete(k)
+  for (const [k] of ats.sort((a, b) => a[1] - b[1]).slice(0, keys.length - KEEP_TURNS)) {
+    await $.store.delete(k)
+    const own = `lessonCounts:${k.slice('turn:'.length)}`
+    const mine = (await $.store.get(own)) as Counts | undefined
+    if (mine === undefined) continue
+    const total = ((await $.store.get('lessonCounts')) as Counts | undefined) ?? {}
+    for (const [f, n] of Object.entries(mine)) total[f] = (total[f] ?? 0) + n
+    await $.store.set('lessonCounts', total)
+    await $.store.delete(own)
+  }
 }
 
 // chats whose size was already asked of cg.py in this load, so a failure is not retried on every tick
@@ -280,13 +307,28 @@ const obsidian = async ($: EngineInterface, tool: string, args: Record<string, u
 }
 
 // The summary note: the frontmatter of every .md note directly in the folder, as one table (not the summary itself).
-const rebuildSummary = async ($: EngineInterface) => {
+// A note dated before the last two days is final: its row is kept in the store (`summaryRow:<path>`) and not read again. Newer ones are read each time.
+// At most 8 calls to Obsidian at once.
+const rebuildSummary = async ($: EngineInterface, today: string) => {
   const [folder, summary] = [T.statsFolder, summaryPath()]
-  // 1000 is the server's maximum: past it the summary would silently miss notes
+  // shortcut: list_vault_files gives at most 1000 notes (~1.4 years on two PCs), move old notes into a year subfolder when it bites
   const { files, truncated } = JSON.parse(await obsidian($, 'list_vault_files', { directory: folder, limit: 1000 })) as { files: string[]; truncated: boolean }
   if (truncated === true) throw new Error(T.summaryTruncated)
   const notes = files.filter(p => p.endsWith('.md') && p !== summary && p.startsWith(`${folder}/`) && !p.includes('/', folder.length + 1))
-  const fronts = await Promise.all(notes.map(async path => JSON.parse(await obsidian($, 'get_note_properties', { path })).frontmatter ?? {}))
+  const final = new Date(Date.parse(today) - 2 * 86_400_000).toISOString().slice(0, 10)
+  const fronts: Record<string, unknown>[] = []
+  let next = 0
+  const worker = async () => {
+    while (next < notes.length) {
+      const [i, path] = [next, notes[next++]!]
+      const day = path.slice(folder.length + 1, folder.length + 11)
+      const isFinal = /^\d{4}-\d\d-\d\d$/.test(day) && day < final
+      const kept = isFinal ? ((await $.store.get(`summaryRow:${path}`)) as Record<string, unknown> | undefined) : undefined
+      fronts[i] = kept ?? (JSON.parse(await obsidian($, 'get_note_properties', { path })).frontmatter ?? {})
+      if (isFinal && kept === undefined) await $.store.set(`summaryRow:${path}`, fronts[i])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(8, notes.length) }, worker))
   await obsidian($, 'create_vault_file', { path: summary, content: summaryNote(fronts) })
 }
 
@@ -302,18 +344,24 @@ const runStats = async ($: EngineInterface, python: string, days: number, compre
   const { note, errors } = (await runCg($, python, args, 600_000)) as { note: string; errors: IndexError[] }
   await indexErrors($, 'al-stats', errors, true) // an unreadable transcript lowers the figures; the note is written all the same
   const path = notePath(host, today)
-  // one note per computer and day: a note still waiting for this day is replaced, not doubled
-  const queue = [...(((await $.store.get('outbox')) as Note[] | undefined) ?? []).filter(n => n.path !== path), { path, content: note }]
-  await $.store.set('outbox', queue) // kept before sending, so nothing is lost if the send is cut short
-  const sent = await flush(queue, async n => void (await obsidian($, 'create_vault_file', n)))
-  await $.store.set('outbox', sent.left)
+  // one note, one key (`outbox:<path>`): one note per computer and day, so a note still waiting for this day is replaced, not doubled
+  const old = (await $.store.get('outbox')) as Note[] | undefined // the single array of before 0.9.2: carried over into keys
+  for (const n of old ?? []) await $.store.set(`outbox:${n.path}`, n)
+  if (old !== undefined) await $.store.delete('outbox')
+  await $.store.set(`outbox:${path}`, { path, content: note }) // kept before sending, so nothing is lost if the send is cut short
+  const keys = (await $.store.keys()).filter(k => k.startsWith('outbox:'))
+  const queue = ((await Promise.all(keys.map(k => $.store.get(k)))) as (Note | undefined)[]).filter((n): n is Note => n !== undefined)
+  const sent = await flush(queue, async n => {
+    await obsidian($, 'create_vault_file', n)
+    await $.store.delete(`outbox:${n.path}`)
+  })
   const figures = note.replace(/^---\n[\s\S]*?\n---\n/, '').trim() + (errors.length ? `\n\n${T.cgStatsErrors(errors.length)}` : '') // the frontmatter is for the vault
   if (sent.error !== undefined) {
     await fail($, 'al-stats', sent.error)
     return `${figures}\n\n${T.cgStatsQueued(sent.left.length)}`
   }
   try {
-    await rebuildSummary($)
+    await rebuildSummary($, today)
   } catch (err) {
     await fail($, 'al-stats-summary', err)
     return `${figures}\n\n${T.cgStatsSummaryFailed}`
@@ -370,7 +418,7 @@ const fireDue = async ($: EngineInterface, python: string, compression: string) 
   if (at === null || at > now || isWorking || shown !== at) return
   await $.store.delete(`delayed:${id}`)
   await update($, delayedAt, () => null)
-  // false = nothing was launched (busy, the busy flag could not be set, or a step before /clear threw): the wait goes back. A throw from startWorker's tail comes after the launch: no put-back.
+  // false = nothing was launched (busy, the busy flag could not be set, or a step before /clear threw or failed): the wait goes back. A throw from startWorker's tail comes after the launch: no put-back.
   const r = await startWorker($, python, 'send', compression, model)
   if (r) return
   if (r === null) {
@@ -431,7 +479,8 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
     await update($, isBusy, () => false)
     await guarded($, 'launch', () => refresh($, python))
   }
-  return outcome !== undefined || isCleared ? true : null // null: a throw before /clear launched nothing, the delayed wait goes back
+  // null: a throw or a 'failed' before /clear launched nothing, the delayed wait goes back (once, see fireDue)
+  return outcome === 'failed' && !isCleared ? null : outcome !== undefined || isCleared ? true : null
 }
 
 export const register: Register = (on, options) => {
@@ -518,6 +567,11 @@ export const register: Register = (on, options) => {
     )
     await guarded($, 'session.start', () => refresh($, python))
     await guarded($, 'session.start', async () => {
+      // a wait of a chat that is closed for good is never read again: drop what is over a day old
+      for (const k of (await $.store.keys()).filter(k => k.startsWith('delayed:'))) {
+        const at = ((await $.store.get(k)) as { at?: unknown } | undefined)?.at
+        if (typeof at === 'number' && at < loadedAt - 86_400_000) await $.store.delete(k)
+      }
       const isOpen = (await $.store.get('details')) === true
       await update($, isDetails, () => isOpen)
       const { at } = await waitOf($, await $.session.id()) // a wait outlives a restart
@@ -655,7 +709,7 @@ export const register: Register = (on, options) => {
       const facts = files.filter(f => f.name.endsWith('.md') && f.name !== 'MEMORY.md').length
       const memory = dir === null ? null : { dir, facts, tokens: autoMemTokens(mem) }
       const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" --lang ${language()} embed --model ${embedModel} --max-seconds 100000`
-      const counts = ((await $.store.get('lessonCounts')) as Record<string, number> | undefined) ?? {}
+      const counts = await sumCounts($)
       const lessons = { count: lessonList.filter(l => !l.global).length, shown: counts.shown ?? 0, chars: counts.chars ?? 0, stopped: counts.stopped ?? 0, on: isLessonsOn }
       const rules = { global: lessonList.filter(l => l.global).length, rules: counts.rules ?? 0, chars: counts.rulesChars ?? 0, left: rulesContext(lessonList).left }
       if (homeDir !== undefined) settingsFile = await settingsFileOf($, homeDir) // after the status run, which may have moved the folder
