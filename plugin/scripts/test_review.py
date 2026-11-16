@@ -72,6 +72,14 @@ class ReviewTest(unittest.TestCase):
         for ev in (line(5, use('Agent', {'prompt': 'run ponytail-review on the diff'})), line(5, {'type': 'text', 'text': '/ponytail-review'}, kind='user')):
             self.assertEqual(review.edits([self.put('B.jsonl', [line(1, use('Edit')), ev, line(6, use('Edit'))])]), 1)
 
+    def test_typed_command_in_the_real_tag_format_is_a_review(self):
+        tags = '<command-message>ponytail:ponytail-review</command-message>\n<command-name>/ponytail:ponytail-review</command-name>'
+        for text in (tags, '<command-name>/ponytail-review</command-name>'):
+            ev = line(5, {'type': 'text', 'text': text}, kind='user')
+            self.assertEqual(review.edits([self.put('D.jsonl', [line(1, use('Edit')), ev, line(6, use('Edit'))])]), 1)
+        other = line(5, {'type': 'text', 'text': '<command-name>/other:review</command-name>'}, kind='user')
+        self.assertEqual(review.edits([self.put('E.jsonl', [line(1, use('Edit')), other])]), 1)
+
     def test_edits_missing_file_and_broken_lines_are_zero(self):
         self.assertEqual(review.edits([os.path.join(self.dir, 'none.jsonl'), self.put('C.jsonl', 'not json\n[1]\n')]), 0)
 
@@ -81,6 +89,10 @@ class ReviewTest(unittest.TestCase):
         a = SimpleNamespace(projects=os.path.join(self.dir, 'projects'), session='S1')
         with mock.patch.dict(os.environ, {'USERPROFILE': self.dir, 'HOME': self.dir}):
             self.assertEqual(cg._review_hint(a), {'ponytail': True, 'edits': 5})
+        with mock.patch.dict(os.environ, {'USERPROFILE': self.dir, 'HOME': self.dir}), mock.patch.object(review, 'edits', side_effect=AssertionError('scanned')):
+            os.remove(os.path.join(self.dir, '.claude', 'plugins', 'installed_plugins.json'))
+            self.assertEqual(cg._review_hint(a), {'ponytail': False, 'edits': 0})  # no ponytail: nothing is scanned
+        self.plugins({'ponytail@ponytail': [{}]})
         a.session = 'nope'
         with mock.patch.dict(os.environ, {'USERPROFILE': self.dir, 'HOME': self.dir}):
             self.assertEqual(cg._review_hint(a), {'ponytail': True, 'edits': 0})

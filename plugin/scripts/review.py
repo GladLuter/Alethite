@@ -2,11 +2,13 @@
 Nothing of ponytail is copied or used: only its name in the plugin files and its command in the transcripts are looked at."""
 import json
 import os
+import re
 
 from transcripts import _blocks, _load, lp
 
 EDIT_TOOLS = ('Edit', 'Write', 'NotebookEdit')
 REVIEW = 'ponytail-review'
+_COMMAND = re.compile(r'<command-name>/(?:[\w-]+:)?' + REVIEW + r'</command-name>')  # how a typed slash command is stored
 
 
 def _json(path):
@@ -36,7 +38,7 @@ def _events(path):
     except OSError:
         return
     for raw in lines:
-        if b'"type"' not in raw:
+        if b'ponytail-review' not in raw and b'"Edit"' not in raw and b'"Write"' not in raw and b'"NotebookEdit"' not in raw:
             continue
         o = _load(raw)
         m = o.get('message') if o else None
@@ -52,7 +54,7 @@ def _events(path):
                     yield ts, 'review'
             elif o.get('type') == 'user' and b.get('type') == 'text' and isinstance(b.get('text'), str):
                 text = b['text'].strip()
-                if text.startswith('/' + REVIEW) or text.startswith('<command-name>/' + REVIEW):
+                if text.startswith('/' + REVIEW) or _COMMAND.search(text):
                     yield ts, 'review'
 
 

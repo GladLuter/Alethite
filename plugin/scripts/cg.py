@@ -303,7 +303,9 @@ def _agent_age(a):
 def _review_hint(a):
     import review
     main, subs = find_session(a.projects, _session(a.session))
-    return {'ponytail': review.ponytail(os.path.expanduser('~')), 'edits': review.edits([main, *subs] if main else subs)}
+    if not review.ponytail(os.path.expanduser('~')):  # nobody to hint for: no transcript is read
+        return {'ponytail': False, 'edits': 0}
+    return {'ponytail': True, 'edits': review.edits([main, *subs] if main else subs)}
 
 
 def _cleanup_on(a):
