@@ -377,6 +377,23 @@ class LeanTest(unittest.TestCase):
             self.assertAlmostEqual(r[k]['lean']['usd'], x, 9)
             self.assertAlmostEqual(r[k]['usd'], base + x, 9)
 
+    def test_agent_read_before_its_meta_is_read_again(self):
+        self.seed()
+        p = self.agent(B, 'agent-late', 'alethite:coder', [acall('l1', T, c1=8000, cr=2000)], meta=False)
+        self.assertEqual(savings.savings(self.dir, B, [A, B], self.cache)['project']['lean']['agents'], 1)
+        with open(p[:-6] + '.meta.json', 'w', encoding='utf-8') as f:
+            json.dump({'agentType': 'alethite:coder'}, f)
+        self.assertEqual(savings.savings(self.dir, B, [A, B], self.cache)['project']['lean']['agents'], 2)
+
+    def test_agents_of_a_chat_in_two_folders_come_from_the_first_only(self):
+        self.seed()
+        self.assertEqual(len(savings._agents(self.dir, savings._paths(self.dir))[B]), 1)
+        q = os.path.join(self.dir, 'q')  # the same session id under a later folder, with an agent of its own
+        os.makedirs(os.path.join(q, B, 'subagents'))
+        shutil.copy(os.path.join(self.dir, 'p', B, 'subagents', 'agent-c.jsonl'), os.path.join(q, B, 'subagents', 'agent-x.jsonl'))
+        shutil.copy(os.path.join(self.dir, 'p', B + '.jsonl'), os.path.join(q, B + '.jsonl'))
+        self.assertEqual(len(savings._agents(self.dir, savings._paths(self.dir))[B]), 1)
+
     def test_unchanged_agent_files_are_not_read_again(self):
         self.seed()
         first = savings.savings(self.dir, B, [A, B], self.cache)

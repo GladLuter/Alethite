@@ -94,7 +94,11 @@ def _cached(cache, path, fn):
     key = fn.__name__ + '|' + path  # a chat is read both as a new one and as an old one
     e = cache.get(key)
     if not (isinstance(e, dict) and e.get('size') == st.st_size and e.get('mtime') == st.st_mtime_ns):
-        e = cache[key] = {'size': st.st_size, 'mtime': st.st_mtime_ns, 'value': fn(path)}
+        v = fn(path)
+        if v is None and fn is agent_start:  # its .meta.json may come later and is no part of the signature: read again
+            cache.pop(key, None)
+            return None
+        e = cache[key] = {'size': st.st_size, 'mtime': st.st_mtime_ns, 'value': v}
     return e['value']
 
 
@@ -178,8 +182,8 @@ def agent_start(path):
     return first and {**first, 'calls': len(seen), 'resumes': resumes, 'cw1h_total': cw1h}
 
 
-def _agents(projects):
-    """{session id: [agent-*.jsonl under <projects>/<folder>/<id>/subagents/, nested ones too]}."""
+def _agents(projects, paths):
+    """{session id: [agent-*.jsonl under <projects>/<folder>/<id>/subagents/, nested ones too]}; of the folder `paths` has the chat in, if it has one."""
     out = {}
     try:
         dirs = sorted(os.listdir(lp(projects)))
@@ -188,6 +192,8 @@ def _agents(projects):
     for d in dirs:
         try:
             for sid in os.listdir(lp(os.path.join(projects, d))):
+                if sid in paths and os.path.dirname(paths[sid]) != os.path.join(projects, d):
+                    continue
                 top = os.path.join(projects, d, sid, 'subagents')
                 for root, _, names in os.walk(lp(top)):
                     out.setdefault(sid, []).extend(os.path.join(top, os.path.relpath(root, lp(top)), n) for n in sorted(names)
@@ -237,7 +243,7 @@ def lean_usd(rec, ref):
 def _lean(projects, paths, cache, gone):
     """(fn, files): fn(convs) is {usd, agents} of the lean agents of those chats (the files while the chat is on the disk, else what cleanup.snapshot
     kept in `gone`; a chat once); files are the agent transcripts read. The reference comes from the disk only."""
-    on_disk = _agents(projects)
+    on_disk = _agents(projects, paths)
     recs = {}
     for ps in on_disk.values():
         for p in ps:

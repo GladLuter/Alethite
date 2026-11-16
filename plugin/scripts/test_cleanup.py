@@ -105,6 +105,15 @@ class CleanupTest(unittest.TestCase):
         self.assertEqual([a['type'] for a in gone[A]['agents']], ['alethite:coder'])
         self.assertEqual(savings.savings(self.projects, C, [A, C], self.cache, gone)['project']['lean'], before)
 
+    def test_gone_skips_a_damaged_row_and_counts_an_agent_once(self):
+        ag = {'type': 'alethite:coder', 'ts': T, 'model': 'm', 'usage': [0, 0, 1, 1], 'calls': 1, 'workflow': False, 'resumes': [], 'cw1h_total': 0}
+        chains = json.dumps([{'rel': 'P/x/subagents/agent-1.jsonl', 'agent': ag}, {'rel': 'P/x/subagents/agent-1.jsonl#5', 'agent': ag}, {'rel': 'P/x.jsonl'}])
+        for conv, c in (('bad', '{bad'), ('x', chains)):
+            self.conn.execute('INSERT INTO removed VALUES(?,?,?,?,?,?)', (conv, 'P/%s.jsonl' % conv, 'now', 'null', 'null', c))
+        gone = cleanup.gone(self.conn)
+        self.assertEqual(gone['bad']['agents'], [])
+        self.assertEqual(gone['x']['agents'], [ag])
+
     def test_snapshot_rewrites_on_second_call(self):
         self.chat_a()
         cleanup.snapshot(self.conn, self.projects, self.path(A))

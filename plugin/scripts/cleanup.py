@@ -56,7 +56,9 @@ def saved_chains(conn):
 
 def gone(conn):
     out = {conv: {'last_usage': _load(u), 'read_new': _load(n), 'agents': []} for conv, u, n in conn.execute('SELECT conv, last_usage, read_new FROM removed')}
-    for conv, a in conn.execute("SELECT r.conv, json_extract(c.value, '$.agent') FROM removed r, json_each(r.chains) c WHERE json_valid(r.chains) AND json_extract(c.value, '$.agent') IS NOT NULL"):
+    # json_each fails on a damaged row whatever the WHERE says: it gets '[]' instead; a '#' in rel is an old chain kept beside a file that came back
+    for conv, a in conn.execute("SELECT r.conv, json_extract(c.value, '$.agent') FROM removed r, json_each(CASE WHEN json_valid(r.chains) THEN r.chains ELSE '[]' END) c "
+                                "WHERE json_extract(c.value, '$.agent') IS NOT NULL AND json_extract(c.value, '$.rel') NOT LIKE '%#%'"):
         out[conv]['agents'].append(_load(a))  # in SQL: the chains are big and this runs on every band update
     return out
 
