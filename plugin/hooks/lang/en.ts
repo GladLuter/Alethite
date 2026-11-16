@@ -121,7 +121,7 @@ export const en = {
   vectorsLine: (model: string | null, withVectors: number, total: number, updated: string | null) =>
     `Vectors: ${withVectors} of ${total} records (${model ?? 'no model chosen'}), updated ${updated ?? 'never'}`,
   vectorsFailed: (n: number) => `Records the model could not embed: ${n} (found by their words only)`,
-  vectorsHint: (cmd: string) => `To finish them in a terminal (can be stopped and resumed): ${cmd}`,
+  vectorsHint: (cmd: string) => `To finish them in PowerShell (can be stopped and resumed): ${cmd}`,
 
   // sync of two computers: /al-health, /al-sync and the background run
   healthSyncOff: 'Sync: off (the "syncDir" setting)',
@@ -190,7 +190,7 @@ export const en = {
       : `Lesson saved:\n${text}`,
   lessonKnown: 'This lesson is saved already.',
   lessonSaveFailed: (msg: string) => `The lesson was not saved: ${msg}`,
-  ruleAsk: (text: string) => `Save this rule for all projects? It will come in every chat on all your computers.\n${text}`,
+  ruleAsk: (text: string) => `${text}\n\nSave this rule for all projects, so that it comes in every chat on all your computers?`,
   ruleAskYes: 'Yes, save it',
   ruleAskNo: 'No',
   ruleDeclined: 'The owner did not agree to save this rule for all projects. Nothing was saved.',

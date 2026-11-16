@@ -18,7 +18,7 @@ import { healthLines, homeNotesOf, indexProblemOf, message, parseCg, parseJson }
 import type { LastError } from './py'
 import { jobArgs, jobHealth } from './job'
 import type { JobRun } from './job'
-import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, lessonsMatchArgs, oneLine, plain, RULES_EVERY, rulesContext, rulesDue, START } from './lessons'
+import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, lessonsMatchArgs, oneLine, plain, ruleLine, RULES_EVERY, rulesContext, rulesDue, START } from './lessons'
 import type { Found, Lesson } from './lessons'
 import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
@@ -38,6 +38,8 @@ const info = atom({ plugin: 'alethite', key: 'info' } as const, null)
 const isDetails = atom({ plugin: 'alethite', key: 'isDetails' } as const, false)
 const calmId = atom({ plugin: 'alethite', key: 'calmId' } as const, '')
 const delayedAt = atom({ plugin: 'alethite', key: 'delayedAt' } as const, null)
+// the New worker picker closes and opens next time at its first level
+const disarm = ($: EngineInterface) => Promise.all([update($, isArmed, () => false), update($, afterLevel, () => null)])
 
 // The helpers below take `$` and so stay in this file: the loader follows `$` only into functions declared here, never across an import.
 
@@ -209,6 +211,7 @@ const lessonsOr = async ($: EngineInterface, python: string, kept: Lesson[]) => 
 // chats; the first run after the update only stores them. `own` is the rule a save has just toasted itself.
 // One store key per position (`rulesSeen:<pos>`, so two chats never overwrite each other) and a `rulesSeen:init` marker for "not the first run".
 // The old single array `rulesSeen` is carried over into keys on its first read.
+// shortcut: one chain per process, two chats starting at the same moment may toast a new rule twice
 let rulesChain: Promise<void> = Promise.resolve() // one run at a time in this process: two at once would each take the other's half-written keys for news
 const noteRules = ($: EngineInterface, list: Lesson[], on: boolean, own?: number) => (rulesChain = rulesChain.then(() => noteRulesNow($, list, on, own)))
 const noteRulesNow = async ($: EngineInterface, list: Lesson[], on: boolean, own?: number) => {
@@ -249,6 +252,7 @@ const sumCounts = async ($: EngineInterface) => {
 }
 
 // The turn size is kept for the last 200 chats; the oldest by `at` go first, their counters are folded into the total.
+// shortcut: two chats pruning at the same moment may fold one chat twice or lose a fold; /al-health figures only, move the fold into the background job if it matters
 const KEEP_TURNS = 200
 const pruneTurns = async ($: EngineInterface) => {
   const keys = (await $.store.keys()).filter(k => k.startsWith('turn:'))
@@ -333,12 +337,17 @@ const rebuildSummary = async ($: EngineInterface, today: string) => {
       const day = path.slice(folder.length + 1, folder.length + 11)
       const isFinal = /^\d{4}-\d\d-\d\d$/.test(day) && day < final
       const kept = isFinal ? ((await $.store.get(`summaryRow:${path}`)) as Record<string, unknown> | undefined) : undefined
-      fronts[i] = kept ?? (JSON.parse(await obsidian($, 'get_note_properties', { path })).frontmatter ?? {})
-      if (isFinal && kept === undefined) await $.store.set(`summaryRow:${path}`, fronts[i])
+      const front = kept ?? ((JSON.parse(await obsidian($, 'get_note_properties', { path })).frontmatter ?? {}) as Record<string, unknown>)
+      fronts[i] = front
+      // a note with no frontmatter yet (half synced) is read again next time; a full store must not cost the summary
+      if (isFinal && kept === undefined && Object.keys(front).length > 0) await $.store.set(`summaryRow:${path}`, front).catch(() => {})
     }
   }
   await Promise.all(Array.from({ length: Math.min(8, notes.length) }, worker))
   await obsidian($, 'create_vault_file', { path: summary, content: summaryNote(fronts) })
+  // the rows of notes no longer in the folder (moved into a year subfolder) go: the store has a hard size cap
+  const listed = new Set(notes.map(p => `summaryRow:${p}`))
+  for (const k of await $.store.keys().catch(() => [] as string[])) if (k.startsWith('summaryRow:') && !listed.has(k)) await $.store.delete(k).catch(() => {})
 }
 
 // One /al-stats run: measure, queue the note, send the queue, rebuild the summary. Returns what the owner reads.
@@ -451,7 +460,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
   let outcome: Awaited<ReturnType<typeof launch>> | undefined
   let isCleared = false
   try {
-    await update($, isArmed, () => false)
+    await disarm($)
     let told = '' // the last thing launch told the owner; it is the reason when the launch did not go through
     const io: LaunchIO = {
       draft: async () => (await $.prompt.read()).text,
@@ -484,7 +493,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
     await fail($, 'launch', err)
   } finally {
     // /clear changed the session id: the picker must not stay armed for the new chat
-    await update($, isArmed, () => false)
+    await disarm($)
     await update($, isBusy, () => false)
     await guarded($, 'launch', () => refresh($, python))
   }
@@ -676,12 +685,11 @@ export const register: Register = (on, options) => {
   // The start of the latest request of the main chat's turn: the cache lifetime counts from it, not from the turn's end (a few seconds on).
   let stepAt: { turn: string; at: number } | undefined
   on('turn.step', async function* ($, e, next) {
-    if (e.agentId === undefined) {
-      try {
-        stepAt = { turn: e.turnId, at: await $.clock.now() }
-      } catch {}
-    }
-    return yield* next(e)
+    const at = e.agentId === undefined ? $.clock.now().catch(() => undefined) : undefined // asked now, awaited after: the request does not wait for it
+    const r = yield* next(e)
+    const t = await at
+    if (t !== undefined) stepAt = { turn: e.turnId, at: t }
+    return r
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -695,7 +703,7 @@ export const register: Register = (on, options) => {
     if (e.agentId === undefined && e.usage !== undefined) {
       await guarded($, 'turn.complete', async () => {
         // an armed picker never outlives a turn
-        await update($, isArmed, () => false)
+        await disarm($)
         const [id, now, usage] = await Promise.all([$.session.id(), $.clock.now(), $.session.usage()])
         const prev = (await $.store.get(`turn:${id}`)) as { at: number | null } | undefined
         await $.store.set(`turn:${id}`, { at: stepAt?.turn === e.turnId ? stepAt.at : now, tokens: usage.context.tokens ?? null })
@@ -871,8 +879,9 @@ export const register: Register = (on, options) => {
     served($, 'lesson_save', async () => {
       const input = e as unknown as Record<string, unknown>
       // tool.call runs ahead of the permission check: a rule for every chat on every computer needs the owner's yes, and anything else (a closed dialog too) saves nothing
-      if (input.scope === 'all') {
-        const yes = await $.ui.ask(T.ruleAsk(String(input.fix ?? input.action)), [T.ruleAskYes, T.ruleAskNo]).catch(() => undefined)
+      // without a fix there is no rule to ask about: cg.py refuses it, and the model reads why
+      if (input.scope === 'all' && typeof input.fix === 'string' && input.fix.trim()) {
+        const yes = await $.ui.ask(T.ruleAsk(ruleLine(input.fix)), [T.ruleAskYes, T.ruleAskNo]).catch(() => undefined)
         if (yes !== T.ruleAskYes) return T.ruleDeclined
       }
       const r = await runCg($, python, lessonSaveArgs(input, await $.session.root(), embedModel))
@@ -977,14 +986,16 @@ export const register: Register = (on, options) => {
       isLessonsNoted = true
     }
     const own = lessonList.filter(l => !l.global)
-    if (own.length && e.text.trim().length >= 12) {
+    // only our New worker's first message gets here as 'plugin': the handoff first, then the owner's draft, which is what the lessons are searched by
+    const words = kind === 'plugin' ? e.text.split('[/al-handoff]').pop()! : e.text
+    if (own.length && words.trim().length >= 12) {
       try {
         const [root, id] = await Promise.all([$.session.root(), $.session.id()])
         const shown = setOf(shownIn, id)
         // every lesson shown already: no Python; else ask for the shown ones too, so they do not take the places of the fresh ones
         const found = own.every(l => shown.has(l.id))
           ? []
-          : ((await runCg($, python, lessonsMatchArgs(e.text, root, embedModel, lessonsMinScore, 2 + shown.size), 8_000)).lessons as Found[])
+          : ((await runCg($, python, lessonsMatchArgs(words, root, embedModel, lessonsMinScore, 2 + shown.size), 8_000)).lessons as Found[])
         const fresh = found.filter(l => !shown.has(l.id)).slice(0, 2)
         if (fresh.length) {
           const block = lessonContext(fresh)
@@ -1091,6 +1102,7 @@ export const register: Register = (on, options) => {
     const wait = await read($, delayedAt)
     const data = await read($, info)
     const isOpen = await read($, isDetails)
+    const rawLevel = await read($, afterLevel)
 
     isWorking = e.props.isWorking // /clear in the middle of a turn is dangerous: no New worker then, and no waiting one either
     if (s === null || e.props.hasSurvey || s.id === hidden) return next(e)
@@ -1103,19 +1115,19 @@ export const register: Register = (on, options) => {
     const isLit = isStale(s, minTokens, idleMinutes) && s.id !== calm
     const title = <Text bold>{T.bandTitle}</Text>
     const times = delayTimes(s.limits, s.now)
-    const level = await read($, afterLevel)
+    // a new usage snapshot may leave one time (no list to pick from) or put the picked time in the past: back to the first level then
+    const level = (rawLevel === 'time' && times.length < 2) || (typeof rawLevel === 'number' && rawLevel <= s.now) ? null : rawLevel
 
     if (armed && !isWorking) {
-      const endArm = () => Promise.all([update($, isArmed, () => false), update($, afterLevel, () => null)])
       const whenOf = (t: number) => T.afterReset(when(new Date(t).toISOString(), s.now))
       const setWait = (at: number, model?: string) =>
         guarded($, 'band', async () => {
-          await endArm()
+          await disarm($)
           if (!(await $.prompt.read()).text.trim()) return toast($, T.draftEmpty)
           await $.store.set(`delayed:${await $.session.id()}`, model ? { at, model } : { at }) // the time printed on the button; the chat that is open now (a /clear may have come)
           await update($, delayedAt, () => at)
         })
-      const cancel = <Button key="cancel" label={T.cancel} onPress={endArm} />
+      const cancel = <Button key="cancel" label={T.cancel} onPress={() => disarm($)} />
       const menu =
         typeof level === 'number' ? (
           <>
@@ -1173,6 +1185,7 @@ export const register: Register = (on, options) => {
             reviewFailed.add(id)
             throw err
           }
+          reviewFailed.delete(id) // it works again: its next failure is a new one
           isPonytailOff = r.ponytail === false
           if (r.ponytail && r.edits >= REVIEW_EDITS) {
             if (!reviewSaid.has(id)) reviewDue.set(id, r.edits)
@@ -1190,7 +1203,7 @@ export const register: Register = (on, options) => {
       <Box gap={1} flexWrap={wrap ? 'wrap' : undefined}>
         {wait !== null && <Text color="warning">{waitText}</Text>}
         {wait !== null && <Button key="cancel-delay" label={T.cancel} onPress={cancelWait} />}
-        {wait === null && !isWorking && <Button key="launch" label={launchLabel} onPress={() => (busy ? undefined : Promise.all([update($, afterLevel, () => null), update($, isArmed, () => true)]))} />}
+        {wait === null && !isWorking && <Button key="launch" label={launchLabel} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />}
         {wait === null && !isWorking && isLit && <Button key="stay" label={T.stayHere} onPress={() => update($, calmId, () => s.id)} />}
         {hasDetails && <Button key="details" label={detailsLabel} onPress={toggle} />}
       </Box>

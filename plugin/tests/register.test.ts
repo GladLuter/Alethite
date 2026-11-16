@@ -655,7 +655,7 @@ const flag = (a: string[], name: string) => a[a.indexOf(name) + 1]!
 
 // The Obsidian server beneath the plugin: a vault in memory. `fail(tool)` says which calls break, `failure` how (a throw, or an answer with isError and the server's JSON).
 const fakeVault = (on: any) => {
-  const v = { files: new Map<string, string>(), calls: [] as string[], listLimit: undefined as number | undefined, fail: (_tool: string) => false, failure: 'throws' as 'throws' | 'isError', onWrite: (_path: string) => {} }
+  const v = { files: new Map<string, string>(), calls: [] as string[], listLimit: undefined as number | undefined, fail: (_tool: string) => false, failure: 'throws' as 'throws' | 'isError', onWrite: (_path: string) => {}, onRead: undefined as undefined | (() => Promise<void>) }
   const ok = (text: string) => ({ value: { content: [{ type: 'text', text }], isError: false } })
   on('mcp.call', (_: unknown, e: { server: string; tool: string; args: { path: string; directory: string; content?: string; limit?: number } }) => {
     const { path, directory, content } = e.args
@@ -671,15 +671,16 @@ const fakeVault = (on: any) => {
     }
     const front = v.files.get(path)!.split('---')[1] ?? ''
     const frontmatter = Object.fromEntries([...front.matchAll(/^(\w+): (.*)$/gm)].map(([, k, x]) => [k, x === 'null' ? null : isNaN(Number(x)) ? x : Number(x)]))
-    return ok(JSON.stringify({ path, frontmatter: Object.keys(frontmatter).length ? frontmatter : null, keys: Object.keys(frontmatter) }))
+    const answer = ok(JSON.stringify({ path, frontmatter: Object.keys(frontmatter).length ? frontmatter : null, keys: Object.keys(frontmatter) }))
+    return v.onRead ? v.onRead().then(() => answer) : answer // a read that takes time: the calls in flight can be counted
   })
   return v
 }
 
 const outboxKeys = (m: { store: Map<string, unknown> }) => [...m.store.keys()].filter(k => k.startsWith('outbox:'))
-const statsRig = async ($: any, on: any, answer: (a: string[]) => unknown = () => ran(JSON.stringify({ metrics: {}, note: NOTE, errors: [] })), env: Record<string, string> = { COMPUTERNAME: 'PC-1' }) => {
+const statsRig = async ($: any, on: any, answer: (a: string[]) => unknown = () => ran(JSON.stringify({ metrics: {}, note: NOTE, errors: [] })), env: Record<string, string> = { COMPUTERNAME: 'PC-1' }, store = new Map<string, unknown>()) => {
   const vault = fakeVault(on)
-  const m = await started($, on, a => (a[0] === 'stats' ? answer(a) : ran('{}')), undefined, undefined, env)
+  const m = await started($, on, a => (a[0] === 'stats' ? answer(a) : ran('{}')), undefined, undefined, env, undefined, store)
   const stats = (args = '') => $.command.run({ command: 'al-stats', args }) as Promise<{ text: string }>
   const today = () => flag(ofCg(m, 'stats').at(-1)!.argv, '--today')
   return { vault, m, stats, today }
@@ -945,6 +946,23 @@ test('session.start fills the missing keys through cg.py', { options: { embedMod
   expect(values.embedModel).toBe('bge-m3')
   expect('syncDir' in values).toBe(false) // the file has it: its value stays
   expect(m.toasts).toEqual([])
+})
+
+test('a failing settings-fill is kept for /al-health and toasts nothing', { options: { embedModel: 'bge-m3' } }, async ($, on) => {
+  settingsRig(on, '{ "language": "ru" }')
+  const m = await started($, on, a => (a[0] === 'settings-fill' ? failed('OperationalError: database is locked') : ran('{}')), [], undefined, home)
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
+  expect(m.store.get('lastError')).toMatchObject({ where: 'settings' })
+  expect(text).toContain('OperationalError: database is locked')
+  expect(m.toasts).toEqual([])
+})
+
+test('the old settings file with a missing key gets it through cg.py once, with the /config value', { options: { embedModel: 'bge-m3' } }, async ($, on) => {
+  settingsRig(on, undefined, { [OLD_SETTINGS]: '{ "language": "ru" }' })
+  const m = await started($, on, () => ran('{"added":["embedModel"]}'), [], undefined, home)
+  const fill = ofCg(m, 'settings-fill')
+  expect(fill).toHaveLength(1)
+  expect(JSON.parse(fill[0]!.argv[1]!.replace('--values=', '')).embedModel).toBe('bge-m3')
 })
 
 test('session.start does not call settings-fill when the file has every key', async ($, on) => {
@@ -2063,6 +2081,8 @@ test('after-reset asks the time when the week has room', async ($, on) => {
   expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
   await ui.press({ key: 'after' })
   expect(await buttons(ui)).toEqual(['at-1', 'at-2', 'cancel'])
+  const labels = (await ui.findAll({ type: 'Button' })).map((b: { text: string }) => b.text)
+  expect(labels.slice(0, 2)).toEqual([NOW + 3_600_000 + 300_000, NOW + 3 * 86_400_000 + 300_000].map(t => T.afterReset(when(new Date(t).toISOString(), NOW))))
   await ui.press({ key: 'at-2' })
   expect(await buttons(ui)).toEqual(MODELS)
   await ui.press({ key: 'model-sonnet' })
@@ -2084,6 +2104,26 @@ test('cancel on the model level returns to a plain band', async ($, on) => {
   await ui.press({ key: 'after' })
   await ui.press({ key: 'cancel' })
   await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
+})
+
+test('cancel on the time level returns to a plain band', async ($, on) => {
+  const { ui } = await delayed($, on, 'продолжаем', new Map(), two(85, 91))
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after' })
+  await ui.press({ key: 'cancel' })
+  await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
+})
+
+test('the time level goes back to the first one when a new snapshot leaves one time', async ($, on) => {
+  let limits = two(91, 91)
+  const { m, ui } = await delayed($, on, 'продолжаем', new Map(), () => limits())
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after' })
+  expect(await buttons(ui)).toEqual(['at-1', 'at-2', 'cancel'])
+  limits = two(91, 85) // the week drops under 90%: only the 5-hour reset is left
+  await m.clock.advance(30_000)
   expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
 })
 
@@ -2533,6 +2573,12 @@ test("a New worker's own asUser prompt gets the rules and lessons", async ($, on
   expect(contexts).toEqual([[rulesText()]])
 })
 
+test("a New worker's first message is searched for lessons by the owner's draft, not by the handoff", async ($, on) => {
+  const { m } = await lessonRig($, on)
+  await typed($, '[al-handoff]\nsession abc, memory folder C:/m, recall hint\n[/al-handoff]\n\nопять 429 на сборке, что делать?', workerOrigin('alethite', true))
+  expect(ofCg(m, 'lessons-match').map(r => r.argv.find(a => a.startsWith('--text=')))).toEqual(['--text=\n\nопять 429 на сборке, что делать?'])
+})
+
 test("another plugin's asUser prompt and our prompt without asUser get none", async ($, on) => {
   const contexts: string[][] = []
   const { m } = await lessonRig($, on, [], [rule], { context: contexts })
@@ -2562,6 +2608,27 @@ test('a rule for all projects is saved only on Yes', async ($, on) => {
   expect(asked).toHaveLength(3) // a project lesson asks nothing
 })
 
+test('the rule question holds the rule as a chat reads it and ends with the question', async ($, on) => {
+  const asked: string[] = []
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: any) => (asked.push(e.questions[0].question), { result: { answers: { [e.questions[0].question]: T.ruleAskNo } } }))
+  await lessonRig($, on)
+  await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'a', symptom: 'b', cause: 'c', fix: 'x'.repeat(400), scope: 'all' })
+  expect(asked).toEqual([T.ruleAsk(`${'x'.repeat(299)}…`)])
+  expect(asked[0]!.endsWith('?')).toBe(true)
+})
+
+test('a rule for all projects without a fix asks nothing: cg.py refuses it', async ($, on) => {
+  const asked: unknown[] = []
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: unknown) => (asked.push(e), { result: { answers: {} } }))
+  const m = await started($, on, a => (a[0] === 'lesson-save' ? failed('ValueError: a lesson for all projects needs fix') : ran('{}')))
+  for (const fix of [{ fix: '' }, {}]) {
+    const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'a', symptom: 'b', cause: 'c', scope: 'all', ...fix })
+    expect(r).toEqual({ deny: T.lessonSaveFailed('ValueError: a lesson for all projects needs fix') })
+  }
+  expect(ofCg(m, 'lesson-save')).toHaveLength(2)
+  expect(asked).toEqual([])
+})
+
 test('the review hint comes back when next() throws', async ($, on) => {
   let isBroken = true
   const contexts: string[][] = []
@@ -2587,8 +2654,9 @@ test("a subagent's stop does not use up the main chat's", async ($, on) => {
   expect(await run()).toEqual({ result: 'ran' })
 })
 
-test('a failing review-hint is recorded once per chat', async ($, on) => {
-  const m = await started($, on, a => (a[0] === 'review-hint' ? { deny: 'boom' } : noTurn()))
+test('a failing review-hint is recorded once per chat, and again after it worked', async ($, on) => {
+  let isOk = false
+  const m = await started($, on, a => (a[0] === 'review-hint' ? (isOk ? ran('{"ponytail":true,"edits":0}') : { deny: 'boom' }) : noTurn()))
   await mountBand($)
   expect(m.store.get('lastError')).toMatchObject({ where: 'review' })
   await turnTo($, m, 'id2')
@@ -2596,6 +2664,15 @@ test('a failing review-hint is recorded once per chat', async ($, on) => {
   await turnTo($, m, 'id') // the same chat fails again
   expect(ofCg(m, 'review-hint')).toHaveLength(3)
   expect(m.store.get('lastError')).toMatchObject({ where: 'sync' })
+  isOk = true
+  await turnTo($, m, 'id2')
+  await turnTo($, m, 'id') // it works now
+  isOk = false
+  await turnTo($, m, 'id2')
+  m.store.set('lastError', { at: 1, where: 'sync', msg: 'other step' })
+  await turnTo($, m, 'id') // and fails once more: a new failure, recorded
+  expect(ofCg(m, 'review-hint')).toHaveLength(7)
+  expect(m.store.get('lastError')).toMatchObject({ where: 'review' })
 })
 
 test('the summary reads only new notes', async ($, on) => {
@@ -2614,6 +2691,52 @@ test('the summary reads only new notes', async ($, on) => {
   expect(reads()).not.toContain(old)
   expect(reads()).toContain(recent) // the last two days are read again
   expect(vault.files.get(summaryPath())).toContain('PC-2') // the kept row is still in the table
+})
+
+test('a final note read with no frontmatter is read again next time', async ($, on) => {
+  const { vault, m, stats, today } = await statsRig($, on)
+  await stats()
+  const half = `${T.statsFolder}/${new Date(Date.parse(today()) - 5 * 86_400_000).toISOString().slice(0, 10)} PC-2.md`
+  vault.files.set(half, 'half synced') // no frontmatter yet
+  await stats()
+  expect(m.store.has(`summaryRow:${half}`)).toBe(false)
+  vault.files.set(half, OTHER)
+  vault.calls.length = 0
+  await stats()
+  expect(vault.calls).toContain(`obsidian get_note_properties ${half}`)
+  expect(m.store.get(`summaryRow:${half}`)).toMatchObject({ host: 'PC-2' })
+})
+
+test('the kept row of a note no longer in the folder is deleted, and a store that refuses a row still gets the summary', async ($, on) => {
+  let isFull = false
+  class FullStore extends Map<string, unknown> {
+    override set(k: string, v: unknown) {
+      if (isFull && k.startsWith('summaryRow:')) throw new Error('the store is full')
+      return super.set(k, v)
+    }
+  }
+  const gone = `summaryRow:${T.statsFolder}/2025-01-01 PC-9.md` // moved into a year subfolder
+  const { vault, m, stats } = await statsRig($, on, undefined, undefined, new FullStore([[gone, { host: 'PC-9' }]]))
+  isFull = true
+  vault.files.set(`${T.statsFolder}/2026-01-01 PC-2.md`, OTHER)
+  await stats()
+  expect(m.store.has(gone)).toBe(false)
+  expect(vault.files.get(summaryPath())).toContain('PC-2')
+  expect(m.toasts).toEqual([])
+})
+
+test('the summary reads at most 8 notes at once and lists them all', async ($, on) => {
+  const { vault, stats } = await statsRig($, on)
+  for (let i = 1; i <= 20; i++) vault.files.set(`${T.statsFolder}/2026-01-${String(i).padStart(2, '0')} PC-2.md`, OTHER)
+  let [now, peak] = [0, 0]
+  vault.onRead = async () => {
+    peak = Math.max(peak, ++now)
+    await new Promise(r => (globalThis as any).setTimeout(r, 5))
+    now--
+  }
+  await stats()
+  expect(peak).toBe(8)
+  expect(vault.files.get(summaryPath())!.split('\n').filter(l => /^\| 2026/.test(l))).toHaveLength(21) // and the note of today
 })
 
 test('old rulesSeen and outbox are carried over', async ($, on) => {

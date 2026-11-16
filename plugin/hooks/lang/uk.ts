@@ -121,7 +121,7 @@ export const uk: Partial<Texts> = {
   vectorsLine: (model: string | null, withVectors: number, total: number, updated: string | null) =>
     `Вектори: ${withVectors} з ${total} записів (${model ?? 'модель не обрано'}), оновлено ${updated ?? 'жодного разу'}`,
   vectorsFailed: (n: number) => `Записів, які модель не змогла порахувати: ${n} (знаходяться лише за словами)`,
-  vectorsHint: (cmd: string) => `Дорахувати в терміналі (можна зупинити й продовжити): ${cmd}`,
+  vectorsHint: (cmd: string) => `Дорахувати в PowerShell (можна зупинити й продовжити): ${cmd}`,
 
   // sync of two computers: /al-health, /al-sync and the background run
   healthSyncOff: 'Синхронізація: вимкнена (налаштування «syncDir»)',
@@ -191,7 +191,7 @@ export const uk: Partial<Texts> = {
       : `Урок збережено:\n${text}`,
   lessonKnown: 'Цей урок уже збережено.',
   lessonSaveFailed: (msg: string) => `Урок не збережено: ${msg}`,
-  ruleAsk: (text: string) => `Зберегти це правило для всіх проєктів? Воно приходитиме в кожен чат на всіх ваших комп'ютерах.\n${text}`,
+  ruleAsk: (text: string) => `${text}\n\nЗберегти це правило для всіх проєктів, щоб воно приходило в кожен чат на всіх ваших комп'ютерах?`,
   ruleAskYes: 'Так, зберегти',
   ruleAskNo: 'Ні',
   ruleDeclined: 'Власник не погодився зберігати це правило для всіх проєктів. Нічого не збережено.',

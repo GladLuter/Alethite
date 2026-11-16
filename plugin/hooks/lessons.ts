@@ -36,7 +36,7 @@ export const lessonsMatchArgs = (text: string, cwd: string, model: string, minSc
   'lessons-match',
   '--cwd',
   cwd,
-  `--text=${Array.from(text).slice(0, 2000).join('')}`,
+  `--text=${Array.from(text.slice(0, 4000)).slice(0, 2000).join('')}`, // 4000 UTF-16 units hold 2000 whole code points: a pasted log is not copied whole
   '--model',
   model,
   '--min-score',
@@ -61,9 +61,12 @@ export const plain = (text: string) => {
 // What the model reads beside the owner's message: the lessons that fit, between the marks.
 export const lessonContext = (found: Found[]) => [START, T.lessonsIntro, ...found.map(l => `- ${clip(plain(l.text))}`), END].join('\n')
 
+// A rule as a chat reads it: one line, clipped.
+export const ruleLine = (fix: string) => clip(plain(fix), RULE_CHARS)
+
 // The lessons for all projects, as the one-line rules they carry (`fix`), newest first, while they fit RULES_CHARS; `left` did not fit.
 export const rulesContext = (lessons: readonly Lesson[]) => {
-  const all = [...new Set(lessons.filter(l => l.global && l.fix !== null).map(l => `- ${clip(plain(l.fix!), RULE_CHARS)}`))] // the same fix from two projects or computers once
+  const all = [...new Set(lessons.filter(l => l.global && l.fix !== null).map(l => `- ${ruleLine(l.fix!)}`))] // the same fix from two projects or computers once
   const lines: string[] = []
   let used = 0
   for (const line of all) {

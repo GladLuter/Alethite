@@ -2,14 +2,16 @@ import { expect, test } from 'claude-code/testing'
 import { healthLines, homeNotesOf, parseCg, parseJson } from '../hooks/py'
 import { T } from '../hooks/text'
 
-test('parseCg: ok JSON', () => expect(parseCg({ exitCode: 0, stdout: '{"hits":[]}', stderr: '' })).toEqual({ hits: [] }))
-test('parseCg: error JSON', () => expect(() => parseCg({ exitCode: 1, stdout: '{"error":"OperationalError: x"}', stderr: '' })).toThrow('OperationalError: x'))
-test('parseCg: traceback without JSON', () => expect(() => parseCg({ exitCode: 1, stdout: '', stderr: 'Traceback…\nNameError: y' })).toThrow('NameError: y'))
-test('parseCg: silent failure', () => expect(() => parseCg({ exitCode: 3, stdout: '', stderr: '' })).toThrow('exit 3'))
+const parse = (r: { exitCode: number; stdout: string; stderr: string }) => parseCg(r, parseJson(r.stdout))
+
+test('parseCg: ok JSON', () => expect(parse({ exitCode: 0, stdout: '{"hits":[]}', stderr: '' })).toEqual({ hits: [] }))
+test('parseCg: error JSON', () => expect(() => parse({ exitCode: 1, stdout: '{"error":"OperationalError: x"}', stderr: '' })).toThrow('OperationalError: x'))
+test('parseCg: traceback without JSON', () => expect(() => parse({ exitCode: 1, stdout: '', stderr: 'Traceback…\nNameError: y' })).toThrow('NameError: y'))
+test('parseCg: silent failure', () => expect(() => parse({ exitCode: 3, stdout: '', stderr: '' })).toThrow('exit 3'))
 test('parseCg: only the last 300 characters of stderr', () => {
   let msg = ''
   try {
-    parseCg({ exitCode: 1, stdout: '', stderr: 'HEAD' + 'x'.repeat(300) })
+    parse({ exitCode: 1, stdout: '', stderr: 'HEAD' + 'x'.repeat(300) })
   } catch (err) {
     msg = (err as Error).message
   }

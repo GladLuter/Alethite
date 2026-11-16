@@ -25,7 +25,7 @@ export const parseJson = (stdout: string): Answer => {
   } catch {}
 }
 
-export const parseCg = ({ exitCode, stdout, stderr }: { exitCode: number; stdout: string; stderr: string }, json: Answer = parseJson(stdout)): Record<string, unknown> => {
+export const parseCg = ({ exitCode, stderr }: { exitCode: number; stderr: string }, json: Answer): Record<string, unknown> => {
   if (exitCode === 0 && json && !json.error) return json
   throw new Error((json?.error as string | undefined) || stderr.trim().slice(-300) || `exit ${exitCode}`)
 }

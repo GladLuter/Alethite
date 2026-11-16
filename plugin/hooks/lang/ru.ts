@@ -118,7 +118,7 @@ export const ru: Partial<Texts> = {
   settingsNotObject: 'в файле настроек должен быть один объект JSON: { "language": "ru", ... }',
   vectorsLine: (model: string | null, withVectors: number, total: number, updated: string | null) => `Векторы: ${withVectors} из ${total} записей (${model ?? 'модель не выбрана'}), обновлены ${updated ?? 'ни разу'}`,
   vectorsFailed: (n: number) => `Записей, которые модель не смогла посчитать: ${n} (находятся только по словам)`,
-  vectorsHint: (cmd: string) => `Досчитать в терминале (можно остановить и продолжить): ${cmd}`,
+  vectorsHint: (cmd: string) => `Досчитать в PowerShell (можно остановить и продолжить): ${cmd}`,
 
   // sync of two computers: /al-health, /al-sync and the background run
   healthSyncOff: 'Синхронизация: выключена (настройка «syncDir»)',
@@ -188,7 +188,7 @@ export const ru: Partial<Texts> = {
       : `Урок сохранён:\n${text}`,
   lessonKnown: 'Этот урок уже сохранён.',
   lessonSaveFailed: (msg: string) => `Урок не сохранён: ${msg}`,
-  ruleAsk: (text: string) => `Сохранить это правило для всех проектов? Оно будет приходить в каждый чат на всех ваших компьютерах.\n${text}`,
+  ruleAsk: (text: string) => `${text}\n\nСохранить это правило для всех проектов, чтобы оно приходило в каждый чат на всех ваших компьютерах?`,
   ruleAskYes: 'Да, сохранить',
   ruleAskNo: 'Нет',
   ruleDeclined: 'Владелец не согласился сохранять это правило для всех проектов. Ничего не сохранено.',
