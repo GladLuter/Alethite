@@ -21,6 +21,7 @@ def _json(path):
 
 
 def ponytail(home):
+    # shortcut: only the user settings.json and any install scope count; read project settings when someone asks
     """True when a `ponytail@...` plugin is installed (a key of installed_plugins.json, at the top or under `plugins`) and not switched off in enabledPlugins."""
     d = os.path.join(home, '.claude')
     installed = _json(os.path.join(d, 'plugins', 'installed_plugins.json'))
@@ -34,28 +35,27 @@ def _events(path):
     """(time, 'edit' | 'review') of the lines of one transcript that are one of them."""
     try:
         with open(lp(path), 'rb') as f:
-            lines = f.read().split(b'\n')
+            for raw in f:
+                if b'ponytail-review' not in raw and b'"Edit"' not in raw and b'"Write"' not in raw and b'"NotebookEdit"' not in raw:
+                    continue
+                o = _load(raw)
+                m = o.get('message') if o else None
+                if not isinstance(m, dict):
+                    continue
+                ts = o.get('timestamp') if isinstance(o.get('timestamp'), str) else ''
+                for b in _blocks(m.get('content')):
+                    inp = b.get('input') if isinstance(b.get('input'), dict) else {}
+                    if o.get('type') == 'assistant' and b.get('type') == 'tool_use':
+                        if b.get('name') in EDIT_TOOLS:
+                            yield ts, 'edit'
+                        elif (b.get('name') == 'Skill' and REVIEW in str(inp.get('skill'))) or (b.get('name') == 'Agent' and REVIEW in str(inp.get('prompt'))):
+                            yield ts, 'review'
+                    elif o.get('type') == 'user' and b.get('type') == 'text' and isinstance(b.get('text'), str):
+                        text = b['text'].strip()
+                        if text.startswith('/' + REVIEW) or _COMMAND.search(text):
+                            yield ts, 'review'
     except OSError:
         return
-    for raw in lines:
-        if b'ponytail-review' not in raw and b'"Edit"' not in raw and b'"Write"' not in raw and b'"NotebookEdit"' not in raw:
-            continue
-        o = _load(raw)
-        m = o.get('message') if o else None
-        if not isinstance(m, dict):
-            continue
-        ts = o.get('timestamp') if isinstance(o.get('timestamp'), str) else ''
-        for b in _blocks(m.get('content')):
-            inp = b.get('input') if isinstance(b.get('input'), dict) else {}
-            if o.get('type') == 'assistant' and b.get('type') == 'tool_use':
-                if b.get('name') in EDIT_TOOLS:
-                    yield ts, 'edit'
-                elif (b.get('name') == 'Skill' and REVIEW in str(inp.get('skill'))) or (b.get('name') == 'Agent' and REVIEW in str(inp.get('prompt'))):
-                    yield ts, 'review'
-            elif o.get('type') == 'user' and b.get('type') == 'text' and isinstance(b.get('text'), str):
-                text = b['text'].strip()
-                if text.startswith('/' + REVIEW) or _COMMAND.search(text):
-                    yield ts, 'review'
 
 
 def edits(paths):

@@ -56,7 +56,7 @@ export const en = {
   draftEmpty: 'New worker: the draft is empty, the chat is untouched. Type a message and press again.',
   handoffFailed: (why: string) => `New worker: the handoff was not built (${why}). The chat is untouched.`,
   clearFailed: (why: string, path: string) => `New worker: the chat was not cleared (${why}). The handoff is saved: ${path}`,
-  modelSwitchFailed: (model: string) => `New worker: the model did not switch to ${model}, so nothing was sent. The chat is untouched, the draft is in the box.`,
+  modelSwitchFailed: (model: string, why = '') => `New worker: the model did not switch to ${model}${why ? ` (${why})` : ''}, so nothing was sent. The chat is untouched, the draft is in the box.`,
   pickThenEnter: 'The chat is cleared; the handoff and the draft are in the input box. Pick the model and effort in the app menu at the bottom right and press Enter.',
   notSent: 'the handoff was not sent',
   submitFailed: (why: string, path: string) => `New worker: sending failed (${why}). The handoff and the draft are in the input box: press Enter. The handoff is saved: ${path}`,
@@ -201,7 +201,7 @@ export const en = {
   lessonGate: (lesson: string, isGlobal: boolean) =>
     `Alethite stopped this command once: it holds the trigger of a lesson ${isGlobal ? 'for all projects' : 'of this project'}. ${lesson}. If the lesson does not apply now, run the command again and it passes.`,
   coldAgent: (minutes: number, tokens: string, usd: string) =>
-    `Alethite stopped this message once: the agent finished ${minutes} min ago and its cache has gone cold, so continuing it rewrites its whole context (${tokens} tokens, about ${usd}). A new light alethite:* agent for the next step is cheaper. If this agent is really needed, send the same message again and it goes through.`,
+    `Alethite stopped this message once: the agent finished ${minutes} min ago and its cache has gone cold, so continuing it rewrites its whole context (${tokens} tokens, about ${usd}). A new lean alethite:* agent for the next step is cheaper. If this agent is really needed, send the same message again and it goes through.`,
   noLessons: 'No lessons in this project yet.',
   cgLessonsDescription: 'The lessons of this project and the ones for all projects (forget <pos>: delete one here and on the other computers)',
   cgLessonsHint: '[forget <pos>]',

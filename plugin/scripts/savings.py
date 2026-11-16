@@ -8,7 +8,7 @@ import tempfile
 import time
 
 from cc_token_audit import minutes, price
-from transcripts import HANDOFF_BLOCK, INJECTED, _USAGE, _blocks, _load, last_usage, lp
+from transcripts import HANDOFF_BLOCK, INJECTED, _USAGE, _blocks, _load, find_session, last_usage, lp
 
 CACHE_VERSION = 3  # raise it when read_new, last_usage or agent_start return something else: old entries are then dropped
 COLD_AFTER = 3600  # seconds: the cache of a chat that was silent this long is gone
@@ -192,15 +192,7 @@ def agent_age(projects, sid, agent, ended, now):
     """{found, age, limit, context, usd} of the subagent `agent` of chat `sid`: seconds since it ended (`ended`, an ISO time, else its last call), the
     cache lifetime it wrote for (3600 with 1h writes, else 300), the context a resume rewrites and what that costs at its writing price."""
     gone = {'found': False, 'age': None, 'limit': 300, 'context': 0, 'usd': 0.0}
-    path = None
-    try:
-        for d in os.listdir(lp(projects)):  # the one chat's folders only: not every chat's agents
-            top = os.path.join(projects, d, sid, 'subagents')
-            for root, _, names in os.walk(lp(top)):
-                if 'agent-%s.jsonl' % agent in names:
-                    path = os.path.join(top, os.path.relpath(root, lp(top)), 'agent-%s.jsonl' % agent)
-    except OSError:
-        pass
+    path = next((p for p in find_session(projects, sid)[1] if os.path.basename(p) == 'agent-%s.jsonl' % agent), None)
     r = path and agent_start(path)
     if not r:
         return gone

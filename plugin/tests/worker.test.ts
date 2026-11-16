@@ -113,12 +113,21 @@ test('fill mode: the same early exits as send (empty draft, failed handoff, fail
   expect(calls).not.toContain('fill')
 })
 
-test('a model is switched before the handoff; one that did not switch stops everything, the draft untouched', async () => {
+test('a model is switched after the handoff, before /clear; one that did not switch stops everything, the draft untouched', async () => {
   const ok = fake()
   expect(await launch(ok.io, 'send', 'sonnet')).toBe('sent')
-  expect(ok.calls.slice(0, 4)).toEqual(['draft', 'model sonnet', 'handoff', 'clear'])
+  expect(ok.calls.slice(0, 4)).toEqual(['draft', 'handoff', 'model sonnet', 'clear'])
   const bad = fake({ modelFails: true })
   expect(await launch(bad.io, 'send', 'sonnet')).toBe('failed')
-  expect(bad.calls).toEqual(['draft', 'model sonnet', 'toast'])
+  expect(bad.calls).toEqual(['draft', 'handoff', 'model sonnet', 'toast'])
   expect(bad.toasts).toEqual([T.modelSwitchFailed('sonnet')])
+})
+
+test('a /model that throws keeps its reason in the toast', async () => {
+  const f = fake()
+  f.io.switchModel = async () => {
+    throw new Error('busy')
+  }
+  expect(await launch(f.io, 'send', 'sonnet')).toBe('failed')
+  expect(f.toasts[0]).toContain('busy')
 })

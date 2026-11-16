@@ -302,9 +302,9 @@ def _agent_age(a):
 
 def _review_hint(a):
     import review
-    main, subs = find_session(a.projects, _session(a.session))
     if not review.ponytail(os.path.expanduser('~')):  # nobody to hint for: no transcript is read
         return {'ponytail': False, 'edits': 0}
+    main, subs = find_session(a.projects, _session(a.session))
     return {'ponytail': True, 'edits': review.edits([main, *subs] if main else subs)}
 
 
@@ -502,10 +502,8 @@ def _parser():
     s.add_argument('--session', required=True)
     s.add_argument('--agent', required=True)
     s.add_argument('--ended')  # the mod's own record of when the agent finished (ISO time); its last call without it
-    s.add_argument('--cwd')  # the mod passes it like for savings; the chat's folder is found by the session id
     s = add('review-hint', _review_hint)
     s.add_argument('--session', required=True)
-    s.add_argument('--cwd')  # the mod passes it like for savings; the chat's folder is found by the session id
     s = add('sync', _sync)
     s.add_argument('--sync-dir', required=True)
     s.add_argument('--machine')

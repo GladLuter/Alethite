@@ -32,7 +32,8 @@ def snapshot(conn, projects, path):
     read_new = savings.read_new(path)
     if row:
         fresh = set().union(*map(_ids, chains))
-        for c in _load(row[0]) or ():
+        saved = _load(row[0])
+        for c in saved if isinstance(saved, list) else ():
             if not os.path.exists(lp(os.path.join(projects, c['rel']))):  # a pass that failed half-way left files gone: their chains are only in the old row
                 chains.append(c)
             elif not _ids(c) <= fresh:  # the transcript came back holding only new lines: the old chain stays under a name no file has

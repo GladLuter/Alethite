@@ -351,16 +351,12 @@ const refreshInfo = async ($: EngineInterface, python: string) => {
 // Whether the model is mid-turn, as the last band render saw it (only the render is told): /clear then is dangerous.
 let isWorking = false
 
-// The model an After reset wait asks for; anything else (an old wait has none) is the current one.
-const modelOf = async ($: EngineInterface, id: string): Promise<Model | undefined> => {
-  const m = ((await $.store.get(`delayed:${id}`)) as { model?: unknown } | undefined)?.model
-  return m === 'opus' || m === 'sonnet' ? m : undefined
-}
-
-// When this chat's wait comes due; a stored value that is not a time the clock can show counts as no wait.
+// When this chat's wait comes due and the model it asks for (an old wait has none: the current one); a stored value that is not a time the clock can show counts as no wait.
 const waitOf = async ($: EngineInterface, id: string) => {
-  const wait = (await $.store.get(`delayed:${id}`)) as { at?: unknown } | undefined
-  return typeof wait?.at === 'number' && !Number.isNaN(new Date(wait.at).getTime()) ? wait.at : null
+  const wait = (await $.store.get(`delayed:${id}`)) as { at?: unknown; model?: unknown } | undefined
+  const at = typeof wait?.at === 'number' && !Number.isNaN(new Date(wait.at).getTime()) ? wait.at : null
+  const model: Model | undefined = wait?.model === 'opus' || wait?.model === 'sonnet' ? wait.model : undefined
+  return { at, model }
 }
 
 // The delayed New worker: the wait is a store key of its chat; the 30 s tick starts it once due. The key goes first, so it never fires twice.
@@ -369,7 +365,7 @@ const waitOf = async ($: EngineInterface, id: string) => {
 let threwAt = 0
 const fireDue = async ($: EngineInterface, python: string, compression: string) => {
   const [id, now] = await Promise.all([$.session.id(), $.clock.now()])
-  const [at, model] = await Promise.all([waitOf($, id), modelOf($, id)])
+  const { at, model } = await waitOf($, id)
   let shown: number | null = null
   await update($, delayedAt, v => ((shown = v), at))
   if (at === null || at > now || isWorking || shown !== at) return
@@ -469,7 +465,8 @@ export const register: Register = (on, options) => {
   const stoppedIn = new Map<string, Set<number>>()
   const rulesAt = new Map<string, number | null>() // the context size at the last reminder of the rules for all projects, by chat (null: it was unknown)
   const setOf = (m: Map<string, Set<number>>, id: string) => m.get(id) ?? m.set(id, new Set()).get(id)!
-  let wasReady = false // the New worker button was ready at the last draw of the band
+  let readyIn = '' // the chat whose New worker button was ready at the last draw ('' when none)
+  let isPonytailOff = false // the last hint said ponytail is not installed: stop asking
   let isLessonsNoted = false // a lesson search that fails on every message is kept for /al-health once, not on each
 
   on('session.start', async ($, e, next) => {
@@ -519,7 +516,7 @@ export const register: Register = (on, options) => {
     await guarded($, 'session.start', async () => {
       const isOpen = (await $.store.get('details')) === true
       await update($, isDetails, () => isOpen)
-      const at = await waitOf($, await $.session.id()) // a wait outlives a restart
+      const { at } = await waitOf($, await $.session.id()) // a wait outlives a restart
       await update($, delayedAt, () => at)
     })
 
@@ -921,7 +918,8 @@ export const register: Register = (on, options) => {
       const to = typeof e.to === 'string' ? (agentNames.get(e.to) ?? e.to) : ''
       if (/^a[0-9a-f]{16}$/.test(to) && !running.has(to)) {
         const end = ended.get(to)
-        const a = (await runCg($, python, ['agent-age', '--session', await $.session.id(), '--agent', to, ...(end === undefined ? [] : ['--ended', new Date(end).toISOString()]), '--cwd', await $.session.root()], 8_000)) as { found: boolean; age: number | null; limit: number; context: number; usd: number }
+        if (end !== undefined && (await $.clock.now()) - end < 300_000) return next(e) // warm whatever the limit: nothing to ask
+        const a = (await runCg($, python, ['agent-age', '--session', await $.session.id(), '--agent', to, ...(end === undefined ? [] : ['--ended', new Date(end).toISOString()])], 8_000)) as { found: boolean; age: number | null; limit: number; context: number; usd: number }
         const key = `${to}|${end ?? ''}`
         if (shouldStop(a, false, stoppedAgent.has(key))) {
           stoppedAgent.add(key)
@@ -1024,13 +1022,15 @@ export const register: Register = (on, options) => {
 
     const launchLabel = busy ? T.busy : T.newWorker
     // the hint is asked of cg.py when the New worker button becomes ready, not on every redraw; a draw while it stays ready asks nothing
-    const isReady = wait === null && !isWorking && !busy
-    if (isReady !== wasReady) {
-      wasReady = isReady
-      if (isReady)
+    const readyId = wait === null && !isWorking && !busy ? s.id : ''
+    const isReady = readyId !== ''
+    if (readyId !== readyIn) {
+      readyIn = readyId
+      if (readyId && !isPonytailOff)
         void guarded($, 'review', async () => {
-          const r = (await runCg($, python, ['review-hint', '--session', await $.session.id(), '--cwd', await $.session.root()], 8_000)) as unknown as Review
+          const r = (await runCg($, python, ['review-hint', '--session', await $.session.id()], 8_000)) as unknown as Review
           await update($, review, () => r)
+          isPonytailOff = r.ponytail === false
         })
     }
     const detailsLabel = isOpen ? T.compact : T.details

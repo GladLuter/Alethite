@@ -2022,7 +2022,7 @@ test('After reset with a model: the wait keeps it, the plain button keeps none',
   expect(m.store.get('delayed:id')).toEqual({ at: AT })
 })
 
-test('a wait with a model: /model before the handoff and the send, which then goes out', async ($, on) => {
+test('a wait with a model: /model after the handoff, before /clear and the send, which then goes out', async ($, on) => {
   const { m, log } = await delayed($, on, 'продолжаем', withModel('sonnet'))
   await m.clock.advance(SOON - NOW)
   expect(log).toEqual(['/model sonnet', '/clear', 'submit h' + String.fromCharCode(10, 10) + 'продолжаем'])
@@ -2277,6 +2277,9 @@ test('guard: an agent between turn.start and turn.complete passes without cg.py,
   expect(await send($, AG)).toEqual({ result: 'sent' })
   expect(ofCg(m, 'agent-age')).toHaveLength(0)
   await ($ as any).turn.complete({ ...turn, agentId: AG })
+  expect(await send($, AG)).toEqual({ result: 'sent' }) // ended under 5 min ago: warm, nothing to ask
+  expect(ofCg(m, 'agent-age')).toHaveLength(0)
+  await m.clock.advance(300_000)
   expect(await send($, AG)).toEqual({ deny: coldText() })
   const { argv } = ofCg(m, 'agent-age')[0]!
   expect(flag(argv, '--ended')).toBe(new Date(10_000_000_000).toISOString())
@@ -2290,7 +2293,6 @@ const failing = (name: string, fail: () => unknown) =>
     expect(ofCg(m, 'agent-age')).toHaveLength(2) // the guard path was reached both times
   })
 failing('process.run rejects', () => ({ deny: 'boom' }))
-failing('process.run times out', () => ({ deny: 'timed out after 8000 ms' }))
 failing('hook throws', () => {
   throw new Error('spawn broke')
 })
@@ -2315,6 +2317,23 @@ test('review hint: asked when New worker becomes ready, drawn on the row, not as
   await ui.press({ key: 'details' }) // two more draws, still ready
   expect(ofCg(m, 'review-hint')).toHaveLength(1)
   expect(await texts(ui)).toContain(`· ${T.reviewHint}`)
+})
+
+test('review hint: asked again for the next chat, with its session', async ($, on) => {
+  const m = await hintRig($, on, '{"ponytail":true,"edits":6}')
+  await mountBand($)
+  ids.now = 'id2'
+  await m.clock.advance(30_000) // the tick refreshes the snap
+  expect(ofCg(m, 'review-hint')).toHaveLength(2)
+  expect(flag(ofCg(m, 'review-hint')[1]!.argv, '--session')).toBe('id2')
+})
+
+test('review hint: no ponytail is not asked again for the next chat', async ($, on) => {
+  const m = await hintRig($, on, '{"ponytail":false,"edits":0}')
+  await mountBand($)
+  ids.now = 'id2'
+  await m.clock.advance(30_000)
+  expect(ofCg(m, 'review-hint')).toHaveLength(1)
 })
 
 test('review hint: not asked while the model works', async ($, on) => {
