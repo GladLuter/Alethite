@@ -1067,7 +1067,8 @@ class EncryptTest(unittest.TestCase):
         settings = crypto.settings_path(a.db)
         with mock.patch('sqlite3.connect', side_effect=AssertionError), mock.patch('crypto.open_db', side_effect=AssertionError):
             self.assertEqual(encrypt.status(a.db), {'on': False, 'db': 'plain', 'key': 'missing', 'notes': []})
-            crypto.save_key(settings, secrets.token_bytes(32))
+        crypto.save_key(settings, secrets.token_bytes(32))  # the settings lock is a sqlite file: outside the patch
+        with mock.patch('sqlite3.connect', side_effect=AssertionError), mock.patch('crypto.open_db', side_effect=AssertionError):
             self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'plain', 'key': 'ok', 'notes': [t('note_index_plain')]})
             self.write_settings(settings, {'encryptionKey': 'dpapi:AAAA'})
             self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'plain', 'key': 'unreadable', 'notes': [t('key_unreadable')]})

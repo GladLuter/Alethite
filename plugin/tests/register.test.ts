@@ -936,6 +936,23 @@ test('settings file: missing, it is written with the values of /config and nothi
   expect(m.toasts).toEqual([])
 })
 
+test('session.start fills the missing keys through cg.py', { options: { embedModel: 'bge-m3', syncDir: 'D:\\old' } }, async ($, on) => {
+  settingsRig(on, '{ "language": "ru", "syncDir": "Z:\\\\cg" }')
+  const m = await started($, on, () => ran('{"added":["embedModel"]}'), [], undefined, home)
+  const fill = ofCg(m, 'settings-fill')
+  expect(fill).toHaveLength(1)
+  const values = JSON.parse(fill[0]!.argv[1]!.replace('--values=', ''))
+  expect(values.embedModel).toBe('bge-m3')
+  expect('syncDir' in values).toBe(false) // the file has it: its value stays
+  expect(m.toasts).toEqual([])
+})
+
+test('session.start does not call settings-fill when the file has every key', async ($, on) => {
+  settingsRig(on, undefined)
+  const m = await started($, on, () => ran('{}'), [], undefined, home) // born with every value: nothing missing
+  expect(ofCg(m, 'settings-fill')).toEqual([])
+})
+
 test('reads the old settings file when the new one is missing: nothing is written, so the new folder is not made before cg.py moves the old one', { options: { language: 'uk', syncDir: 'D:\\old' } }, async ($, on) => {
   const written = settingsRig(on, undefined, { [OLD_SETTINGS]: '{ "language": "ru", "syncDir": "Z:\\\\cg" }' })
   const m = await started($, on, a => (a[0] === 'sync' ? synced() : ran('{}')), [], undefined, home)

@@ -313,6 +313,14 @@ def _cleanup(a):
     return {'on': _cleanup_on(a), 'preview': preview}
 
 
+def _settings_fill(a):
+    """The mod gives the values of /config for the keys its file lacks: the job reads the file only, and gets what the chats use."""
+    values = json.loads(a.values)
+    if not isinstance(values, dict):
+        raise ValueError('--values: not an object')
+    return {'added': crypto.set_fields(crypto.settings_path(a.db), values, fill=True)}
+
+
 def _handoff(a):
     from handoff import build_handoff
     text = build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress, _cleanup_on(a))
@@ -537,6 +545,7 @@ def _parser():
     s.add_argument('action', choices=('install', 'remove', 'status'))
     s.add_argument('--minutes', type=int, default=None)  # job.MINUTES
     add('cleanup', _cleanup).add_argument('action', choices=('on', 'off', 'status'))
+    add('settings-fill', _settings_fill).add_argument('--values', required=True)  # JSON object
     s = add('forget', _forget)
     s.add_argument('--conv', required=True)
     s.add_argument('--pos', type=int, required=True)

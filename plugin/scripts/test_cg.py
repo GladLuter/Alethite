@@ -88,6 +88,30 @@ class CgTest(unittest.TestCase):
         out = json.loads(p.stdout.decode('utf-8'))
         self.assertEqual((p.returncode, 'error' in out), (0, False))
 
+    def settings_file(self, text):
+        path = os.path.join(os.path.dirname(self.db), 'settings.json')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(text)
+        return path
+
+    def test_settings_fill_adds_only_missing(self):
+        path = self.settings_file('{"key": "K", "shareCipher": "cryptography", "embedModel": "bge-m3"}')
+        code, out = self.run_cg('settings-fill', '--values=' + json.dumps({'embedModel': 'x', 'syncDir': 'D:\\s'}))
+        self.assertEqual((code, out), (0, {'added': ['syncDir']}))
+        with open(path, encoding='utf-8') as f:
+            self.assertEqual(json.load(f), {'key': 'K', 'shareCipher': 'cryptography', 'embedModel': 'bge-m3', 'syncDir': 'D:\\s'})
+        self.assertEqual(self.run_cg('settings-fill', '--values={"syncDir": "E:"}')[1], {'added': []})  # nothing missing: nothing written
+
+    def test_settings_fill_broken_file_untouched(self):
+        path = self.settings_file('{"key": "K", ')
+        with open(path, 'rb') as f:
+            before = f.read()
+        out = self.run_cg('settings-fill', '--values={"embedModel": "x"}')[1]
+        self.assertIn('error', out)
+        with open(path, 'rb') as f:
+            self.assertEqual(f.read(), before)
+
     def agent_file(self, aid, calls, meta=True):
         # calls: (message id, time, 5m write, 1h write, read)
         def line(mid, ts, c5, c1, cr):

@@ -544,6 +544,11 @@ export const register: Register = (on, options) => {
           const file = withFile(options, await $.fs.read(settingsFile))
           apply(file.options)
           if (file.bad.length) await fail($, 'settings', T.settingsBad(settingsFile, file.bad))
+          // the keys of a later version: the job reads this file only, cg.py adds them under the lock the other writers take; never awaited
+          if (file.missing.length) {
+            const values = JSON.stringify(Object.fromEntries(file.missing.map(k => [k, options[k]])))
+            void runCg($, python, ['settings-fill', `--values=${values}`], 20_000).catch(err => noteError($, 'settings', err))
+          }
         } else await $.fs.write(settingsFile, `${JSON.stringify(options, null, 2)}\n`)
       } catch (err) {
         await fail($, 'settings', `${settingsFile}: ${message(err)}`)

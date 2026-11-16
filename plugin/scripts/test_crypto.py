@@ -219,6 +219,17 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(self.raw(), b'[1]')
         self.assertFalse(os.path.exists(self.path + '.cg-tmp'))
 
+    def test_set_fields_locked(self):
+        self.write('{"a": 1}')
+        import memdb
+        held = memdb.lock(self.path, 'settings', 0)  # another writer is inside its read and write
+        with self.assertRaises(sqlite3.OperationalError):
+            crypto.set_fields(self.path, {'b': 2}, wait=0.1)
+        self.assertEqual(json.loads(self.raw()), {'a': 1})  # nothing written
+        held.close()
+        crypto.set_fields(self.path, {'b': 2})
+        self.assertEqual(json.loads(self.raw()), {'a': 1, 'b': 2})
+
     def test_set_fields_puts_the_bytes_on_the_disk_before_the_replace(self):
         calls = []
         with mock.patch('os.fsync', lambda fd: calls.append('fsync')), mock.patch('os.replace', lambda a, b: calls.append('replace')):

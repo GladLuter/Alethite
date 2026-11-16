@@ -185,15 +185,28 @@ def atomic_write(path, data):
     os.replace(tmp, path)
 
 
-def set_fields(settings, updates):
-    """Writes `updates` into the settings file in one atomic write (a None value takes its key out); the other fields as they were."""
-    s = _read(settings)
-    for k, v in updates.items():
-        if v is None:
-            s.pop(k, None)
-        else:
-            s[k] = v
-    atomic_write(settings, json.dumps(s, ensure_ascii=False, indent=2).encode('utf-8'))
+def set_fields(settings, updates, wait=5, fill=False):
+    """Writes `updates` into the settings file in one atomic write (a None value takes its key out); the other fields as they were. Read and
+    write sit under one lock on a file beside the settings, so two writers never lose each other's field (sqlite3.OperationalError after
+    `wait` seconds). `fill`: only the keys that are not there yet; their names come back."""
+    import memdb  # at the call: memdb imports this module
+    lock = memdb.lock(settings, 'settings', wait)
+    try:
+        s = _read(settings)
+        if fill:
+            updates = {k: v for k, v in updates.items() if k not in s}
+        for k, v in updates.items():
+            if v is None:
+                s.pop(k, None)
+            else:
+                s[k] = v
+        if updates:
+            atomic_write(settings, json.dumps(s, ensure_ascii=False, indent=2).encode('utf-8'))
+    finally:
+        lock.close()
+        with contextlib.suppress(OSError):  # a waiter still holds it open (Windows refuses): the next writer removes it
+            os.remove(settings + '.settings.lock')  # shortcut: on POSIX a waiter could lock the removed file's inode, the app is Windows-first
+    return list(updates)
 
 
 def save_key(settings, key, cipher=None, index_cipher=None):
