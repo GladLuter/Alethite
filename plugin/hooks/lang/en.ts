@@ -199,6 +199,8 @@ export const en = {
   lessonsIntro: 'Alethite: lessons of this project that may concern this message. Check them before acting; ignore what is unrelated.',
   lessonGate: (lesson: string, isGlobal: boolean) =>
     `Alethite stopped this command once: it holds the trigger of a lesson ${isGlobal ? 'for all projects' : 'of this project'}. ${lesson}. If the lesson does not apply now, run the command again and it passes.`,
+  coldAgent: (minutes: number, tokens: string, usd: string) =>
+    `Alethite stopped this message once: the agent finished ${minutes} min ago and its cache has gone cold, so continuing it rewrites its whole context (${tokens} tokens, about ${usd}). A new light alethite:* agent for the next step is cheaper. If this agent is really needed, send the same message again and it goes through.`,
   noLessons: 'No lessons in this project yet.',
   cgLessonsDescription: 'The lessons of this project and the ones for all projects (forget <pos>: delete one here and on the other computers)',
   cgLessonsHint: '[forget <pos>]',

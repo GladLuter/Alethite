@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { isStale, price, statusText } from '../hooks/guard'
+import { isStale, price, shouldStop, statusText } from '../hooks/guard'
 import { setLanguage } from '../hooks/text'
 
 // the Russian texts of stage 1 for one test; the module is this file's own, the plugin's language is not touched
@@ -37,4 +37,14 @@ test('status line', () => {
     expect(statusText(290_000, now - 18 * 60_000, now)).toBe('ctx 290k · кэш ~42 мин')
     expect(statusText(290_000, now - 61 * 60_000, now)).toBe('ctx 290k · кэш истёк')
   })
+})
+
+test('shouldStop: only a found, idle, not yet stopped agent older than its limit', () => {
+  const a = { found: true, age: 900, limit: 300 }
+  expect(shouldStop(a, false, false)).toBe(true)
+  expect(shouldStop({ ...a, found: false }, false, false)).toBe(false)
+  expect(shouldStop(a, true, false)).toBe(false)
+  expect(shouldStop(a, false, true)).toBe(false)
+  expect(shouldStop({ ...a, age: 300 }, false, false)).toBe(false)
+  expect(shouldStop({ ...a, age: null }, false, false)).toBe(false)
 })

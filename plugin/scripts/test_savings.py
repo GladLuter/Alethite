@@ -211,12 +211,12 @@ class SavingsTest(unittest.TestCase):
     def test_cache_of_another_shape_is_empty(self):
         self.old(A)
         self.new(B, A, HOUR2)
-        for bad in ('{"stray": 1}', '{"v": 1, "files": {}}', '[]', '{"v": 2, "files": {"nobar": {"size": 1}, "read_new|x": {"size": 1, "mtime": 1}}}'):
+        for bad in ('{"stray": 1}', '{"v": 1, "files": {}}', '[]', '{"v": 3, "files": {"nobar": {"size": 1}, "read_new|x": {"size": 1, "mtime": 1}}}'):
             with open(self.cache, 'w') as f:
                 f.write(bad)
             self.assertEqual(self.run_savings(B)['worker']['links'], 1, bad)
             with open(self.cache, encoding='utf-8') as f:
-                self.assertEqual(json.load(f)['v'], 2)  # and the next write replaces it
+                self.assertEqual(json.load(f)['v'], savings.CACHE_VERSION)  # and the next write replaces it
 
     def test_first_call_5m_write_is_priced_at_the_5m_rate(self):
         self.old(A)
@@ -301,6 +301,13 @@ class LeanTest(unittest.TestCase):
         self.assertEqual((r['type'], r['ts'], r['model'], r['usage'], r['calls'], r['workflow']), ('alethite:coder', T, 'claude-sonnet-5-5', [3, 10, 20, 30], 2, False))
         w = self.agent(A, 'agent-2', 'alethite:scout', [acall('m1', T, cr=5)], wf=True)
         self.assertTrue(savings.agent_start(w)['workflow'])
+
+    def test_agent_start_gives_the_end_and_the_size_of_the_last_call(self):
+        T2 = '2026-11-09T10:07:00.000Z'
+        p = self.agent(A, 'agent-1', 'alethite:coder', [acall('m1', T, inp=3, c5=10, c1=20, cr=30), acall('m2', T2, inp=1, c5=2, cr=40),
+                                                       acall('m3', '2026-11-09T11:00:00.000Z', model='<synthetic>', cr=999)])
+        r = savings.agent_start(p)
+        self.assertEqual((r['end'], r['last']), (T2, 1 + 2 + 40))
 
     def test_agent_start_without_meta_is_none(self):
         self.assertIsNone(savings.agent_start(self.agent(A, 'agent-1', 'x', [acall('m1', T, cr=5)], meta=False)))

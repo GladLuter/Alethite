@@ -38,3 +38,7 @@ export const statusText = (tokens: number | null, at: number | null, now: number
 
 export const isStale = (s: Snap, minTokens: number, idleMinutes: number) =>
   s.at !== null && (s.tokens ?? 0) > minTokens && s.now - s.at > idleMinutes * 60_000
+
+// A resume of a cold agent is stopped once: only an agent that is found, not running, not stopped for this end already, and older than its cache lasts.
+export const shouldStop = (a: { found: boolean; age: number | null; limit: number }, running: boolean, stoppedBefore: boolean) =>
+  a.found && !running && !stoppedBefore && a.age !== null && a.age > a.limit

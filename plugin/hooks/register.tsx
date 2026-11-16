@@ -2,8 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Savings, Snap } from '../types'
-import { columns, delayAt, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
-import { isStale, statusText } from './guard'
+import { columns, delayAt, money, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
+import { isStale, shouldStop, size, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
 import { flush, notePath, summaryNote, summaryPath } from './notes'
@@ -582,7 +582,31 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // The subagents the engine says are running, when each last finished, and the (agent, end) pairs a resume was stopped for: in memory only,
+  // after a reload the worst case is one more stop. A name given to Agent({ name }) is linked to the agent's id at its spawn.
+  const running = new Set<string>()
+  const ended = new Map<string, number>()
+  const stoppedAgent = new Set<string>()
+  const agentNames = new Map<string, string>()
+
+  on('agent.spawn', async (_, e, next) => {
+    const r = await next(e)
+    if (e.name !== undefined && r.agentId !== undefined) agentNames.set(e.name, r.agentId)
+    return r
+  })
+
+  on('turn.start', async (_, e, next) => {
+    if (e.agentId !== undefined) running.add(e.agentId)
+    return next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
+    if (e.agentId !== undefined) {
+      running.delete(e.agentId)
+      try {
+        ended.set(e.agentId, await $.clock.now())
+      } catch {}
+    }
     // a subagent's turn or one that cost nothing (interrupted, API error) does not move the cache clock
     if (e.agentId === undefined && e.usage !== undefined) {
       await guarded($, 'turn.complete', async () => {
@@ -885,6 +909,25 @@ export const register: Register = (on, options) => {
     }
     // between the marks: a denial the engine records as an error result must not enter the index as the lesson's text a second time (transcripts.py)
     return lesson === undefined ? next(e) : { deny: [START, T.lessonGate(plain(lesson.text), lesson.global), END].join('\n') }
+  })
+
+  // A message to a subagent that finished long ago, so that its cache has gone cold, is stopped once with the price of the rewrite; the same
+  // message again passes. An agent that is running, a name or an id nothing is known of, another session and any failure here pass untouched:
+  // the guard must never be what stops a needed resume.
+  on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
+    try {
+      const to = typeof e.to === 'string' ? (agentNames.get(e.to) ?? e.to) : ''
+      if (/^a[0-9a-f]{16}$/.test(to) && !running.has(to)) {
+        const end = ended.get(to)
+        const a = (await runCg($, python, ['agent-age', '--session', await $.session.id(), '--agent', to, ...(end === undefined ? [] : ['--ended', new Date(end).toISOString()]), '--cwd', await $.session.root()], 8_000)) as { found: boolean; age: number | null; limit: number; context: number; usd: number }
+        const key = `${to}|${end ?? ''}`
+        if (shouldStop(a, false, stoppedAgent.has(key))) {
+          stoppedAgent.add(key)
+          return { deny: T.coldAgent(Math.round((a.age ?? 0) / 60), size(a.context), money(a.usd).text) }
+        }
+      }
+    } catch {}
+    return next(e)
   })
 
   // After a compaction the model no longer has what it was shown: this chat's lessons may be shown and may stop a command once more.

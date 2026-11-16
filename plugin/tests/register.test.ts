@@ -2238,3 +2238,57 @@ test('/al-cleanup: a wrong word gets the hint and cg.py is not run; a failure go
   expect(await run('on')).toBe(T.cgCleanupFailed)
   expect(m.toasts).toEqual([T.toast(T.failed('al-cleanup', 'ValueError: boom'))])
 })
+
+// ---- the guard of cold agents ----
+const AG = 'a0123456789abcdef'
+const guardRig = async ($: any, on: any, answer: () => unknown = () => ran('{"found":true,"age":900,"limit":300,"context":100000,"usd":0.4}')) => {
+  on('turn.start', () => ({ turnId: 't' }))
+  on('tool.call', { tool: 'SendMessage' }, () => ({ result: 'sent' }))
+  return started($, on, a => (a[0] === 'agent-age' ? answer() : ran('{}')))
+}
+const send = ($: any, to: string) => $.tool.call({ tool: 'SendMessage', to, message: 'go on' })
+const coldText = () => T.coldAgent(15, '100k', '$0.40')
+
+test('guard: a cold agent is stopped once with the price, the same message again passes', async ($, on) => {
+  const m = await guardRig($, on)
+  expect(await send($, AG)).toEqual({ deny: coldText() })
+  expect(await send($, AG)).toEqual({ result: 'sent' })
+  const { argv, timeoutMs } = ofCg(m, 'agent-age')[0]!
+  expect(argv.slice(0, 5)).toEqual(['agent-age', '--session', 'id', '--agent', AG])
+  expect(timeoutMs).toBe(8_000)
+})
+
+test('guard: a warm agent, an unfound one and a name nothing is known of pass', async ($, on) => {
+  let reply = '{"found":true,"age":100,"limit":300,"context":1,"usd":0}'
+  const m = await guardRig($, on, () => ran(reply))
+  expect(await send($, AG)).toEqual({ result: 'sent' })
+  reply = '{"found":false,"age":null,"limit":300,"context":0,"usd":0}'
+  expect(await send($, 'a1111111111111111')).toEqual({ result: 'sent' })
+  expect(await send($, 'researcher')).toEqual({ result: 'sent' })
+  expect(ofCg(m, 'agent-age')).toHaveLength(2) // the name never reached cg.py
+})
+
+test('guard: an agent between turn.start and turn.complete passes without cg.py, after the end it is asked with the end time', async ($, on) => {
+  const m = await guardRig($, on)
+  await ($ as any).turn.start({ text: '', turnId: 't', agentId: AG })
+  expect(await send($, AG)).toEqual({ result: 'sent' })
+  expect(ofCg(m, 'agent-age')).toHaveLength(0)
+  await ($ as any).turn.complete({ ...turn, agentId: AG })
+  expect(await send($, AG)).toEqual({ deny: coldText() })
+  const { argv } = ofCg(m, 'agent-age')[0]!
+  expect(flag(argv, '--ended')).toBe(new Date(10_000_000_000).toISOString())
+})
+
+test('guard: a failing cg.py lets the message through', async ($, on) => {
+  await guardRig($, on, () => ({ deny: 'boom' }))
+  expect(await send($, AG)).toEqual({ result: 'sent' })
+  expect(await send($, AG)).toEqual({ result: 'sent' })
+})
+
+test('guard: a name given at the spawn is the agent id', async ($, on) => {
+  on('agent.spawn', () => ({ model: 'm', agentId: AG }))
+  const m = await guardRig($, on)
+  await ($ as any).agent.spawn({ prompt: 'p', name: 'scout-1' })
+  expect(await send($, 'scout-1')).toEqual({ deny: coldText() })
+  expect(flag(ofCg(m, 'agent-age')[0]!.argv, '--agent')).toBe(AG)
+})

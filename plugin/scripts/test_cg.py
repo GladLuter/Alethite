@@ -14,6 +14,7 @@ import time
 import unittest
 from types import SimpleNamespace
 from unittest import mock
+import cc_token_audit
 import cg
 import crypto
 import dialogs
@@ -77,6 +78,42 @@ class CgTest(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k not in ('PYTHONIOENCODING', 'PYTHONUTF8')}
         p = subprocess.run([sys.executable, CG, '--db', db or self.db, '--projects', self.projects, *args], capture_output=True, env=env)
         return p.returncode, json.loads(p.stdout.decode('utf-8'))
+
+    def agent_file(self, aid, calls, meta=True):
+        # calls: (message id, time, 5m write, 1h write, read)
+        def line(mid, ts, c5, c1, cr):
+            u = {'input_tokens': 1, 'cache_creation_input_tokens': c5 + c1, 'cache_read_input_tokens': cr, 'output_tokens': 1,
+                 'cache_creation': {'ephemeral_5m_input_tokens': c5, 'ephemeral_1h_input_tokens': c1}}
+            return {'type': 'assistant', 'timestamp': ts, 'message': {'id': mid, 'model': 'claude-sonnet-5-5', 'usage': u}}
+        self.write('P/S1/subagents/agent-%s.jsonl' % aid, [line(*c) for c in calls])
+        if meta:
+            self.write('P/S1/subagents/agent-%s.meta.json' % aid, [{'agentType': 'alethite:coder'}])  # one JSON line is a valid JSON file
+        self.write('P/S1.jsonl', [owner_line('x')])
+
+    def agent_age(self, aid, *more):
+        return self.run_cg('agent-age', '--session', 'S1', '--agent', aid, *more)[1]
+
+    def test_agent_age_limit_follows_the_cache_the_agent_wrote(self):
+        self.agent_file('a1111111111111111', [('m1', '2026-11-09T10:00:00.000Z', 100, 0, 0), ('m2', '2026-11-09T10:01:00.000Z', 0, 0, 100)])
+        self.agent_file('a2222222222222222', [('m1', '2026-11-09T10:00:00.000Z', 0, 100, 0)])
+        short, hour = self.agent_age('a1111111111111111'), self.agent_age('a2222222222222222')
+        self.assertEqual((short['found'], short['limit'], short['context']), (True, 300, 101))
+        self.assertEqual((hour['limit'], hour['context']), (3600, 101))
+        self.assertGreater(short['age'], 0)
+
+    def test_agent_age_ended_beats_the_last_call_and_usd_is_the_5m_write_price(self):
+        self.agent_file('a1111111111111111', [('m1', '2026-11-09T10:00:00.000Z', 100000, 0, 0)])
+        ended = time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime(time.time() - 900))
+        out = self.agent_age('a1111111111111111', '--ended', ended)
+        self.assertAlmostEqual(out['age'], 900, delta=60)
+        self.assertAlmostEqual(out['usd'], 100001 * cc_token_audit.price('claude-sonnet-5-5', 100001)[0][1] / 1e6)
+
+    def test_agent_age_unknown_agent_no_meta_or_no_calls_is_not_found(self):
+        self.agent_file('a1111111111111111', [('m1', '2026-11-09T10:00:00.000Z', 1, 0, 0)], meta=False)
+        self.agent_file('a2222222222222222', [])
+        for aid in ('a1111111111111111', 'a2222222222222222', 'a3333333333333333', '..'):
+            out = self.agent_age(aid)
+            self.assertEqual((aid, out['found'], out['age']), (aid, False, None))
 
     def test_cli_utf8(self):
         self.write('P/S.jsonl', [owner_line('ёжик в тумане')])
