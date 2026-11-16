@@ -468,6 +468,7 @@ export const register: Register = (on, options) => {
   let readyIn = '' // the chat whose New worker button was ready at the last draw ('' when none)
   const REVIEW_EDITS = 5 // unreviewed code edits from which the main chat is told to offer /ponytail-review
   const reviewDue = new Map<string, number>() // by chat: the edits count of a review hint the main chat has not been told yet
+  const reviewFailed = new Set<string>() // chats whose failing review-hint was recorded already: one line in /al-health per chat, not one per turn
   const reviewSaid = new Set<string>() // chats told since their count was last under the limit; in memory only, a reload may say it once more
   let isPonytailOff = false // the last hint said ponytail is not installed: stop asking
   let isLessonsNoted = false // a lesson search that fails on every message is kept for /al-health once, not on each
@@ -795,6 +796,11 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'mcp__alethite__lesson_save' }, ($, e) =>
     served($, 'lesson_save', async () => {
       const input = e as unknown as Record<string, unknown>
+      // tool.call runs ahead of the permission check: a rule for every chat on every computer needs the owner's yes, and anything else (a closed dialog too) saves nothing
+      if (input.scope === 'all') {
+        const yes = await $.ui.ask(T.ruleAsk(String(input.fix ?? input.action)), [T.ruleAskYes, T.ruleAskNo]).catch(() => undefined)
+        if (yes !== T.ruleAskYes) return T.ruleDeclined
+      }
       const r = await runCg($, python, lessonSaveArgs(input, await $.session.root(), embedModel))
       let stale = false // the list could not be re-read: the new rule is missing from it and the count of rules that do not fit is without it
       try {
@@ -851,16 +857,23 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     // an engine older than the origin (2.1.29x) stamps none: there a prompt is the owner's; in the desktop Code tab (an SDK host) it is `sdk`, or `unclassified` from a channel the engine cannot attest
     const kind = (e.origin as { kind?: string } | undefined)?.kind
-    const isOwners = kind === undefined || kind === 'composer' || kind === 'bridge' || kind === 'sdk' || kind === 'unclassified'
+    const origin = e.origin as { kind?: string; name?: string; asUser?: boolean } | undefined
+    // our own New worker sends its first message as the owner's (asUser); another plugin's, or ours without asUser, is not
+    const isOwners = kind === undefined || kind === 'composer' || kind === 'bridge' || kind === 'sdk' || kind === 'unclassified' || (kind === 'plugin' && origin?.name === 'alethite' && origin.asUser === true)
     if (isOwners && !e.isMeta) await recheck($, python)
     // the review hint rides the owner's next message once; a failure here costs nothing but the hint
     const blocks: string[] = []
     let hint: [id: string, edits: number] | undefined
     // a dropped prompt never reached the model: the hint comes back for the next one
     const pass = async () => {
-      const r = await next(blocks.length ? { ...e, context: [...(e.context ?? []), ...blocks] } : e)
-      if (hint && r.drop !== undefined) (reviewDue.set(hint[0], hint[1]), reviewSaid.delete(hint[0]))
-      return r
+      try {
+        const r = await next(blocks.length ? { ...e, context: [...(e.context ?? []), ...blocks] } : e)
+        if (hint && r.drop !== undefined) (reviewDue.set(hint[0], hint[1]), reviewSaid.delete(hint[0]))
+        return r
+      } catch (err) {
+        if (hint) (reviewDue.set(hint[0], hint[1]), reviewSaid.delete(hint[0]))
+        throw err
+      }
     }
     if (isOwners && !e.isMeta && e.command === undefined) {
       try {
@@ -931,7 +944,7 @@ export const register: Register = (on, options) => {
     if (!isLessonsOn || lessonList.length === 0) return next(e)
     let lesson: Lesson | undefined
     try {
-      const stopped = setOf(stoppedIn, await $.session.id())
+      const stopped = setOf(stoppedIn, `${await $.session.id()}:${e.agentId ?? ''}`) // a subagent has its own stop
       lesson = gateFor(e.command, lessonList, stopped)
       if (lesson !== undefined) {
         stopped.add(lesson.id)
@@ -973,7 +986,7 @@ export const register: Register = (on, options) => {
       if (e.trigger !== 'precompute' && e.agentId === undefined && r.skip === undefined) {
         const id = await $.session.id()
         shownIn.delete(id)
-        stoppedIn.delete(id)
+        for (const k of stoppedIn.keys()) if (k.startsWith(`${id}:`)) stoppedIn.delete(k)
         rulesAt.delete(id)
         // turn:<id> is written by a finished turn only: an interrupted first turn would leave the size from before the compaction there; the
         // rules then come once, with the mark unknown, and the first size measured afterwards is the mark
@@ -1061,7 +1074,14 @@ export const register: Register = (on, options) => {
       if (readyId && !isPonytailOff)
         void guarded($, 'review', async () => {
           const id = await $.session.id()
-          const r = (await runCg($, python, ['review-hint', '--session', id], 8_000)) as unknown as Review
+          let r: Review
+          try {
+            r = (await runCg($, python, ['review-hint', '--session', id], 8_000)) as unknown as Review
+          } catch (err) {
+            if (reviewFailed.has(id)) return
+            reviewFailed.add(id)
+            throw err
+          }
           isPonytailOff = r.ponytail === false
           if (r.ponytail && r.edits >= REVIEW_EDITS) {
             if (!reviewSaid.has(id)) reviewDue.set(id, r.edits)

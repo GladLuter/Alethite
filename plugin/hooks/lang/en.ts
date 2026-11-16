@@ -191,6 +191,10 @@ export const en = {
       : `Lesson saved:\n${text}`,
   lessonKnown: 'This lesson is saved already.',
   lessonSaveFailed: (msg: string) => `The lesson was not saved: ${msg}`,
+  ruleAsk: (text: string) => `Save this rule for all projects? It will come in every chat on all your computers.\n${text}`,
+  ruleAskYes: 'Yes, save it',
+  ruleAskNo: 'No',
+  ruleDeclined: 'The owner did not agree to save this rule for all projects. Nothing was saved.',
   lessonToast: (action: string, g?: { left: number; on: boolean; stale: boolean }) =>
     g
       ? `lesson saved for all projects${g.on ? ', it will come in every chat' : ' (reminders are off, setting "Lessons")'}: ${action}${g.stale ? ' (the list of rules could not be re-read, /al-lessons re-reads it)' : g.left > 0 ? ` (${g.left} older no longer fit)` : ''}`

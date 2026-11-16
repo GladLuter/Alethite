@@ -189,6 +189,10 @@ export const ru: Partial<Texts> = {
       : `Урок сохранён:\n${text}`,
   lessonKnown: 'Этот урок уже сохранён.',
   lessonSaveFailed: (msg: string) => `Урок не сохранён: ${msg}`,
+  ruleAsk: (text: string) => `Сохранить это правило для всех проектов? Оно будет приходить в каждый чат на всех ваших компьютерах.\n${text}`,
+  ruleAskYes: 'Да, сохранить',
+  ruleAskNo: 'Нет',
+  ruleDeclined: 'Владелец не согласился сохранять это правило для всех проектов. Ничего не сохранено.',
   lessonToast: (action: string, g?: { left: number; on: boolean; stale: boolean }) =>
     g
       ? `урок сохранён для всех проектов${g.on ? ', будет приходить в каждый чат' : ' (напоминания выключены, настройка «Lessons»)'}: ${action}${g.stale ? ' (список правил не удалось перечитать, /al-lessons перечитает его)' : g.left > 0 ? ` (старых больше не влезает: ${g.left})` : ''}`

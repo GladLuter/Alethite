@@ -1433,6 +1433,7 @@ test('global lessons: the trigger stops a command in any project, with the globa
 })
 
 test('lesson_save scope all: the answer, the toast and the args', async ($, on) => {
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: any) => ({ result: { answers: { [e.questions[0].question]: T.ruleAskYes } } })) // $.ui.ask is a tool.call of AskUserQuestion
   const { m } = await lessonRig($, on, [], [rule])
   const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
   expect(ofCg(m, 'lesson-save')[0]!.argv).toEqual(['lesson-save', '--cwd', 'C:/w', '--model', 'embeddinggemma', '--action=x', '--symptom=y', '--cause=z', '--fix=f', '--scope=all'])
@@ -1441,6 +1442,7 @@ test('lesson_save scope all: the answer, the toast and the args', async ($, on) 
 })
 
 test('global lessons: rules that no longer fit show in the save toast and in /al-health', async ($, on) => {
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: any) => ({ result: { answers: { [e.questions[0].question]: T.ruleAskYes } } })) // $.ui.ask is a tool.call of AskUserQuestion
   const long = (id: number, c: string) => ({ ...rule, id, pos: id, fix: c.repeat(300) })
   const { m } = await lessonRig($, on, [], [long(8, 'a'), long(9, 'b'), long(10, 'c'), long(11, 'd')]) // 4 x 302 > RULES_CHARS: three fit
   await typed($, 'да')
@@ -1452,6 +1454,7 @@ test('global lessons: rules that no longer fit show in the save toast and in /al
 })
 
 test('lesson_save scope all: a failed re-read of the list keeps the old list and the answer and the toast say so', async ($, on) => {
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: any) => ({ result: { answers: { [e.questions[0].question]: T.ruleAskYes } } })) // $.ui.ask is a tool.call of AskUserQuestion
   let broken = false
   const list: object[] = [rule]
   const m = await started($, on, a => (a[0] === 'lessons' ? (broken ? failed('db locked') : listed(list)) : a[0] === 'lesson-save' ? ran(JSON.stringify({ text: 'Action: x', new: true })) : ran('{}')))
@@ -1465,6 +1468,7 @@ test('lesson_save scope all: a failed re-read of the list keeps the old list and
 })
 
 test('lesson_save scope all with lessons off does not promise the rule will come in every chat', { options: { lessons: false } }, async ($, on) => {
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: any) => ({ result: { answers: { [e.questions[0].question]: T.ruleAskYes } } })) // $.ui.ask is a tool.call of AskUserQuestion
   const { m } = await lessonRig($, on, [], [rule])
   const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
   const g = { left: 0, on: false, stale: false }
@@ -2454,4 +2458,80 @@ test('review hint: cg.py fails: the prompt goes through without it', async ($, o
   expect(ofCg(m, 'review-hint')).toHaveLength(1)
   await typed($, 'a')
   expect(contexts).toEqual([[]])
+})
+
+// ---- 0.9.2 audit: rules for a New worker, the rule-for-all question, lesson stops per agent ----
+const workerOrigin = (name: string, asUser?: boolean) => ({ origin: { kind: 'plugin', name, ...(asUser === undefined ? {} : { asUser }) } })
+
+test("a New worker's own asUser prompt gets the rules and lessons", async ($, on) => {
+  const contexts: string[][] = []
+  const { m } = await lessonRig($, on, [], [rule], { context: contexts })
+  withSize(m, 50_000)
+  await typed($, 'handoff and draft', workerOrigin('alethite', true))
+  expect(contexts).toEqual([[rulesText()]])
+})
+
+test("another plugin's asUser prompt and our prompt without asUser get none", async ($, on) => {
+  const contexts: string[][] = []
+  const { m } = await lessonRig($, on, [], [rule], { context: contexts })
+  withSize(m, 50_000)
+  await typed($, 'x', workerOrigin('other', true))
+  await typed($, 'x', workerOrigin('alethite'))
+  expect(contexts).toEqual([[], []])
+})
+
+test('a rule for all projects is saved only on Yes', async ($, on) => {
+  let answer: string | undefined = T.ruleAskNo
+  const asked: string[] = []
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: any) => (asked.push(JSON.stringify(e)), answer === undefined ? { deny: 'closed' } : { result: { answers: { [e.questions[0].question]: answer } } }))
+  const { m } = await lessonRig($, on)
+  const save = (extra: object) => ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'a', symptom: 'b', cause: 'c', fix: 'Answer in Ukrainian', ...extra })
+  expect(await save({ scope: 'all' })).toEqual({ result: T.ruleDeclined })
+  answer = undefined
+  expect(await save({ scope: 'all' })).toEqual({ result: T.ruleDeclined })
+  expect(ofCg(m, 'lesson-save')).toHaveLength(0)
+  expect(asked).toHaveLength(2)
+  expect(asked[0]).toContain('Answer in Ukrainian')
+  answer = T.ruleAskYes
+  await save({ scope: 'all' })
+  expect(ofCg(m, 'lesson-save')).toHaveLength(1)
+  await save({ scope: 'project' })
+  expect(ofCg(m, 'lesson-save')).toHaveLength(2)
+  expect(asked).toHaveLength(3) // a project lesson asks nothing
+})
+
+test('the review hint comes back when next() throws', async ($, on) => {
+  let isBroken = true
+  const contexts: string[][] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => {
+    contexts.push([...(e.context ?? [])])
+    if (isBroken) throw new Error('boom')
+    return { text: e.text }
+  })
+  await hintRig($, on, '{"ponytail":true,"edits":6}')
+  await mountBand($)
+  await expect(typed($, 'a')).rejects.toThrow()
+  isBroken = false
+  await typed($, 'b')
+  expect(contexts).toEqual([[hintText(6)], [hintText(6)]])
+})
+
+test("a subagent's stop does not use up the main chat's", async ($, on) => {
+  await lessonRig($, on)
+  const run = (extra: object = {}) => ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x', ...extra })
+  expect(await run({ agentId: 'a1' })).toEqual({ deny: gateText() })
+  expect(await run({ agentId: 'a1' })).toEqual({ result: 'ran' })
+  expect(await run()).toEqual({ deny: gateText() })
+  expect(await run()).toEqual({ result: 'ran' })
+})
+
+test('a failing review-hint is recorded once per chat', async ($, on) => {
+  const m = await started($, on, a => (a[0] === 'review-hint' ? { deny: 'boom' } : noTurn()))
+  await mountBand($)
+  expect(m.store.get('lastError')).toMatchObject({ where: 'review' })
+  await turnTo($, m, 'id2')
+  m.store.set('lastError', { at: 1, where: 'sync', msg: 'other step' })
+  await turnTo($, m, 'id') // the same chat fails again
+  expect(ofCg(m, 'review-hint')).toHaveLength(3)
+  expect(m.store.get('lastError')).toMatchObject({ where: 'sync' })
 })

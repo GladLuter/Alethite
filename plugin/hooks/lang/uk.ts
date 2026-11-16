@@ -192,6 +192,10 @@ export const uk: Partial<Texts> = {
       : `Урок збережено:\n${text}`,
   lessonKnown: 'Цей урок уже збережено.',
   lessonSaveFailed: (msg: string) => `Урок не збережено: ${msg}`,
+  ruleAsk: (text: string) => `Зберегти це правило для всіх проєктів? Воно приходитиме в кожен чат на всіх ваших комп'ютерах.\n${text}`,
+  ruleAskYes: 'Так, зберегти',
+  ruleAskNo: 'Ні',
+  ruleDeclined: 'Власник не погодився зберігати це правило для всіх проєктів. Нічого не збережено.',
   lessonToast: (action: string, g?: { left: number; on: boolean; stale: boolean }) =>
     g
       ? `урок збережено для всіх проєктів${g.on ? ', приходитиме в кожен чат' : ' (нагадування вимкнено, налаштування «Lessons»)'}: ${action}${g.stale ? ' (список правил не вдалося перечитати, /al-lessons перечитає його)' : g.left > 0 ? ` (старих більше не вміщується: ${g.left})` : ''}`
