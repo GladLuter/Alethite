@@ -2,6 +2,7 @@ import gc
 import json
 import os
 import shutil
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -101,18 +102,30 @@ class CleanupTest(unittest.TestCase):
         self.assertEqual(before['agents'], 1)
         cleanup.snapshot(self.conn, self.projects, self.path(A))
         self.remove(A)
+        self.assertFalse(any('agent' in c for c in cleanup.saved_chains(self.conn)))  # the starts live in the agents column
         gone = cleanup.gone(self.conn)
         self.assertEqual([a['type'] for a in gone[A]['agents']], ['alethite:coder'])
         self.assertEqual(savings.savings(self.projects, C, [A, C], self.cache, gone)['project']['lean'], before)
 
     def test_gone_skips_a_damaged_row_and_counts_an_agent_once(self):
         ag = {'type': 'alethite:coder', 'ts': T, 'model': 'm', 'usage': [0, 0, 1, 1], 'calls': 1, 'workflow': False, 'resumes': [], 'cw1h_total': 0}
-        chains = json.dumps([{'rel': 'P/x/subagents/agent-1.jsonl', 'agent': ag}, {'rel': 'P/x/subagents/agent-1.jsonl#5', 'agent': ag}, {'rel': 'P/x.jsonl'}])
-        for conv, c in (('bad', '{bad'), ('x', chains)):
-            self.conn.execute('INSERT INTO removed VALUES(?,?,?,?,?,?)', (conv, 'P/%s.jsonl' % conv, 'now', 'null', 'null', c))
+        for conv, a in (('bad', '{bad'), ('x', json.dumps({'P/x/subagents/agent-1.jsonl': ag})), ('old', None), ('list', '[1]')):
+            self.conn.execute('INSERT INTO removed(conv, path, at, last_usage, read_new, chains, agents) VALUES(?,?,?,?,?,?,?)',
+                              (conv, 'P/%s.jsonl' % conv, 'now', 'null', 'null', '{bad', a))
         gone = cleanup.gone(self.conn)
-        self.assertEqual(gone['bad']['agents'], [])
+        self.assertEqual([gone[c]['agents'] for c in ('bad', 'old', 'list')], [[], [], []])
         self.assertEqual(gone['x']['agents'], [ag])
+
+    def test_an_index_made_without_the_agents_column_opens_and_gone_works(self):
+        path = os.path.join(os.path.dirname(self.db), 'old.db')
+        old = sqlite3.connect(path)
+        old.execute('CREATE TABLE removed(conv TEXT PRIMARY KEY, path TEXT NOT NULL, at TEXT NOT NULL, last_usage TEXT, read_new TEXT, chains TEXT NOT NULL)')
+        old.execute("INSERT INTO removed VALUES('o', 'P/o.jsonl', 'now', 'null', 'null', '[]')")
+        old.commit()
+        old.close()
+        conn = memdb.connect(path)
+        self.assertEqual(cleanup.gone(conn)['o']['agents'], [])
+        conn.close()
 
     def test_snapshot_rewrites_on_second_call(self):
         self.chat_a()
@@ -163,7 +176,7 @@ class CleanupTest(unittest.TestCase):
     def test_damaged_saved_row_is_skipped(self):
         self.chat_a()
         cleanup.snapshot(self.conn, self.projects, self.path(A))
-        self.conn.execute("INSERT INTO removed VALUES('X', 'P/X.jsonl', '2026-11-11T10:00:00+00:00', '{', '{', '{')")
+        self.conn.execute("INSERT INTO removed(conv, path, at, last_usage, read_new, chains, agents) VALUES('X', 'P/X.jsonl', '2026-11-11T10:00:00+00:00', '{', '{', '{', '{')")
         self.assertEqual(len(cleanup.saved_chains(self.conn)), 2)
         self.assertEqual(set(cleanup.gone(self.conn)), {A, 'X'})
 
