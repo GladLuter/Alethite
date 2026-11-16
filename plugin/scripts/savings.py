@@ -246,9 +246,8 @@ def lean_usd(rec, ref):
     return usd / 1e6
 
 
-def _lean(projects, paths, cache, gone):
-    """(fn, files): fn(convs) is {usd, agents} of the lean agents of those chats (the files while the chat is on the disk, else what cleanup.snapshot
-    kept in `gone`; a chat once); files are the agent transcripts read. The reference comes from the disk only."""
+def _disk(projects, paths, cache, now):
+    """(on_disk, recs, ref): the agent transcripts of the chats on the disk, their starts {path: record or None} and the reference of those."""
     on_disk = _agents(projects, paths)
     recs = {}
     for ps in on_disk.values():
@@ -257,7 +256,13 @@ def _lean(projects, paths, cache, gone):
                 recs[p] = _cached(cache, p, agent_start)
             except OSError:  # removed or locked meanwhile
                 pass
-    ref = reference([r for r in recs.values() if r], time.time())
+    return on_disk, recs, reference([r for r in recs.values() if r], now)
+
+
+def _lean(projects, paths, cache, gone):
+    """(fn, files): fn(convs) is {usd, agents} of the lean agents of those chats (the files while the chat is on the disk, else what cleanup.snapshot
+    kept in `gone`; a chat once); files are the agent transcripts read. The reference comes from the disk only."""
+    on_disk, recs, ref = _disk(projects, paths, cache, time.time())
 
     def of(convs):
         mine = []
@@ -268,21 +273,37 @@ def _lean(projects, paths, cache, gone):
     return of, set(recs)
 
 
-def lean_stats(projects, since, until, gone, now):
+def _load_cache(cache_path):
+    try:
+        with open(cache_path, encoding='utf-8') as f:
+            data = json.load(f)
+        files = data['files'] if data['v'] == CACHE_VERSION else {}  # another version: the numbers may mean something else
+        return {k: e for k, e in files.items() if isinstance(k, str) and '|' in k and isinstance(e, dict) and {'size', 'mtime', 'value'} <= e.keys()}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):  # an unreadable or foreign file reads as empty
+        return {}
+
+
+def _save_cache(cache_path, cache, keep):
+    tmp = None
+    try:  # a failed cache write costs only speed
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(cache_path) or '.', suffix='.tmp')
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump({'v': CACHE_VERSION, 'files': {k: e for k, e in cache.items() if k.split('|', 1)[1] in keep}}, f)
+        os.replace(tmp, cache_path)
+    except OSError:
+        tmp and os.path.exists(tmp) and os.remove(tmp)
+
+
+def lean_stats(projects, since, until, gone, now, cache_path=None):
     """The subagents that started on [since, until) over all chats (disk while the chat is there, else `gone`): {agents, lean, usd, ref_tokens, ref_since}.
     The reference is the 'agent' one of the disk records."""
+    cache = _load_cache(cache_path)
     paths = _paths(projects)
-    on_disk = _agents(projects, paths)
-    disk = {}
-    for p in {p for ps in on_disk.values() for p in ps}:
-        try:
-            disk[p] = agent_start(p)
-        except OSError:  # removed or locked meanwhile
-            pass
-    ref = reference([r for r in disk.values() if r], now)
-    recs = [(disk.get(p), s) for s, ps in on_disk.items() if s in paths for p in ps]
-    recs += [(r, s) for s, g in (gone or {}).items() if s not in paths for r in g.get('agents') or []]
-    mine = [r for r, _ in recs if r and isinstance(r['ts'], str) and r['ts'][:10] >= since and (until is None or r['ts'][:10] < until)]
+    on_disk, disk, ref = _disk(projects, paths, cache, now)
+    cache_path and _save_cache(cache_path, cache, set(paths.values()) | set(disk))
+    recs = [disk.get(p) for s, ps in on_disk.items() if s in paths for p in ps]
+    recs += [r for s, g in (gone or {}).items() if s not in paths for r in g.get('agents') or []]
+    mine = [r for r in recs if r and isinstance(r['ts'], str) and r['ts'][:10] >= since and (until is None or r['ts'][:10] < until)]
     lean = [r for r in mine if r['type'] in LEAN_TYPES]
     a = ref['agent']
     return {'agents': len(mine), 'lean': len(lean), 'usd': sum(lean_usd(r, ref['workflow' if r['workflow'] else 'agent']) for r in lean),
@@ -291,13 +312,7 @@ def lean_stats(projects, since, until, gone, now):
 
 def savings(projects, session, convs, cache_path, gone=None):
     """{last, worker, project}; `convs` are the project's conversations from the index, None if it could not be read."""
-    try:
-        with open(cache_path, encoding='utf-8') as f:
-            data = json.load(f)
-        files = data['files'] if data['v'] == CACHE_VERSION else {}  # another version: the numbers may mean something else
-        cache = {k: e for k, e in files.items() if isinstance(k, str) and '|' in k and isinstance(e, dict) and {'size', 'mtime', 'value'} <= e.keys()}
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):  # an unreadable or foreign file reads as empty
-        cache = {}
+    cache = _load_cache(cache_path)
     paths = _paths(projects)
     chain, seen, cur = [], set(), session
     while cur not in seen and (ln := link(paths, cur, cache, gone)):
@@ -314,15 +329,7 @@ def savings(projects, session, convs, cache_path, gone=None):
                 links[c] = ln
         every = lean(set(convs) | seen | {cur})
         project = {'usd': sum(ln['usd'] for ln in links.values()) + every['usd'], 'links': len(links), 'lean': every}
-    tmp = None
-    try:  # a failed cache write costs only speed
-        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(cache_path) or '.', suffix='.tmp')
-        with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            keep = set(paths.values()) | agent_files
-            json.dump({'v': CACHE_VERSION, 'files': {k: e for k, e in cache.items() if k.split('|', 1)[1] in keep}}, f)
-        os.replace(tmp, cache_path)
-    except OSError:
-        tmp and os.path.exists(tmp) and os.remove(tmp)
+    _save_cache(cache_path, cache, set(paths.values()) | agent_files)
     return {'last': chain and {'usd': chain[0]['first'], 'old_tokens': chain[0]['old_tokens'], 'new_tokens': chain[0]['new_tokens']} or None,
             'worker': {'usd': sum(ln['usd'] for ln in chain) + mine['usd'], 'lean': mine, 'links': len(chain), 'calls': sum(ln['calls'] for ln in chain)},
             'project': project}

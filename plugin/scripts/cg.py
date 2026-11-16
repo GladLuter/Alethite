@@ -433,7 +433,8 @@ def _stats(a):
         gone = cleanup.gone(conn)
     except Exception:  # no removed chats known: the chats on the disk still count
         gone = None
-    m = stats.metrics(a.projects, conn, a.since, a.until, errors, a.machine or sync.machine_name(), cleanup.saved_chains(conn), gone)
+    m = stats.metrics(a.projects, conn, a.since, a.until, errors, a.machine or sync.machine_name(), cleanup.saved_chains(conn), gone,
+                      os.path.join(os.path.dirname(crypto.settings_path(a.db)), 'savings-cache.json'))
     return {'metrics': m, 'note': stats.note_markdown(m, a.host, a.today, json.loads(a.limits), a.rule_chars, a.memory_tokens, a.compression),
             'errors': errors}
 

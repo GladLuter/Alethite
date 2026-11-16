@@ -14,7 +14,7 @@ MOD_CATEGORIES = {cc_token_audit.tool_cat(n) for n in MOD_TOOLS}
 BASELINE = {'usd_per_owner_msg': 5.20, 'rewrite_share': 0.417, 'idle60_share': 0.319, 'median_main_context': 428000}  # weekly limit: t('stats_weekly_base')
 
 
-def metrics(projects, conn, since, until=None, errors=None, machine=None, saved=None, gone=None):
+def metrics(projects, conn, since, until=None, errors=None, machine=None, saved=None, gone=None, cache_path=None, now=None):
     """Figures for the API calls on/after `since` (and before `until`) in the transcripts under `projects`.
     What would make them wrong (unreadable transcripts, models without a price) is appended to the `errors` list, as the index reports its own."""
     errors = [] if errors is None else errors
@@ -35,7 +35,7 @@ def metrics(projects, conn, since, until=None, errors=None, machine=None, saved=
     rw = R['cache_rewrites']
     # what the audit charges to the results of recall and recall_more: their tokens in the context of every later request
     tools = [c for c in R['categories'] if c['category'] in MOD_CATEGORIES]
-    lean = savings.lean_stats(projects, since, until, gone, time.time())
+    lean = savings.lean_stats(projects, since, until, gone, time.time() if now is None else now, cache_path)
     return {'since': since, 'until': until, 'subagents': lean['agents'], 'lean_agents': lean['lean'], 'lean_usd': lean['usd'],
             'lean_ref_tokens': lean['ref_tokens'], 'lean_ref_since': lean['ref_since'], 'cost_main': cost, 'owner_msgs': n, 'usd_per_owner_msg': cost / n if n else None,
             'rewrite_share': rw['total']['share_of_all_cost'], 'idle60_share': rw['by_cause']['idle >= 60 min']['share_of_all_cost'],
