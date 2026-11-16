@@ -36,7 +36,7 @@ export const lessonsMatchArgs = (text: string, cwd: string, model: string, minSc
   'lessons-match',
   '--cwd',
   cwd,
-  `--text=${text.slice(0, 2000)}`,
+  `--text=${Array.from(text).slice(0, 2000).join('')}`,
   '--model',
   model,
   '--min-score',

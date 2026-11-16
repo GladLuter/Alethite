@@ -78,6 +78,8 @@ export const ru: Partial<Texts> = {
   // errors: the toast of an owner-started action; cg.py could not be started at all
   failed: (where: string, msg: string) => `${where} — ${msg}`,
   pythonMissing: (python: string) => `Python не запустился или не ответил вовремя (команда «${python}», настройка «Python command»)`,
+  cmdFailed: (name: string) => `${name}: не вышло, причина во всплывающем сообщении.`,
+  cgTooLong: 'ответ cg.py слишком длинный и был обрезан',
   catchUpFailed: (where: string) => `фоновое обновление памяти (${where}) не удалось, подробности — /al-health`,
 
   // long memory: what the model reads (tool descriptions, results) and what the owner sees about the index
@@ -96,11 +98,9 @@ export const ru: Partial<Texts> = {
   cgIndexDescription: 'Обновить индекс долгой памяти (rebuild: перечитать все транскрипты и добавить недостающее)',
   cgIndexHint: '[rebuild]',
   cgIndexDone: (i: Record<string, unknown>) => `Индекс обновлён: ${i.files} файлов, ${i.rows} новых записей, всего ${i.convs} чатов, ${(i.seconds as number).toFixed(1)} с`,
-  cgIndexFailed: 'al-index: не вышло, причина во всплывающем сообщении.',
 
   // /al-health
   cgHealthDescription: 'Проверить, что мод, индекс, память и синхронизация работают',
-  cgHealthFailed: 'al-health: не вышло, причина во всплывающем сообщении.',
   healthVersion: (version: string) => `Claude Code ${version}`,
   healthIndex: (i: Record<string, unknown>) => `Индекс: ${i.convs} чатов, ${i.rows} записей, ${i.size_mb} МБ, обновлён ${i.last_update ?? 'ни разу'} (${i.db})`,
   healthIndexError: (msg: string) => `Индекс: ошибка — ${msg}`,
@@ -144,7 +144,6 @@ export const ru: Partial<Texts> = {
   cgSyncSkippedVectors: (n: number) => `Записей с векторами другой модели (посчитаются здесь): ${n}`,
   cgSyncWarning: (msg: string) => `Внимание: ${msg}`,
   cgSyncError: (msg: string) => `Ошибка: ${msg}`,
-  cgSyncFailed: 'al-sync: не вышло, причина во всплывающем сообщении.',
   syncErrors: (n: number) => `синхронизация — ${n} ошибок, см. /al-health`,
 
   // /al-stats: the reply, and the summary note written into the vault
@@ -157,7 +156,6 @@ export const ru: Partial<Texts> = {
   cgStatsQueued: (n: number) => `Obsidian недоступен (причина во всплывающем сообщении). В очереди неотправленных заметок: ${n}; следующий /al-stats их дошлёт.`,
   cgStatsSummaryFailed: 'Заметка записана, но сводка не пересобрана (причина во всплывающем сообщении); следующий /al-stats попробует снова.',
   summaryTruncated: 'В папке замеров больше 1000 файлов — сводка неполная, разложите старые заметки по подпапкам',
-  cgStatsFailed: 'al-stats: не вышло, причина во всплывающем сообщении.',
   statsFolder: 'Alethite/Замеры',
   statsSummary: 'Сводка',
   summaryTitle: '# Сводка замеров',
@@ -210,7 +208,6 @@ export const ru: Partial<Texts> = {
   cgLessonsHint: '[forget <pos>]',
   cgLessonsUsage: 'Так: /al-lessons или /al-lessons forget <pos> с pos из списка.',
   cgLessonsForgotten: (n: number) => (n ? 'Урок удалён здесь, а со следующей синхронизацией — и на других компьютерах.' : 'Урока с таким pos нет.'),
-  cgLessonsFailed: 'al-lessons: не получилось, причина — в уведомлении.',
   healthLessons: (count: number, shown: number, chars: number, stopped: number, on: boolean) =>
     on
       ? `Уроки: в этом проекте ${count}; показаны с сообщением ${shown} раз (~${Math.round(chars / 3.5)} токенов всего), команд остановлено ${stopped}`
@@ -230,7 +227,6 @@ export const ru: Partial<Texts> = {
   cgJobOff: 'Фоновая задача выключена: задача «Alethite» удалена. Мод догоняет при открытии чата, как раньше.',
   cgJobState: (minutes: number | null) =>
     minutes === null ? 'Фоновая задача: на этой системе пока нет (только Windows); мод догоняет при открытии чата.' : minutes ? `Фоновая задача: включена, раз в ${minutes} минут.` : 'Фоновая задача: выключена (/al-job on).',
-  cgJobFailed: 'al-job: не получилось, причина — в уведомлении.',
   jobIndex: (rows: number) => `индекс +${rows}`,
   jobEmbed: (done: number, left: number) => `векторы +${done} (осталось ${left})`,
   jobOnBattery: 'векторы ждут сети',
@@ -273,6 +269,5 @@ export const ru: Partial<Texts> = {
   cleanupState: (on: boolean, chats: number, mb: number) =>
     `${on ? 'Удаление старых чатов: включено' : 'Удаление старых чатов: выключено'}. Сейчас ждут удаления: ${chats} (${mb} МБ). Удаляет фоновая задача (/al-job). Чат удаляется только после передачи дел кнопкой «Новый работник». Всё из него должно быть в индексе (и в общей папке, если включена синхронизация), и его не должны трогать 60 минут. Текущий чат не удаляется никогда. Удаление необратимо. Текст останется в долгой памяти.`,
   cleanupNoPreview: (on: boolean) => `${on ? 'Удаление старых чатов: включено' : 'Удаление старых чатов: выключено'}. cg.py не дал числа чатов, ждущих удаления.`,
-  cgCleanupFailed: 'al-cleanup: не получилось. Причина в уведомлении.',
   healthCleanup: (on: boolean, removed: number) => (on ? `Удаление старых чатов: включено, удалено ${removed}` : `Удаление старых чатов: выключено (удалено ${removed})`),
 }

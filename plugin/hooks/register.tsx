@@ -14,7 +14,7 @@ import { cleanupArgs, cleanupReply } from './cleanup'
 import type { CleanupResult } from './cleanup'
 import { indexDirArgs, indexDirRefusal, indexDirReply } from './indexdir'
 import type { IndexDirResult } from './indexdir'
-import { healthLines, homeNotesOf, indexProblemOf, message, parseCg } from './py'
+import { healthLines, homeNotesOf, indexProblemOf, message, parseCg, parseJson } from './py'
 import type { LastError } from './py'
 import { jobArgs, jobHealth } from './job'
 import type { JobRun } from './job'
@@ -69,14 +69,16 @@ const runCg = async ($: EngineInterface, python: string, args: string[], timeout
   const r = await $.process.run([python, `${$.plugin.root}/scripts/cg.py`, '--lang', language(), ...args], { timeoutMs }).catch((err: unknown) => {
     throw new Error(`${T.pythonMissing(python)} (${message(err)})`)
   })
-  const problem = indexProblemOf(r.stdout) // before parseCg throws: an error answer carries it too
+  if (r.isStdoutTruncated) throw new Error(T.cgTooLong) // the engine cut it at 4 MiB: what is left is no answer, and exit 0 would pass it for one
+  const json = parseJson(r.stdout)
+  const problem = indexProblemOf(json) // before parseCg throws: an error answer carries it too
   if (problem !== undefined) setProblem($, problem)
-  for (const note of homeNotesOf(r.stdout)) {
+  for (const note of homeNotesOf(json)) {
     if (toastedNotes.includes(note)) continue
     toastedNotes.push(note)
     toast($, note)
   }
-  const out = parseCg(r)
+  const out = parseCg(r, json)
   const notice = typeof out.index_notice === 'string' ? out.index_notice : ''
   if (!notice) lastNotice = ''
   else if (notice !== lastNotice) {
@@ -115,6 +117,12 @@ const indexErrors = async ($: EngineInterface, where: string, errors: IndexError
   if (isAsked) toast($, text)
   else showStatus($, text)
   await noteError($, where, T.indexErrorFirst(errors.length, errors[0]!.path, errors[0]!.error))
+}
+
+// An owner-started command failed: the reason in a toast and /al-health, the reply says only that it did not work.
+const failedCmd = async ($: EngineInterface, name: string, err: unknown) => {
+  await fail($, name, err)
+  return { text: T.cmdFailed(name) }
 }
 
 // A memory tool call: its text for the model, or a refusal the model reads as an error, and the owner sees the failure too.
@@ -659,6 +667,17 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // The start of the latest request of the main chat's turn: the cache lifetime counts from it, not from the turn's end (a few seconds on).
+  let stepAt: { turn: string; at: number } | undefined
+  on('turn.step', async function* ($, e, next) {
+    if (e.agentId === undefined) {
+      try {
+        stepAt = { turn: e.turnId, at: await $.clock.now() }
+      } catch {}
+    }
+    return yield* next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
     if (e.agentId !== undefined) {
       running.delete(e.agentId)
@@ -673,7 +692,7 @@ export const register: Register = (on, options) => {
         await update($, isArmed, () => false)
         const [id, now, usage] = await Promise.all([$.session.id(), $.clock.now(), $.session.usage()])
         const prev = (await $.store.get(`turn:${id}`)) as { at: number | null } | undefined
-        await $.store.set(`turn:${id}`, { at: now, tokens: usage.context.tokens ?? null })
+        await $.store.set(`turn:${id}`, { at: stepAt?.turn === e.turnId ? stepAt.at : now, tokens: usage.context.tokens ?? null })
         await pruneTurns($)
         await refresh($, python)
         if (!prev?.at) void refreshInfo($, python) // the first reply of a chat (a new worker's): only now has its transcript a call for the savings to read
@@ -708,7 +727,7 @@ export const register: Register = (on, options) => {
       ])
       const facts = files.filter(f => f.name.endsWith('.md') && f.name !== 'MEMORY.md').length
       const memory = dir === null ? null : { dir, facts, tokens: autoMemTokens(mem) }
-      const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" --lang ${language()} embed --model ${embedModel} --max-seconds 100000`
+      const embedCmd = `& "${python}" "${$.plugin.root}/scripts/cg.py" --lang ${language()} embed --model ${embedModel} --max-seconds 100000`
       const counts = await sumCounts($)
       const lessons = { count: lessonList.filter(l => !l.global).length, shown: counts.shown ?? 0, chars: counts.chars ?? 0, stopped: counts.stopped ?? 0, on: isLessonsOn }
       const rules = { global: lessonList.filter(l => l.global).length, rules: counts.rules ?? 0, chars: counts.rulesChars ?? 0, left: rulesContext(lessonList).left }
@@ -717,8 +736,7 @@ export const register: Register = (on, options) => {
         text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile, shareCipher, lessons, rules, homeNotes: typeof index === 'string' ? [] : (index.home_notes as string[] | undefined) }).join('\n'),
       }
     } catch (err) {
-      await fail($, 'al-health', err)
-      return { text: T.cgHealthFailed }
+      return await failedCmd($, 'al-health', err)
     }
   })
 
@@ -729,8 +747,7 @@ export const register: Register = (on, options) => {
       void refreshInfo($, python)
       return { text: T.cgIndexDone(i) }
     } catch (err) {
-      await fail($, 'al-index', err)
-      return { text: T.cgIndexFailed }
+      return await failedCmd($, 'al-index', err)
     }
   })
 
@@ -749,8 +766,7 @@ export const register: Register = (on, options) => {
       }
       return { text: syncReport(r).join('\n') }
     } catch (err) {
-      await fail($, 'al-sync', err)
-      return { text: T.cgSyncFailed }
+      return await failedCmd($, 'al-sync', err)
     }
   })
 
@@ -802,8 +818,7 @@ export const register: Register = (on, options) => {
     try {
       return { text: cleanupReply((await runCg($, python, args, 60_000)) as unknown as CleanupResult) }
     } catch (err) {
-      await fail($, 'al-cleanup', err)
-      return { text: T.cgCleanupFailed }
+      return await failedCmd($, 'al-cleanup', err)
     }
   })
 
@@ -813,8 +828,7 @@ export const register: Register = (on, options) => {
     try {
       return { text: await runStats($, python, days, compression) }
     } catch (err) {
-      await fail($, 'al-stats', err)
-      return { text: T.cgStatsFailed }
+      return await failedCmd($, 'al-stats', err)
     }
   })
 
@@ -883,8 +897,7 @@ export const register: Register = (on, options) => {
       if (args[1] === 'remove') return { text: T.cgJobOff }
       return { text: [T.cgJobState(r.minutes as number | null), ...jobHealth(r.last as JobRun | null)].join('\n') }
     } catch (err) {
-      await fail($, 'al-job', err)
-      return { text: T.cgJobFailed }
+      return await failedCmd($, 'al-job', err)
     }
   })
 
@@ -900,8 +913,7 @@ export const register: Register = (on, options) => {
       lessonList = await lessonsOf($, python)
       return { text: T.cgLessonsForgotten(n) }
     } catch (err) {
-      await fail($, 'al-lessons', err)
-      return { text: T.cgLessonsFailed }
+      return await failedCmd($, 'al-lessons', err)
     }
   })
 

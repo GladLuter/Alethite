@@ -127,7 +127,7 @@ test('/al-health: version, index figures, auto-memory folder with its fact count
   expect(text).toContain('3400')
   expect(text).toContain(T.healthMemory(dir, 2))
   expect(text).toContain(T.vectorsLine('embeddinggemma', 3000, 3400, '2026-10-18T09:00:00Z'))
-  expect(text).toMatch(/python ".*cg\.py" --lang en embed --model embeddinggemma --max-seconds 100000/) // 400 records have no vectors: how to finish them, in the mod's language
+  expect(text).toMatch(/& "python" ".*cg\.py" --lang en embed --model embeddinggemma --max-seconds 100000/) // 400 records have no vectors: how to finish them, in the mod's language
 })
 
 test('/al-health: a project that matches no conversation is said so', async ($, on) => {
@@ -590,7 +590,7 @@ test('/al-index: unreadable transcripts and failures are shown in a toast', asyn
   await ($ as any).command.run({ command: 'al-index', args: '' })
   expect(m.toasts).toEqual([T.toast(T.indexErrors(1))])
   answer = failed('no such table')
-  expect((await ($ as any).command.run({ command: 'al-index', args: '' })).text).toBe(T.cgIndexFailed)
+  expect((await ($ as any).command.run({ command: 'al-index', args: '' })).text).toBe(T.cmdFailed('al-index'))
   expect(m.toasts[1]).toBe(T.toast(T.failed('al-index', 'no such table')))
 })
 
@@ -825,7 +825,7 @@ test('/al-stats: cg.py reports what made the figures wrong: a toast, /al-health,
 
 test('/al-stats: cg.py fails: a toast, nothing is queued or sent', async ($, on) => {
   const { vault, m, stats } = await statsRig($, on, () => failed('PermissionError: x'))
-  expect((await stats()).text).toBe(T.cgStatsFailed)
+  expect((await stats()).text).toBe(T.cmdFailed('al-stats'))
   expect(m.toasts).toEqual([T.toast(T.failed('al-stats', 'PermissionError: x'))])
   expect(m.store.get('outbox')).toBeUndefined()
   expect(vault.calls).toEqual([])
@@ -833,7 +833,7 @@ test('/al-stats: cg.py fails: a toast, nothing is queued or sent', async ($, on)
 
 test('/al-stats: no computer name, no note', async ($, on) => {
   const { vault, m, stats } = await statsRig($, on, undefined, {})
-  expect((await stats()).text).toBe(T.cgStatsFailed)
+  expect((await stats()).text).toBe(T.cmdFailed('al-stats'))
   expect(m.toasts).toEqual([T.toast(T.failed('al-stats', T.noHost))])
   expect(vault.calls).toEqual([])
 })
@@ -1059,7 +1059,7 @@ test('/al-sync: errors of the run are in the reply, in one toast, and /al-health
 
 test('/al-sync: cg.py fails: a toast and a short reply', { options: { syncDir: SHARE } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'sync' ? failed('OperationalError: database is locked') : ran('{}')))
-  expect((await ($ as any).command.run({ command: 'al-sync', args: '' })).text).toBe(T.cgSyncFailed)
+  expect((await ($ as any).command.run({ command: 'al-sync', args: '' })).text).toBe(T.cmdFailed('al-sync'))
   expect(m.toasts).toEqual([T.toast(T.failed('al-sync', 'OperationalError: database is locked'))])
 })
 
@@ -1551,7 +1551,7 @@ test('/al-job: on and off go to cg.py with the minutes; the state shows the last
 test('/al-job: not on this system, said plainly; a failure is a toast', async ($, on) => {
   const m = await started($, on, a => (a[0] !== 'job' ? ran('{}') : a[1] === 'status' ? ran(JSON.stringify({ supported: false, minutes: null, last: null })) : failed('ValueError: the background job is for Windows for now')))
   expect((await ($ as any).command.run({ command: 'al-job', args: '' })).text).toBe([T.cgJobState(null), T.jobNever].join('\n'))
-  expect((await ($ as any).command.run({ command: 'al-job', args: 'on' })).text).toBe(T.cgJobFailed)
+  expect((await ($ as any).command.run({ command: 'al-job', args: 'on' })).text).toBe(T.cmdFailed('al-job'))
   expect(m.toasts).toEqual([T.toast(T.failed('al-job', 'ValueError: the background job is for Windows for now'))])
 })
 
@@ -2248,7 +2248,7 @@ test('/al-cleanup: a wrong word gets the hint and cg.py is not run; a failure go
   expect(await run('maybe')).toBe(T.cgCleanupUsage)
   expect(ofCg(m, 'cleanup')).toEqual([])
   fail = true
-  expect(await run('on')).toBe(T.cgCleanupFailed)
+  expect(await run('on')).toBe(T.cmdFailed('al-cleanup'))
   expect(m.toasts).toEqual([T.toast(T.failed('al-cleanup', 'ValueError: boom'))])
 })
 
@@ -2614,4 +2614,37 @@ test('a failed handoff puts the After-reset wait back once', async ($, on) => {
   await m.clock.advance(3 * 30_000)
   expect(m.store.has('delayed:id')).toBe(false) // the second failure with the same time is not put back
   expect(log).toEqual([])
+})
+
+// ---- 0.9.2: the edge of cg.py, one failure text, the embed command, the cache clock ----
+test('a cut answer of cg.py is an error, not exit 0', async ($, on) => {
+  const m = await started($, on, () => ({ value: { exitCode: 0, stdout: '{"ok":1', stderr: '', isStdoutTruncated: true, isStderrTruncated: false } }))
+  expect((await ($ as any).command.run({ command: 'al-index', args: '' })).text).toBe(T.cmdFailed('al-index'))
+  expect(m.toasts).toEqual([T.toast(T.failed('al-index', T.cgTooLong))])
+})
+
+test('every command failure reads the same', async ($, on) => {
+  const m = await started($, on, () => failed('boom'))
+  expect((await ($ as any).command.run({ command: 'al-index', args: '' })).text).toBe(T.cmdFailed('al-index'))
+  expect((await ($ as any).command.run({ command: 'al-job', args: 'on' })).text).toBe(T.cmdFailed('al-job'))
+  expect(m.toasts).toEqual([T.toast(T.failed('al-index', 'boom')), T.toast(T.failed('al-job', 'boom'))])
+})
+
+test('the embed command quotes the python path', { options: { python: 'C:\\Program Files\\Python\\python.exe' } }, async ($, on) => {
+  const vectors = { model: 'embeddinggemma', with_vectors: 1, total: 2, updated: null }
+  on('fs.list', () => ({ value: [] }))
+  await started($, on, a => (a[0] === 'status' ? ran(JSON.stringify({ vectors })) : ran('{}')))
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
+  expect(text).toContain('& "C:\\Program Files\\Python\\python.exe" "')
+})
+
+test('the cache clock is the start of the last request of the turn, not its end', async ($, on) => {
+  on('turn.step', async function* () {
+    return { turnId: 't', index: 0, answer: '', toolUses: [], stopReason: null, usage: null }
+  })
+  const m = await started($, on, () => noTurn())
+  for await (const _ of ($ as any).turn.step({ turnId: 't', index: 0, model: 'm', messageCount: 1 })) void _ // a stream: the hook runs as it is read
+  await m.clock.advance(5_000)
+  await ($ as any).turn.complete(turn)
+  expect(m.store.get('turn:id')).toMatchObject({ at: 10_000_000_000 })
 })

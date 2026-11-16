@@ -15,34 +15,26 @@ export type LastError = { at: number; where: string; msg: string }
 
 export const message = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
-export const parseCg = ({ exitCode, stdout, stderr }: { exitCode: number; stdout: string; stderr: string }): Record<string, unknown> => {
-  let json: any
+type Answer = Record<string, unknown> | undefined
+
+// The one parse of cg.py's stdout: undefined when it is no JSON object (nothing is known then).
+export const parseJson = (stdout: string): Answer => {
   try {
-    json = JSON.parse(stdout)
+    const json = JSON.parse(stdout)
+    return json && typeof json === 'object' ? json : undefined
   } catch {}
-  if (exitCode === 0 && json && !json.error) return json
-  throw new Error(json?.error || stderr.trim().slice(-300) || `exit ${exitCode}`)
 }
 
-// Why cg.py cannot use the index (index_problem, in an error answer too): '' when the answer has none, undefined when it is no JSON (nothing is known then).
-export const indexProblemOf = (stdout: string): string | undefined => {
-  try {
-    const problem = JSON.parse(stdout).index_problem
-    return typeof problem === 'string' ? problem : ''
-  } catch {
-    return undefined
-  }
+export const parseCg = ({ exitCode, stdout, stderr }: { exitCode: number; stdout: string; stderr: string }, json: Answer = parseJson(stdout)): Record<string, unknown> => {
+  if (exitCode === 0 && json && !json.error) return json
+  throw new Error((json?.error as string | undefined) || stderr.trim().slice(-300) || `exit ${exitCode}`)
 }
+
+// Why cg.py cannot use the index (index_problem, in an error answer too): '' when the answer has none, undefined when it is no JSON.
+export const indexProblemOf = (json: Answer): string | undefined => (json === undefined ? undefined : typeof json.index_problem === 'string' ? json.index_problem : '')
 
 // The notes of cg.py about the move of the mod folder (home_notes, in an error answer too), already worded: none when the answer has none or is no JSON.
-export const homeNotesOf = (stdout: string): string[] => {
-  try {
-    const notes = JSON.parse(stdout).home_notes
-    return Array.isArray(notes) ? notes.filter((n): n is string => typeof n === 'string' && n !== '') : []
-  } catch {
-    return []
-  }
-}
+export const homeNotesOf = (json: Answer): string[] => (Array.isArray(json?.home_notes) ? json.home_notes.filter((n): n is string => typeof n === 'string' && n !== '') : [])
 
 type Vectors = { model: string | null; with_vectors: number; total: number; failed?: number; updated: string | null }
 type Project = { key: string; convs: number }
@@ -65,15 +57,12 @@ export const healthLines = (h: {
   rules?: { global: number; rules: number; chars: number; left: number } // the lessons for all projects and the reminder of them
   homeNotes?: string[] // the notes of the move of the mod folder in the status answer shown
 }) => {
-  const job = typeof h.index === 'string' ? undefined : (h.index.job as JobRun | null | undefined)
-  const v = typeof h.index === 'string' ? undefined : (h.index.vectors as Vectors | undefined)
-  const p = typeof h.index === 'string' ? undefined : (h.index.project as Project | undefined)
-  const enc = typeof h.index === 'string' ? undefined : (h.index.encryption as EncryptStatus | undefined)
-  const cleanup = typeof h.index === 'string' ? undefined : (h.index.cleanup as CleanupStatus | undefined)
-  const dir = typeof h.index === 'string' ? undefined : (h.index.index_dir as IndexDirStatus | undefined)
+  const err = typeof h.index === 'string' ? h.index : undefined
+  const i = (typeof h.index === 'string' ? {} : h.index) as { job?: JobRun | null; vectors?: Vectors; project?: Project; encryption?: EncryptStatus; cleanup?: CleanupStatus; index_dir?: IndexDirStatus; sync?: SyncStatus }
+  const { job, vectors: v, project: p, encryption: enc, cleanup, index_dir: dir } = i
   return [
     T.healthVersion(h.version),
-    typeof h.index === 'string' ? T.healthIndexError(h.index) : T.healthIndex(h.index),
+    err !== undefined ? T.healthIndexError(err) : T.healthIndex(h.index as Record<string, unknown>),
     ...(dir?.notes ?? []), // where the index is, when it is not where indexDir says: cg.py words it
     ...(h.homeNotes ?? []), // the move of the mod folder: likewise
     ...(p ? [T.projectLine(h.root, p.convs), ...(p.convs === 0 ? [T.projectEmpty] : [])] : []),
@@ -87,8 +76,8 @@ export const healthLines = (h: {
     ...(h.lessons === undefined ? [] : [T.healthLessons(h.lessons.count, h.lessons.shown, h.lessons.chars, h.lessons.stopped, h.lessons.on)]),
     ...(h.rules && h.rules.global > 0 ? [T.healthRules(h.rules.global, h.rules.rules, h.rules.chars, h.rules.left, h.lessons?.on ?? true)] : []),
     ...(cleanup ? [cleanupHealth(cleanup)] : []),
-    ...(h.syncDir === undefined ? [] : syncHealth(h.syncDir, typeof h.index === 'string' ? undefined : (h.index.sync as SyncStatus | undefined))),
-    ...(typeof h.index === 'string' || !('job' in h.index) ? [] : jobHealth(job)),
+    ...(h.syncDir === undefined ? [] : syncHealth(h.syncDir, i.sync)),
+    ...(err !== undefined || !('job' in i) ? [] : jobHealth(job)),
     h.lastError ? T.healthLastError(new Date(h.lastError.at).toLocaleString(T.locale), h.lastError.where, h.lastError.msg) : T.healthNoError,
   ]
 }

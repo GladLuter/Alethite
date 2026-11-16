@@ -79,6 +79,8 @@ export const en = {
   // errors: the toast of an owner-started action; cg.py could not be started at all
   failed: (where: string, msg: string) => `${where} — ${msg}`,
   pythonMissing: (python: string) => `Python did not start or did not answer in time (command "${python}", setting "Python command")`,
+  cmdFailed: (name: string) => `${name}: did not work, the reason is in the toast.`,
+  cgTooLong: 'the answer of cg.py is too long and was cut',
   catchUpFailed: (where: string) => `the background memory update (${where}) failed, details in /al-health`,
 
   // long memory: what the model reads (tool descriptions, results) and what the owner sees about the index
@@ -98,11 +100,9 @@ export const en = {
   cgIndexDescription: 'Update the long-memory index (rebuild: read every transcript again and add what is missing)',
   cgIndexHint: '[rebuild]',
   cgIndexDone: (i: Record<string, unknown>) => `Index updated: ${i.files} files, ${i.rows} new records, ${i.convs} chats in all, ${(i.seconds as number).toFixed(1)} s`,
-  cgIndexFailed: 'al-index: did not work, the reason is in the toast.',
 
   // /al-health
   cgHealthDescription: 'Check that the mod, the index, the memory and the sync work',
-  cgHealthFailed: 'al-health: did not work, the reason is in the toast.',
   healthVersion: (version: string) => `Claude Code ${version}`,
   healthIndex: (i: Record<string, unknown>) => `Index: ${i.convs} chats, ${i.rows} records, ${i.size_mb} MB, updated ${i.last_update ?? 'never'} (${i.db})`,
   healthIndexError: (msg: string) => `Index: error — ${msg}`,
@@ -147,7 +147,6 @@ export const en = {
   cgSyncSkippedVectors: (n: number) => `Records whose vectors are of another model (embedded here instead): ${n}`,
   cgSyncWarning: (msg: string) => `Warning: ${msg}`,
   cgSyncError: (msg: string) => `Error: ${msg}`,
-  cgSyncFailed: 'al-sync: did not work, the reason is in the toast.',
   syncErrors: (n: number) => `sync — ${n} errors, see /al-health`,
 
   // /al-stats: the reply, and the summary note written into the vault
@@ -160,7 +159,6 @@ export const en = {
   cgStatsQueued: (n: number) => `Obsidian is unavailable (the reason is in the toast). Notes waiting to be sent: ${n}; the next /al-stats sends them.`,
   cgStatsSummaryFailed: 'The note is written, but the summary is not rebuilt (the reason is in the toast); the next /al-stats tries again.',
   summaryTruncated: 'The measurements folder holds over 1000 files: the summary would be incomplete; move old notes into subfolders',
-  cgStatsFailed: 'al-stats: did not work, the reason is in the toast.',
   statsFolder: 'Alethite/Measurements',
   statsSummary: 'Summary',
   summaryTitle: '# Measurement summary',
@@ -212,7 +210,6 @@ export const en = {
   cgLessonsHint: '[forget <pos>]',
   cgLessonsUsage: 'Use: /al-lessons, or /al-lessons forget <pos> with the pos from the list.',
   cgLessonsForgotten: (n: number): string => (n ? 'Lesson deleted, here and, with the next sync, on the other computers.' : 'No lesson at that pos.'),
-  cgLessonsFailed: 'al-lessons: did not work, the reason is in the toast.',
   healthLessons: (count: number, shown: number, chars: number, stopped: number, on: boolean) =>
     on
       ? `Lessons: ${count} in this project; shown with a message ${shown} times (~${Math.round(chars / 3.5)} tokens in all), commands stopped ${stopped} times`
@@ -232,7 +229,6 @@ export const en = {
   cgJobOff: 'Background job off: the task "Alethite" is removed. The mod catches up when a chat starts, as before.',
   cgJobState: (minutes: number | null): string =>
     minutes === null ? 'Background job: not on this system yet (Windows only); the mod catches up when a chat starts.' : minutes ? `Background job: on, every ${minutes} minutes.` : 'Background job: off (/al-job on).',
-  cgJobFailed: 'al-job: did not work, the reason is in the toast.',
   jobIndex: (rows: number) => `index +${rows}`,
   jobEmbed: (done: number, left: number) => `vectors +${done} (${left} left)`,
   jobOnBattery: 'vectors wait for the mains',
@@ -275,7 +271,6 @@ export const en = {
   cleanupState: (on: boolean, chats: number, mb: number) =>
     `${on ? 'Deleting old chats: on' : 'Deleting old chats: off'}. Waiting for deletion now: ${chats} (${mb} MB). The background job (/al-job) does the deleting. A chat is deleted only after a New worker handoff. All of it must be in the index (and in the shared folder, if sync is on), and nobody must have touched it for 60 minutes. The current chat is never deleted. Deletion is permanent. The text stays in the long memory.`,
   cleanupNoPreview: (on: boolean) => `${on ? 'Deleting old chats: on' : 'Deleting old chats: off'}. cg.py gave no count of the chats waiting for deletion.`,
-  cgCleanupFailed: 'al-cleanup: it did not work. The reason is in the toast.',
   healthCleanup: (on: boolean, removed: number) => (on ? `Deleting old chats: on, deleted ${removed}` : `Deleting old chats: off (deleted ${removed})`),
 }
 

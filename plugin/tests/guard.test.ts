@@ -59,3 +59,8 @@ test('shouldDenyBackground: only an alethite:* type with run_in_background true'
   expect(shouldDenyBackground('general-purpose', true)).toBe(false)
   expect(shouldDenyBackground(undefined, true)).toBe(false)
 })
+
+test('background given as TRUE or 1 is denied', () => {
+  for (const v of ['TRUE', 'True', 1, '1', true, 'true']) expect(shouldDenyBackground('alethite:coder', v)).toBe(true)
+  for (const v of [false, 'false', 0, '0', undefined, null, 2]) expect(shouldDenyBackground('alethite:coder', v)).toBe(false)
+})
