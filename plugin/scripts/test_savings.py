@@ -385,6 +385,21 @@ class LeanTest(unittest.TestCase):
             json.dump({'agentType': 'alethite:coder'}, f)
         self.assertEqual(savings.savings(self.dir, B, [A, B], self.cache)['project']['lean']['agents'], 2)
 
+    def test_agent_with_meta_and_no_call_is_not_read_again(self):
+        self.seed()
+        self.agent(B, 'agent-empty', 'workflow-subagent', [acall('s1', T, model='<synthetic>', cr=5)])
+        savings.savings(self.dir, B, [A, B], self.cache)
+        real, opened = builtins.open, []
+
+        def spy(path, *a, **kw):
+            if 'agent-empty.jsonl' in str(path):
+                opened.append(path)
+            return real(path, *a, **kw)
+
+        with mock.patch('builtins.open', spy):
+            savings.savings(self.dir, B, [A, B], self.cache)
+        self.assertEqual(opened, [])
+
     def test_agents_of_a_chat_in_two_folders_come_from_the_first_only(self):
         self.seed()
         self.assertEqual(len(savings._agents(self.dir, savings._paths(self.dir))[B]), 1)

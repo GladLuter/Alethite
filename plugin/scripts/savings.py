@@ -95,7 +95,7 @@ def _cached(cache, path, fn):
     e = cache.get(key)
     if not (isinstance(e, dict) and e.get('size') == st.st_size and e.get('mtime') == st.st_mtime_ns):
         v = fn(path)
-        if v is None and fn is agent_start:  # its .meta.json may come later and is no part of the signature: read again
+        if v is None and fn is agent_start and _kind(path) is None:  # a .meta.json may come later and is no part of the signature: read again
             cache.pop(key, None)
             return None
         e = cache[key] = {'size': st.st_size, 'mtime': st.st_mtime_ns, 'value': v}
@@ -148,15 +148,21 @@ def _paths(projects):
     return out
 
 
-def agent_start(path):
-    """The start of a subagent transcript: {type, ts, model, usage: [input, cw5m, cw1h, cache_read], calls, workflow, resumes, cw1h_total}; None without a readable
-    .meta.json or without a call. `resumes` are the cache reads of calls after a pause inside RESUME, `cw1h_total` the 1h writes of all calls."""
+def _kind(path):
+    """The agentType of the subagent transcript from its .meta.json, None if that is missing or unreadable."""
     try:
         with open(lp(path[:-6] + '.meta.json'), encoding='utf-8') as f:
             kind = json.load(f)['agentType']
     except (OSError, ValueError, KeyError, TypeError):
         return None
-    if not isinstance(kind, str):
+    return kind if isinstance(kind, str) else None
+
+
+def agent_start(path):
+    """The start of a subagent transcript: {type, ts, model, usage: [input, cw5m, cw1h, cache_read], calls, workflow, resumes, cw1h_total}; None without a readable
+    .meta.json or without a call. `resumes` are the cache reads of calls after a pause inside RESUME, `cw1h_total` the 1h writes of all calls."""
+    kind = _kind(path)
+    if kind is None:
         return None
     first, seen, prev, resumes, cw1h = None, set(), None, [], 0
     with open(lp(path), 'rb') as f:
