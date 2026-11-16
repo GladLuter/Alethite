@@ -421,7 +421,7 @@ class EncryptTest(unittest.TestCase):
     def test_flag_stays_when_the_cleanup_fails_midway(self):
         a = self.a
         self.assertEqual(a.sync()['errors'], [])
-        with mock.patch.object(encrypt, '_delete', side_effect=OSError('boom')), self.assertRaises(OSError):
+        with mock.patch.object(cgsync, 'delete', side_effect=OSError('boom')), self.assertRaises(OSError):
             self.on(a)
         self.assertEqual(self.flag(a), 'old')
         self.assertTrue(os.path.exists(os.path.join(self.own(a), 'batch-00000001.jsonl.gz')))
@@ -441,7 +441,7 @@ class EncryptTest(unittest.TestCase):
         d = os.path.join(self.root, 'folder')
         os.makedirs(os.path.join(d, 'sub'))
         with mock.patch.object(os.path, 'isjunction', create=True, side_effect=AttributeError):
-            encrypt._delete(d)
+            cgsync.delete(d)
         self.assertFalse(os.path.exists(d))
 
     def test_on_old_share_is_cleaned_without_following_links(self):
@@ -1067,7 +1067,8 @@ class EncryptTest(unittest.TestCase):
         settings = crypto.settings_path(a.db)
         with mock.patch('sqlite3.connect', side_effect=AssertionError), mock.patch('crypto.open_db', side_effect=AssertionError):
             self.assertEqual(encrypt.status(a.db), {'on': False, 'db': 'plain', 'key': 'missing', 'notes': []})
-            crypto.save_key(settings, secrets.token_bytes(32))
+        crypto.save_key(settings, secrets.token_bytes(32))  # the settings lock is a sqlite file: outside the patch
+        with mock.patch('sqlite3.connect', side_effect=AssertionError), mock.patch('crypto.open_db', side_effect=AssertionError):
             self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'plain', 'key': 'ok', 'notes': [t('note_index_plain')]})
             self.write_settings(settings, {'encryptionKey': 'dpapi:AAAA'})
             self.assertEqual(encrypt.status(a.db), {'on': True, 'db': 'plain', 'key': 'unreadable', 'notes': [t('key_unreadable')]})

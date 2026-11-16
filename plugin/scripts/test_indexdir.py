@@ -631,6 +631,12 @@ class AbsorbTest(unittest.TestCase):
             if name:
                 conn.execute("INSERT INTO meta VALUES('embed_model', ?)", (name,))
 
+    def test_absorb_creates_the_forgotten_index_an_older_index_lacks(self):
+        self.a.execute('DROP INDEX forgotten_text')
+        self.a.commit()
+        self.absorb()
+        self.assertIsNotNone(self.a.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'forgotten_text'").fetchone())
+
     def test_new_records_come_with_their_marks_and_vectors_and_a_second_run_adds_nothing(self):
         self.model('m1', 'm1')
         put(self.a, 'S', 'shared', vec=REAL)
@@ -692,6 +698,22 @@ class AbsorbTest(unittest.TestCase):
         lines = sorted(self.a.execute('SELECT line FROM outbox').fetchall())
         self.assertEqual(self.absorb()['forgets'], 0)
         self.assertEqual(sorted(self.a.execute('SELECT line FROM outbox').fetchall()), lines)
+
+    def test_a_forget_of_the_temporary_index_takes_the_text_here_under_every_conv(self):  # the index on D: has a copy C: never had
+        put(self.a, 'S', 'secret', pos=1, vec=REAL)
+        put(self.a, 'X', 'secret', pos=4, vec=REAL)
+        put(self.b, 'S', 'secret', pos=1)
+        self.assertEqual(memdb.forget(self.b, 'S', 1), 1)
+        self.assertEqual(self.absorb()['forgets'], 1)
+        self.assertEqual([self.a.execute('SELECT count(*) FROM ' + n).fetchone()[0] for n in ('chunks', 'keys', 'vecs', 'forgotten')], [0, 0, 0, 2])
+
+    def test_a_text_forgotten_here_does_not_come_in_under_another_conv(self):
+        put(self.a, 'S', 'secret', pos=1)
+        memdb.forget(self.a, 'S', 1)
+        put(self.b, 'Y', 'secret', pos=2)  # the temporary index never heard of that forget
+        put(self.b, 'Y', 'fine', pos=3)
+        self.assertEqual(self.absorb()['records'], 1)
+        self.assertEqual(texts_of(self.a), ['fine'])
 
     def test_a_report_of_the_temporary_index_replaces_the_one_here(self):
         put(self.a, 'AG', 'first', kind='sub', pos=1)
@@ -898,7 +920,7 @@ class MoveTest(unittest.TestCase):
         self.write(os.path.join(self.home, 'other', 'keep.txt'))
         out = self.move(locks=locks)
         self.assertEqual(out['notes'], [])  # no file was busy
-        self.assertEqual(sorted(os.listdir(self.home)), ['notes.txt', 'other', 'settings.json'])
+        self.assertEqual(sorted(os.listdir(self.home)), ['notes.txt', 'other', 'settings.json', 'settings.json.settings.lock'])
         self.assertEqual(self.fields(), {'language': 'ru', 'indexDir': self.target})
         self.assertIsNone(self.old_copy(self.new_db()))
 
@@ -915,7 +937,7 @@ class MoveTest(unittest.TestCase):
         self.assertTrue(os.path.exists(self.src))
         out = self.move(where=where)  # and Yes deletes it
         self.assertEqual(out['notes'], [t('index_dir_here', dir=self.target)])
-        self.assertEqual(os.listdir(self.home), ['settings.json'])
+        self.assertEqual(sorted(os.listdir(self.home)), ['settings.json', 'settings.json.settings.lock'])
         self.assertIsNone(self.old_copy(self.new_db()))
         self.move(where=where)  # nothing is left to ask about
         self.assertEqual(self.ui.asked, [])
@@ -1075,7 +1097,7 @@ class MoveTest(unittest.TestCase):
         self.assertEqual((out['done'], out['notes']), (True, []))  # Yes: the copy on C: goes
         self.assertEqual(counts(self.new_db(far)), want)
         self.assertEqual(self.fields(), {'language': 'ru', 'indexDir': far})
-        self.assertEqual(sorted(os.listdir(self.home)), ['settings.json'])  # the index, the mark and the rest of the temporary copy
+        self.assertEqual(sorted(os.listdir(self.home)), ['settings.json', 'settings.json.settings.lock'])  # the index, the mark and the rest of the temporary copy
         self.assertIsNone(self.old_copy(self.new_db(far)))
 
     def test_a_temporary_copy_that_is_kept_is_only_an_old_copy_with_no_mark(self):
@@ -1095,7 +1117,7 @@ class MoveTest(unittest.TestCase):
         self.move()  # Yes
         with open(os.path.join(self.home, indexdir.FORGETS), encoding='utf-8') as f:
             self.assertEqual(len(json.load(f)), 1)
-        self.assertEqual(sorted(os.listdir(self.home)), [indexdir.FORGETS, 'settings.json'])
+        self.assertEqual(sorted(os.listdir(self.home)), [indexdir.FORGETS, 'settings.json', 'settings.json.settings.lock'])
 
     def test_a_mark_left_by_a_short_outage_does_not_turn_a_kept_old_copy_into_a_temporary_index(self):
         far1, far2 = (os.path.join(self.root, n) for n in ('far1', 'far2'))
@@ -1262,7 +1284,7 @@ class MoveTest(unittest.TestCase):
             self.write(os.path.join(self.home, name))
         inside = os.path.join(self.home, 'D-copy')
         self.move(inside)  # Yes
-        self.assertEqual(sorted(os.listdir(self.home)), ['D-copy', 'notes.txt', 'other', 'settings.json'])
+        self.assertEqual(sorted(os.listdir(self.home)), ['D-copy', 'notes.txt', 'other', 'settings.json', 'settings.json.settings.lock'])
         self.assertEqual(counts(self.new_db(inside))['chunks'], 2)
         self.assertIsNone(self.old_copy(self.new_db(inside)))
 
@@ -1282,7 +1304,7 @@ class MoveTest(unittest.TestCase):
         self.write(os.path.join(outer, 'mine.txt'))
         self.move(outer)
         self.assertEqual(sorted(os.listdir(outer)), ['handoffs', 'home', 'index.before-stage2.db', 'index.db', 'job.xml', 'mine.txt'])
-        self.assertEqual(os.listdir(self.home), ['settings.json'])
+        self.assertEqual(sorted(os.listdir(self.home)), ['settings.json', 'settings.json.settings.lock'])
         self.assertEqual(counts(self.new_db(outer))['chunks'], 2)
 
     def test_a_file_of_the_old_copy_in_use_stays_with_a_note_and_the_repeat_deletes_the_rest(self):
@@ -1291,11 +1313,11 @@ class MoveTest(unittest.TestCase):
         with open(job, encoding='utf-8'):  # a program that holds it: Windows will not delete it
             out = self.move()
             self.assertEqual(out['notes'], [t('index_old_busy', dir=self.home)])
-            self.assertEqual(sorted(os.listdir(self.home)), ['job.xml', 'settings.json'])
+            self.assertEqual(sorted(os.listdir(self.home)), ['job.xml', 'settings.json', 'settings.json.settings.lock'])
             self.assertEqual(self.old_copy(self.new_db()), self.home)  # the note stays while a file does
         out = self.move(where=resolve(self.home, self.free))
         self.assertEqual(out['notes'], [t('index_dir_here', dir=self.target)])
-        self.assertEqual(os.listdir(self.home), ['settings.json'])
+        self.assertEqual(sorted(os.listdir(self.home)), ['settings.json', 'settings.json.settings.lock'])
         self.assertIsNone(self.old_copy(self.new_db()))
 
     def test_the_locks_are_given_back_after_the_switch_and_on_a_refusal(self):
@@ -1524,6 +1546,16 @@ class ForgetsFileTest(unittest.TestCase):
             self.assertEqual(conn.execute('SELECT count(*) FROM vecs').fetchone(), (0,))
             self.assertEqual(conn.execute('SELECT conv, cls, hash, n FROM forgotten').fetchall(), [key])
             self.assertEqual(conn.execute('SELECT count(*) FROM outbox').fetchone(), (0,))
+
+    def test_the_stand_in_index_forgets_the_text_under_every_conv(self):
+        self.forget(self.db, 'secret one')
+        indexdir.keep_forgets(self.db)
+        with contextlib.closing(memdb.connect(self.standin)) as conn:
+            put(conn, 'T', 'secret one', pos=7)  # a conv the index in the folder never had
+            put(conn, 'T', 'other', pos=8)
+        indexdir.apply_forgets(self.standin)
+        with contextlib.closing(memdb.connect(self.standin)) as conn:
+            self.assertEqual((texts_of(conn), conn.execute('SELECT count(*) FROM forgotten').fetchone()), (['other'], (2,)))
 
     def test_a_file_that_is_missing_or_cannot_be_read_is_no_forget_and_no_error_and_makes_no_index(self):
         for raw in (None, b'', b'{', b'\xff\xfe', b'{"a": 1}', b'[1]', b'[["a", "b", "c"]]', b'[["a", ["b"], "c", 1]]', b'null'):

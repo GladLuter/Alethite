@@ -50,7 +50,8 @@ export const uk: Partial<Texts> = {
   atFilesHint: '@файли та зображення з чернетки не передаються',
   busy: 'Запускаю…',
   afterReset: (time: string) => `Після скидання (${time})`,
-  afterResetModel: (model: string) => `на ${model}`,
+  afterResetMenu: 'Після скидання…',
+  currentModel: 'Поточна модель',
   waitingAt: (time: string) => `⏰ працівник: ${time}`,
 
   // new worker launch: every failure says what was kept and where
@@ -79,6 +80,8 @@ export const uk: Partial<Texts> = {
   // errors: the toast of an owner-started action; cg.py could not be started at all
   failed: (where: string, msg: string) => `${where} — ${msg}`,
   pythonMissing: (python: string) => `Python не запустився або не відповів вчасно (команда «${python}», налаштування «Python command»)`,
+  cmdFailed: (name: string) => `${name}: не вийшло, причина у спливному повідомленні.`,
+  cgTooLong: 'відповідь cg.py задовга і була обрізана',
   catchUpFailed: (where: string) => `фонове оновлення пам'яті (${where}) не вдалося, подробиці — /al-health`,
 
   // long memory: what the model reads (tool descriptions, results) and what the owner sees about the index
@@ -98,11 +101,9 @@ export const uk: Partial<Texts> = {
   cgIndexDescription: "Оновити індекс довгої пам'яті (rebuild: перечитати всі транскрипти й додати те, чого бракує)",
   cgIndexHint: '[rebuild]',
   cgIndexDone: (i: Record<string, unknown>) => `Індекс оновлено: ${i.files} файлів, ${i.rows} нових записів, усього ${i.convs} чатів, ${(i.seconds as number).toFixed(1)} с`,
-  cgIndexFailed: 'al-index: не вийшло, причина у спливному повідомленні.',
 
   // /al-health
   cgHealthDescription: "Перевірити, що мод, індекс, пам'ять і синхронізація працюють",
-  cgHealthFailed: 'al-health: не вийшло, причина у спливному повідомленні.',
   healthVersion: (version: string) => `Claude Code ${version}`,
   healthIndex: (i: Record<string, unknown>) => `Індекс: ${i.convs} чатів, ${i.rows} записів, ${i.size_mb} МБ, оновлено ${i.last_update ?? 'жодного разу'} (${i.db})`,
   healthIndexError: (msg: string) => `Індекс: помилка — ${msg}`,
@@ -120,7 +121,7 @@ export const uk: Partial<Texts> = {
   vectorsLine: (model: string | null, withVectors: number, total: number, updated: string | null) =>
     `Вектори: ${withVectors} з ${total} записів (${model ?? 'модель не обрано'}), оновлено ${updated ?? 'жодного разу'}`,
   vectorsFailed: (n: number) => `Записів, які модель не змогла порахувати: ${n} (знаходяться лише за словами)`,
-  vectorsHint: (cmd: string) => `Дорахувати в терміналі (можна зупинити й продовжити): ${cmd}`,
+  vectorsHint: (cmd: string) => `Дорахувати в PowerShell (можна зупинити й продовжити): ${cmd}`,
 
   // sync of two computers: /al-health, /al-sync and the background run
   healthSyncOff: 'Синхронізація: вимкнена (налаштування «syncDir»)',
@@ -147,7 +148,6 @@ export const uk: Partial<Texts> = {
   cgSyncSkippedVectors: (n: number) => `Записів із векторами іншої моделі (порахуються тут): ${n}`,
   cgSyncWarning: (msg: string) => `Увага: ${msg}`,
   cgSyncError: (msg: string) => `Помилка: ${msg}`,
-  cgSyncFailed: 'al-sync: не вийшло, причина у спливному повідомленні.',
   syncErrors: (n: number) => `синхронізація — ${n} помилок, див. /al-health`,
 
   // /al-stats: the reply, and the summary note written into the vault
@@ -160,7 +160,6 @@ export const uk: Partial<Texts> = {
   cgStatsQueued: (n: number) => `Obsidian недоступний (причина у спливному повідомленні). У черзі ненадісланих нотаток: ${n}; наступний /al-stats їх дошле.`,
   cgStatsSummaryFailed: 'Нотатку записано, але зведення не перезібрано (причина у спливному повідомленні); наступний /al-stats спробує знову.',
   summaryTruncated: 'У папці замірів понад 1000 файлів — зведення неповне, розкладіть старі нотатки по підпапках',
-  cgStatsFailed: 'al-stats: не вийшло, причина у спливному повідомленні.',
   statsFolder: 'Alethite/Заміри',
   statsSummary: 'Зведення',
   summaryTitle: '# Зведення замірів',
@@ -192,6 +191,10 @@ export const uk: Partial<Texts> = {
       : `Урок збережено:\n${text}`,
   lessonKnown: 'Цей урок уже збережено.',
   lessonSaveFailed: (msg: string) => `Урок не збережено: ${msg}`,
+  ruleAsk: (text: string) => `${text}\n\nЗберегти це правило для всіх проєктів, щоб воно приходило в кожен чат на всіх ваших комп'ютерах?`,
+  ruleAskYes: 'Так, зберегти',
+  ruleAskNo: 'Ні',
+  ruleDeclined: 'Власник не погодився зберігати це правило для всіх проєктів. Нічого не збережено.',
   lessonToast: (action: string, g?: { left: number; on: boolean; stale: boolean }) =>
     g
       ? `урок збережено для всіх проєктів${g.on ? ', приходитиме в кожен чат' : ' (нагадування вимкнено, налаштування «Lessons»)'}: ${action}${g.stale ? ' (список правил не вдалося перечитати, /al-lessons перечитає його)' : g.left > 0 ? ` (старих більше не вміщується: ${g.left})` : ''}`
@@ -209,7 +212,6 @@ export const uk: Partial<Texts> = {
   cgLessonsHint: '[forget <pos>]',
   cgLessonsUsage: 'Так: /al-lessons або /al-lessons forget <pos> з pos зі списку.',
   cgLessonsForgotten: (n: number) => (n ? "Урок видалено тут, а з наступною синхронізацією — і на інших комп'ютерах." : 'Уроку з таким pos немає.'),
-  cgLessonsFailed: 'al-lessons: не вийшло, причина — у сповіщенні.',
   healthLessons: (count: number, shown: number, chars: number, stopped: number, on: boolean) =>
     on
       ? `Уроки: у цьому проєкті ${count}; показано з повідомленням ${shown} разів (~${Math.round(chars / 3.5)} токенів загалом), команд зупинено ${stopped}`
@@ -229,7 +231,6 @@ export const uk: Partial<Texts> = {
   cgJobOff: 'Фонове завдання вимкнено: завдання «Alethite» видалено. Мод наздоганяє, коли відкривається чат, як раніше.',
   cgJobState: (minutes: number | null) =>
     minutes === null ? 'Фонове завдання: на цій системі поки немає (лише Windows); мод наздоганяє, коли відкривається чат.' : minutes ? `Фонове завдання: увімкнено, раз на ${minutes} хвилин.` : 'Фонове завдання: вимкнено (/al-job on).',
-  cgJobFailed: 'al-job: не вийшло, причина — у сповіщенні.',
   jobIndex: (rows: number) => `індекс +${rows}`,
   jobEmbed: (done: number, left: number) => `вектори +${done} (лишилося ${left})`,
   jobOnBattery: 'вектори чекають на мережу',
@@ -272,6 +273,5 @@ export const uk: Partial<Texts> = {
   cleanupState: (on: boolean, chats: number, mb: number) =>
     `${on ? 'Видалення старих чатів: увімкнено' : 'Видалення старих чатів: вимкнено'}. Зараз чекають видалення: ${chats} (${mb} МБ). Видаляє фонове завдання (/al-job). Чат видаляється лише після передачі справ кнопкою «Новий працівник». Усе з нього має бути в індексі (і в спільній папці, якщо синхронізацію ввімкнено), і його не мають чіпати 60 хвилин. Поточний чат не видаляється ніколи. Видалення незворотне. Текст лишиться в довгій пам'яті.`,
   cleanupNoPreview: (on: boolean) => `${on ? 'Видалення старих чатів: увімкнено' : 'Видалення старих чатів: вимкнено'}. cg.py не дав числа чатів, що чекають видалення.`,
-  cgCleanupFailed: 'al-cleanup: не вийшло. Причина в сповіщенні.',
   healthCleanup: (on: boolean, removed: number) => (on ? `Видалення старих чатів: увімкнено, видалено ${removed}` : `Видалення старих чатів: вимкнено (видалено ${removed})`),
 }

@@ -19,7 +19,7 @@ from test_memdb import TS, claude_line, owner_line, search
 from test_texts import use_lang
 from transcripts import project_key
 from vectors import (CHUNK, DIMS, DOC_PREFIX, MODEL, OVERLAP, OllamaDown, chunks_of, embed_pending, hybrid_search, ollama_embed, pack,
-                     rrf_scores, search_many, search_vectors, vector_status)
+                     rrf_scores, search_many, vector_status)
 
 TOOL = dict(type='assistant', timestamp=TS, cwd='C:\\a', message={
     'id': 'm2', 'model': 'claude-opus-5-5', 'role': 'assistant', 'content': [{'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'ls'}}]})
@@ -189,8 +189,8 @@ class VectorsTest(unittest.TestCase):
         self.assertEqual((again['done'], again['pending'], again['errors']), (0, 0, []))
         # search ignores the sentinel, and the record is still found by its words
         qvec = pack(fake(['кэш'])[0])
-        self.assertEqual(len(search_vectors(self.conn, qvec, None)), self.records - 1)
-        self.assertNotIn(rowid, [c for c, _ in search_vectors(self.conn, qvec, None)])
+        self.assertEqual(len(search_many(self.conn, [qvec], None)[0]), self.records - 1)
+        self.assertNotIn(rowid, [c for c, _ in search_many(self.conn, [qvec], None)[0]])
         hits, state = hybrid_search(self.conn, 'кэш', embed_fn=fake)
         self.assertEqual(state, 'ok')
         self.assertIn(rowid, [h['id'] for h in hits])
@@ -329,11 +329,11 @@ class VectorsTest(unittest.TestCase):
         r = embed_pending(self.conn, embed_fn=restores_meanwhile, batch=2)
         self.assertEqual((self.q('SELECT vec = ? FROM vecs WHERE chunk = ?', restored, last), r['done']), (1, self.records - 1))  # not embedded again
 
-    def test_search_vectors_scope_and_order(self):
+    def test_search_many_scope_and_order(self):
         embed_pending(self.conn, embed_fn=fake)
         conv_of = lambda rowid: self.q('SELECT conv FROM chunks WHERE rowid = ?', rowid)
         qvec = pack(fake(['ёжик в тумане'])[0])
-        hits = search_vectors(self.conn, qvec, [project_key('C:\\a')])
+        hits = search_many(self.conn, [qvec], [project_key('C:\\a')])[0]
         self.assertEqual(conv_of(hits[0][0]), 'S1')
         self.assertTrue(all(conv_of(h[0]) in ('S1', 'agent-a1') for h in hits))
         self.assertEqual(len(hits), 5)  # five records, the 4-piece reply once, not four times
@@ -343,10 +343,10 @@ class VectorsTest(unittest.TestCase):
         self.assertGreater(max(scores), min(scores))
         self.assertEqual([s for _, s in hits], sorted((s for _, s in hits), reverse=True))
         self.assertAlmostEqual(hits[0][1], 0.707, places=2)
-        self.assertEqual({conv_of(h[0]) for h in search_vectors(self.conn, qvec, None)}, {'S1', 'S2', 'agent-a1'})
-        self.assertEqual(len(search_vectors(self.conn, qvec, None, limit=2)), 2)
-        self.assertEqual(search_vectors(self.conn, qvec, [project_key('C:\\нет')]), [])
-        self.assertEqual(len(search_vectors(self.conn, qvec, [project_key('C:\\нет'), project_key('C:\\a')])), 5)  # one key that matches is enough
+        self.assertEqual({conv_of(h[0]) for h in search_many(self.conn, [qvec], None)[0]}, {'S1', 'S2', 'agent-a1'})
+        self.assertEqual(len(search_many(self.conn, [qvec], None, limit=2)[0]), 2)
+        self.assertEqual(search_many(self.conn, [qvec], [project_key('C:\\нет')])[0], [])
+        self.assertEqual(len(search_many(self.conn, [qvec], [project_key('C:\\нет'), project_key('C:\\a')])[0]), 5)  # one key that matches is enough
 
     def test_model_change_waits_for_proof(self):
         embed_pending(self.conn, embed_fn=fake)
@@ -360,11 +360,11 @@ class VectorsTest(unittest.TestCase):
         self.assertEqual((self.q('SELECT count(*) FROM vecs'), vector_status(self.conn)['model']), (n, MODEL))
         self.assertEqual(r['pending'], self.records)  # all of it is still to be recomputed for the new model
 
-    def test_search_vectors_ignores_wrong_length_blobs(self):
+    def test_search_many_ignores_wrong_length_blobs(self):
         embed_pending(self.conn, embed_fn=fake)
         tool = self.q("SELECT rowid FROM chunks WHERE kind = 'tool'")
         self.conn.execute("INSERT INTO vecs VALUES(?, 0, 'S1', X'0102')", (tool,))
-        hits = search_vectors(self.conn, pack(fake(['ёжик'])[0]), None)
+        hits = search_many(self.conn, [pack(fake(['ёжик'])[0])], None)[0]
         self.assertEqual(len(hits), self.records)
         self.assertNotIn(tool, [c for c, _ in hits])
 
@@ -503,7 +503,7 @@ class VectorsTest(unittest.TestCase):
         cache = self.q("SELECT rowid FROM chunks WHERE text = 'совсем другое про кэш'")
         self.assertEqual(many[1][0][0], cache)
         self.assertNotEqual(many[0][0][0], cache)
-        self.assertEqual(many, [search_vectors(self.conn, q, None) for q in qs])
+        self.assertEqual(many, [search_many(self.conn, [q], None)[0] for q in qs])
         self.assertEqual([len(h) for h in search_many(self.conn, qs, None, limit=2)], [2, 2])
         empty = search_many(self.conn, qs, project_key('C:\нет'))
         self.assertEqual(empty, [[], []])

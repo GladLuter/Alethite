@@ -29,8 +29,9 @@ MB = 2 ** 20
 LOCK_BYTE = 0x40000000  # where SQLite's lock-byte page starts, in a file over 1 GB: it never stores data there
 CHUNK = 2 ** 20
 CLOUD = ('OneDrive', 'OneDriveCommercial', 'OneDriveConsumer')  # the folders a cloud service syncs: no index there
-# the keys of the temporary index (tmp) that the index (main) has neither as a record nor forgotten, and the forgets it lacks
-_NEW = 'SELECT conv, cls, hash, n FROM tmp.keys EXCEPT SELECT conv, cls, hash, n FROM main.keys EXCEPT SELECT conv, cls, hash, n FROM main.forgotten'
+# the keys of the temporary index (tmp) that the index (main) has neither as a record nor as a forgotten text (in any conv), and the forgets it lacks
+_NEW = ('SELECT conv, cls, hash, n FROM tmp.keys k WHERE NOT EXISTS (SELECT 1 FROM main.forgotten f WHERE f.cls = k.cls AND f.hash = k.hash) '
+        'EXCEPT SELECT conv, cls, hash, n FROM main.keys')
 _UNFORGOTTEN = 'SELECT conv, cls, hash, n FROM tmp.forgotten EXCEPT SELECT conv, cls, hash, n FROM main.forgotten'
 
 
@@ -147,9 +148,11 @@ def _absorb(conn):
             conn.executemany('INSERT INTO main.vecs VALUES(?, ?, ?, ?)', [(rid, part, conv, vec) for part, vec in parts])
         return bool(parts)
 
+    conn.execute('CREATE INDEX IF NOT EXISTS main.forgotten_text ON forgotten(cls, hash)')  # the _NEW query needs it; an index from before 0.9.2 lacks it
     forgets = records = vectors = 0
     for k in conn.execute(_UNFORGOTTEN).fetchall():
         memdb.forget_key(conn, *k, push=False)  # the line for the other computers comes with the outbox, below
+        memdb.forget_text(conn, k[1], k[2], push=False)  # and the copies under a conv the temporary index never had
         forgets += 1
     conn.execute('INSERT INTO main.outbox(line) SELECT line FROM tmp.outbox WHERE line NOT IN (SELECT line FROM main.outbox) ORDER BY seq')
     have, theirs = (conn.execute("SELECT value FROM %s.meta WHERE key = 'embed_model'" % name).fetchone() for name in ('main', 'tmp'))
@@ -283,10 +286,11 @@ def keep_forgets(db):
             crypto.atomic_write(os.path.join(crypto.HOME_DIR, FORGETS), json.dumps(list(kept | have)).encode('utf-8'))
 
 
-def apply_forgets(db):
+def apply_forgets(db, push=False):
     """The index `db` that stands in for its folder forgets every key of the file, as an imported forget is forgotten: the record and its
     vectors go, the key stays in `forgotten`, no line goes to the outbox. Before it reads a transcript: an old copy lacks the forgets made in the
-    folder after the move, a new index all of them."""
+    folder after the move, a new index all of them. With `push` a line does go: the index in its folder takes the forgets of a home index of
+    unreadable settings, which is never merged, so their lines go out from here."""
     keys = _kept()
     if keys:
         with contextlib.closing(memdb.connect(db)) as conn:
@@ -295,7 +299,8 @@ def apply_forgets(db):
                 conn.execute('BEGIN IMMEDIATE')
                 with conn:
                     for k in todo:
-                        memdb.forget_key(conn, *k, push=False)
+                        memdb.forget_key(conn, *k, push=push)
+                        memdb.forget_text(conn, k[1], k[2], push=False)
 
 
 # ---- the move (/al-index-dir)

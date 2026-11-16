@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, RULES_CHARS, rulesContext, rulesDue, RULES_EVERY, START } from '../hooks/lessons'
+import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonsMatchArgs, lessonSaveArgs, RULES_CHARS, rulesContext, rulesDue, RULES_EVERY, START } from '../hooks/lessons'
 import { T } from '../hooks/text'
 
 const lesson = (id: number, trigger: string | null) => ({ id, conv: 'c', pos: id, ts: '2026-10-20T00:00:00Z', text: `Action: a${id}`, trigger, from: id === 2 ? 'NOTEBOOK' : null, fix: null, global: false })
@@ -90,4 +90,10 @@ test('save args: scope all adds --scope=all, any other value nothing', () => {
 
 test('list: a global lesson is marked', () => {
   expect(formatLessons([rule(2, 'f')])).toBe(`pos=2 [2026-10-20 NOTEBOOK] ${T.lessonGlobalMark}Action: a2`)
+})
+
+test('a lesson text is cut on a whole character', () => {
+  const text = `${'a'.repeat(1999)}😀tail`
+  const arg = lessonsMatchArgs(text, 'C:/w', 'm', 0.4, 2).find(a => a.startsWith('--text='))!
+  expect(arg).toBe(`--text=${'a'.repeat(1999)}😀`)
 })

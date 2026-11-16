@@ -127,7 +127,7 @@ test('/al-health: version, index figures, auto-memory folder with its fact count
   expect(text).toContain('3400')
   expect(text).toContain(T.healthMemory(dir, 2))
   expect(text).toContain(T.vectorsLine('embeddinggemma', 3000, 3400, '2026-10-18T09:00:00Z'))
-  expect(text).toMatch(/python ".*cg\.py" --lang en embed --model embeddinggemma --max-seconds 100000/) // 400 records have no vectors: how to finish them, in the mod's language
+  expect(text).toMatch(/& "python" ".*cg\.py" --lang en embed --model embeddinggemma --max-seconds 100000/) // 400 records have no vectors: how to finish them, in the mod's language
 })
 
 test('/al-health: a project that matches no conversation is said so', async ($, on) => {
@@ -590,7 +590,7 @@ test('/al-index: unreadable transcripts and failures are shown in a toast', asyn
   await ($ as any).command.run({ command: 'al-index', args: '' })
   expect(m.toasts).toEqual([T.toast(T.indexErrors(1))])
   answer = failed('no such table')
-  expect((await ($ as any).command.run({ command: 'al-index', args: '' })).text).toBe(T.cgIndexFailed)
+  expect((await ($ as any).command.run({ command: 'al-index', args: '' })).text).toBe(T.cmdFailed('al-index'))
   expect(m.toasts[1]).toBe(T.toast(T.failed('al-index', 'no such table')))
 })
 
@@ -655,7 +655,7 @@ const flag = (a: string[], name: string) => a[a.indexOf(name) + 1]!
 
 // The Obsidian server beneath the plugin: a vault in memory. `fail(tool)` says which calls break, `failure` how (a throw, or an answer with isError and the server's JSON).
 const fakeVault = (on: any) => {
-  const v = { files: new Map<string, string>(), calls: [] as string[], listLimit: undefined as number | undefined, fail: (_tool: string) => false, failure: 'throws' as 'throws' | 'isError', onWrite: (_path: string) => {} }
+  const v = { files: new Map<string, string>(), calls: [] as string[], listLimit: undefined as number | undefined, fail: (_tool: string) => false, failure: 'throws' as 'throws' | 'isError', onWrite: (_path: string) => {}, onRead: undefined as undefined | (() => Promise<void>) }
   const ok = (text: string) => ({ value: { content: [{ type: 'text', text }], isError: false } })
   on('mcp.call', (_: unknown, e: { server: string; tool: string; args: { path: string; directory: string; content?: string; limit?: number } }) => {
     const { path, directory, content } = e.args
@@ -671,14 +671,16 @@ const fakeVault = (on: any) => {
     }
     const front = v.files.get(path)!.split('---')[1] ?? ''
     const frontmatter = Object.fromEntries([...front.matchAll(/^(\w+): (.*)$/gm)].map(([, k, x]) => [k, x === 'null' ? null : isNaN(Number(x)) ? x : Number(x)]))
-    return ok(JSON.stringify({ path, frontmatter: Object.keys(frontmatter).length ? frontmatter : null, keys: Object.keys(frontmatter) }))
+    const answer = ok(JSON.stringify({ path, frontmatter: Object.keys(frontmatter).length ? frontmatter : null, keys: Object.keys(frontmatter) }))
+    return v.onRead ? v.onRead().then(() => answer) : answer // a read that takes time: the calls in flight can be counted
   })
   return v
 }
 
-const statsRig = async ($: any, on: any, answer: (a: string[]) => unknown = () => ran(JSON.stringify({ metrics: {}, note: NOTE, errors: [] })), env: Record<string, string> = { COMPUTERNAME: 'PC-1' }) => {
+const outboxKeys = (m: { store: Map<string, unknown> }) => [...m.store.keys()].filter(k => k.startsWith('outbox:'))
+const statsRig = async ($: any, on: any, answer: (a: string[]) => unknown = () => ran(JSON.stringify({ metrics: {}, note: NOTE, errors: [] })), env: Record<string, string> = { COMPUTERNAME: 'PC-1' }, store = new Map<string, unknown>()) => {
   const vault = fakeVault(on)
-  const m = await started($, on, a => (a[0] === 'stats' ? answer(a) : ran('{}')), undefined, undefined, env)
+  const m = await started($, on, a => (a[0] === 'stats' ? answer(a) : ran('{}')), undefined, undefined, env, undefined, store)
   const stats = (args = '') => $.command.run({ command: 'al-stats', args }) as Promise<{ text: string }>
   const today = () => flag(ofCg(m, 'stats').at(-1)!.argv, '--today')
   return { vault, m, stats, today }
@@ -719,7 +721,7 @@ test('/al-stats: Obsidian up: the note and the summary are written, the outbox i
   expect(summary).toContain('PC-2')
   expect(summary.split('\n').filter(l => /^\| 2026/.test(l))).toHaveLength(2) // the summary does not list itself
   expect(vault.calls[0]).toBe(`obsidian create_vault_file ${notePath('PC-1', today())}`)
-  expect(m.store.get('outbox')).toEqual([])
+  expect(outboxKeys(m)).toEqual([])
   expect(m.toasts).toEqual([])
   expect(text).toContain(T.cgStatsSent(1))
 })
@@ -731,7 +733,7 @@ test('/al-stats: Obsidian down: the error is shown, the note waits in the outbox
   expect(m.toasts).toHaveLength(1)
   expect(m.toasts[0]).toContain(T.failed('al-stats', '').trim())
   expect(m.store.get('lastError')).toMatchObject({ where: 'al-stats' })
-  expect(m.store.get('outbox')).toEqual([{ path: notePath('PC-1', today()), content: NOTE }])
+  expect(outboxKeys(m)).toEqual([`outbox:${notePath('PC-1', today())}`])
   expect(text).toContain(T.cgStatsQueued(1))
   expect(text).toContain('| метрика | база | сейчас |') // the figures are not lost with the vault
   expect(vault.files.size).toBe(0)
@@ -739,7 +741,7 @@ test('/al-stats: Obsidian down: the error is shown, the note waits in the outbox
   vault.fail = () => false
   expect((await stats()).text).toContain(T.cgStatsSent(1)) // the same day: the new note replaces the queued one, not doubles it
   expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
-  expect(m.store.get('outbox')).toEqual([])
+  expect(outboxKeys(m)).toEqual([])
 })
 
 test("/al-stats: an answer with isError is a failure too, with the server's words", async ($, on) => {
@@ -748,7 +750,7 @@ test("/al-stats: an answer with isError is a failure too, with the server's word
   vault.failure = 'isError'
   await stats()
   expect(m.toasts[0]).toContain('vault locked')
-  expect((m.store.get('outbox') as unknown[]).length).toBe(1)
+  expect(outboxKeys(m)).toHaveLength(1)
 })
 
 test('/al-stats: what waited from an earlier day goes first', async ($, on) => {
@@ -756,12 +758,12 @@ test('/al-stats: what waited from an earlier day goes first', async ($, on) => {
   const old = { path: notePath('PC-1', '2026-01-01'), content: 'old' }
   await m.store.set('outbox', [old])
   const duringSend: unknown[] = []
-  vault.onWrite = () => duringSend.push(m.store.get('outbox'))
+  vault.onWrite = () => duringSend.push(outboxKeys(m))
   const { text } = await stats()
-  expect(duringSend[0]).toEqual([old, { path: notePath('PC-1', today()), content: NOTE }]) // saved before the first send, in case the send is cut short
+  expect(duringSend[0]).toEqual([`outbox:${old.path}`, `outbox:${notePath('PC-1', today())}`]) // saved before the first send, in case the send is cut short
   expect(vault.calls.slice(0, 2)).toEqual([`obsidian create_vault_file ${old.path}`, `obsidian create_vault_file ${notePath('PC-1', today())}`])
   expect(vault.files.get(old.path)).toBe('old')
-  expect(m.store.get('outbox')).toEqual([])
+  expect(outboxKeys(m)).toEqual([])
   expect(text).toContain(T.cgStatsSent(2))
 })
 
@@ -772,7 +774,7 @@ test('/al-stats: the vault dies after the first of two: only the rest stays queu
   vault.fail = () => vault.files.size === 1
   const { text } = await stats()
   expect(vault.files.has(old.path)).toBe(true)
-  expect(m.store.get('outbox')).toEqual([{ path: notePath('PC-1', today()), content: NOTE }])
+  expect(outboxKeys(m)).toEqual([`outbox:${notePath('PC-1', today())}`])
   expect(text).toContain(T.cgStatsQueued(1))
 })
 
@@ -781,7 +783,7 @@ test('/al-stats: the summary cannot be built: the note is safe, the owner is tol
   vault.fail = tool => tool === 'list_vault_files'
   const { text } = await stats()
   expect(vault.files.get(notePath('PC-1', today()))).toBe(NOTE)
-  expect(m.store.get('outbox')).toEqual([])
+  expect(outboxKeys(m)).toEqual([])
   expect(m.toasts[0]).toContain('al-stats-summary')
   expect(m.store.get('lastError')).toMatchObject({ where: 'al-stats-summary' })
   expect(text).toContain(T.cgStatsSummaryFailed)
@@ -824,7 +826,7 @@ test('/al-stats: cg.py reports what made the figures wrong: a toast, /al-health,
 
 test('/al-stats: cg.py fails: a toast, nothing is queued or sent', async ($, on) => {
   const { vault, m, stats } = await statsRig($, on, () => failed('PermissionError: x'))
-  expect((await stats()).text).toBe(T.cgStatsFailed)
+  expect((await stats()).text).toBe(T.cmdFailed('al-stats'))
   expect(m.toasts).toEqual([T.toast(T.failed('al-stats', 'PermissionError: x'))])
   expect(m.store.get('outbox')).toBeUndefined()
   expect(vault.calls).toEqual([])
@@ -832,7 +834,7 @@ test('/al-stats: cg.py fails: a toast, nothing is queued or sent', async ($, on)
 
 test('/al-stats: no computer name, no note', async ($, on) => {
   const { vault, m, stats } = await statsRig($, on, undefined, {})
-  expect((await stats()).text).toBe(T.cgStatsFailed)
+  expect((await stats()).text).toBe(T.cmdFailed('al-stats'))
   expect(m.toasts).toEqual([T.toast(T.failed('al-stats', T.noHost))])
   expect(vault.calls).toEqual([])
 })
@@ -933,6 +935,40 @@ test('settings file: missing, it is written with the values of /config and nothi
   expect(written.map(([path]) => isSettings(path))).toEqual([true]) // neither folder has one: it is born in the new one
   expect(JSON.parse(written[0]![1])).toMatchObject({ language: 'uk', syncDir: '', compression: 'ultra', python: 'python', indexCipher: 'sqlcipher', shareCipher: 'sqlcipher' })
   expect(m.toasts).toEqual([])
+})
+
+test('session.start fills the missing keys through cg.py', { options: { embedModel: 'bge-m3', syncDir: 'D:\\old' } }, async ($, on) => {
+  settingsRig(on, '{ "language": "ru", "syncDir": "Z:\\\\cg" }')
+  const m = await started($, on, () => ran('{"added":["embedModel"]}'), [], undefined, home)
+  const fill = ofCg(m, 'settings-fill')
+  expect(fill).toHaveLength(1)
+  const values = JSON.parse(fill[0]!.argv[1]!.replace('--values=', ''))
+  expect(values.embedModel).toBe('bge-m3')
+  expect('syncDir' in values).toBe(false) // the file has it: its value stays
+  expect(m.toasts).toEqual([])
+})
+
+test('a failing settings-fill is kept for /al-health and toasts nothing', { options: { embedModel: 'bge-m3' } }, async ($, on) => {
+  settingsRig(on, '{ "language": "ru" }')
+  const m = await started($, on, a => (a[0] === 'settings-fill' ? failed('OperationalError: database is locked') : ran('{}')), [], undefined, home)
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
+  expect(m.store.get('lastError')).toMatchObject({ where: 'settings' })
+  expect(text).toContain('OperationalError: database is locked')
+  expect(m.toasts).toEqual([])
+})
+
+test('the old settings file with a missing key gets it through cg.py once, with the /config value', { options: { embedModel: 'bge-m3' } }, async ($, on) => {
+  settingsRig(on, undefined, { [OLD_SETTINGS]: '{ "language": "ru" }' })
+  const m = await started($, on, () => ran('{"added":["embedModel"]}'), [], undefined, home)
+  const fill = ofCg(m, 'settings-fill')
+  expect(fill).toHaveLength(1)
+  expect(JSON.parse(fill[0]!.argv[1]!.replace('--values=', '')).embedModel).toBe('bge-m3')
+})
+
+test('session.start does not call settings-fill when the file has every key', async ($, on) => {
+  settingsRig(on, undefined)
+  const m = await started($, on, () => ran('{}'), [], undefined, home) // born with every value: nothing missing
+  expect(ofCg(m, 'settings-fill')).toEqual([])
 })
 
 test('reads the old settings file when the new one is missing: nothing is written, so the new folder is not made before cg.py moves the old one', { options: { language: 'uk', syncDir: 'D:\\old' } }, async ($, on) => {
@@ -1058,7 +1094,7 @@ test('/al-sync: errors of the run are in the reply, in one toast, and /al-health
 
 test('/al-sync: cg.py fails: a toast and a short reply', { options: { syncDir: SHARE } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'sync' ? failed('OperationalError: database is locked') : ran('{}')))
-  expect((await ($ as any).command.run({ command: 'al-sync', args: '' })).text).toBe(T.cgSyncFailed)
+  expect((await ($ as any).command.run({ command: 'al-sync', args: '' })).text).toBe(T.cmdFailed('al-sync'))
   expect(m.toasts).toEqual([T.toast(T.failed('al-sync', 'OperationalError: database is locked'))])
 })
 
@@ -1242,7 +1278,7 @@ test('lessons: a command with a trigger is stopped once with the lesson, then pa
   expect(stop).toEqual({ deny: gateText() })
   expect(await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/owner/x --paginate' })).toEqual({ result: 'ran' })
   expect(await ($ as any).tool.call({ tool: 'Bash', command: 'git status' })).toEqual({ result: 'ran' })
-  expect(m.store.get('lessonCounts')).toEqual({ stopped: 1 })
+  expect(m.store.get('lessonCounts:id')).toEqual({ stopped: 1 })
 })
 
 test('lessons: a PowerShell command is stopped once as well', async ($, on) => {
@@ -1291,7 +1327,7 @@ test('/al-health: how many lessons, how often they came back and what that cost'
   const { m } = await lessonRig($, on)
   await typed($, 'опять 429 на сборке, что делать?')
   await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })
-  const counts = m.store.get('lessonCounts') as Record<string, number>
+  const counts = m.store.get('lessonCounts:id') as Record<string, number>
   const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
   expect(text).toContain(T.healthLessons(1, 1, counts.chars!, 1, true))
 })
@@ -1399,7 +1435,7 @@ test('global lessons: a failure in the rules part does not stop the project less
 
 test('global lessons: the rules are marked as sent before the counters, so a failing counter does not resend them', async ($, on) => {
   const contexts: string[][] = []
-  const { m } = await lessonRig($, on, [], [rule], { context: contexts, store: refusing('lessonCounts') })
+  const { m } = await lessonRig($, on, [], [rule], { context: contexts, store: refusing('lessonCounts:id') })
   withSize(m, 50_000)
   await typed($, 'да')
   await typed($, 'да')
@@ -1433,6 +1469,7 @@ test('global lessons: the trigger stops a command in any project, with the globa
 })
 
 test('lesson_save scope all: the answer, the toast and the args', async ($, on) => {
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: any) => ({ result: { answers: { [e.questions[0].question]: T.ruleAskYes } } })) // $.ui.ask is a tool.call of AskUserQuestion
   const { m } = await lessonRig($, on, [], [rule])
   const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
   expect(ofCg(m, 'lesson-save')[0]!.argv).toEqual(['lesson-save', '--cwd', 'C:/w', '--model', 'embeddinggemma', '--action=x', '--symptom=y', '--cause=z', '--fix=f', '--scope=all'])
@@ -1441,17 +1478,19 @@ test('lesson_save scope all: the answer, the toast and the args', async ($, on) 
 })
 
 test('global lessons: rules that no longer fit show in the save toast and in /al-health', async ($, on) => {
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: any) => ({ result: { answers: { [e.questions[0].question]: T.ruleAskYes } } })) // $.ui.ask is a tool.call of AskUserQuestion
   const long = (id: number, c: string) => ({ ...rule, id, pos: id, fix: c.repeat(300) })
   const { m } = await lessonRig($, on, [], [long(8, 'a'), long(9, 'b'), long(10, 'c'), long(11, 'd')]) // 4 x 302 > RULES_CHARS: three fit
   await typed($, 'да')
   await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
   expect(m.toasts).toEqual([T.toast(T.lessonToast('Action: x | Symptom: y | Cause: z', { left: 1, on: true, stale: false }))])
-  const counts = m.store.get('lessonCounts') as Record<string, number>
+  const counts = m.store.get('lessonCounts:id') as Record<string, number>
   const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
   expect(text).toContain(T.healthRules(4, 1, counts.rulesChars!, 1, true))
 })
 
 test('lesson_save scope all: a failed re-read of the list keeps the old list and the answer and the toast say so', async ($, on) => {
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: any) => ({ result: { answers: { [e.questions[0].question]: T.ruleAskYes } } })) // $.ui.ask is a tool.call of AskUserQuestion
   let broken = false
   const list: object[] = [rule]
   const m = await started($, on, a => (a[0] === 'lessons' ? (broken ? failed('db locked') : listed(list)) : a[0] === 'lesson-save' ? ran(JSON.stringify({ text: 'Action: x', new: true })) : ran('{}')))
@@ -1465,6 +1504,7 @@ test('lesson_save scope all: a failed re-read of the list keeps the old list and
 })
 
 test('lesson_save scope all with lessons off does not promise the rule will come in every chat', { options: { lessons: false } }, async ($, on) => {
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: any) => ({ result: { answers: { [e.questions[0].question]: T.ruleAskYes } } })) // $.ui.ask is a tool.call of AskUserQuestion
   const { m } = await lessonRig($, on, [], [rule])
   const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
   const g = { left: 0, on: false, stale: false }
@@ -1491,7 +1531,8 @@ const arrivedText = () => T.toast(T.lessonToast('Action: a | Symptom: b | Cause:
 test('global lessons: the first read after the update stores the rules and says nothing', async ($, on) => {
   const { m } = await lessonRig($, on, [], [rule])
   expect(m.toasts).not.toContain(arrivedText())
-  expect(m.store.get('rulesSeen')).toEqual([rule.pos])
+  expect(m.store.get(`rulesSeen:${rule.pos}`)).toBe(true)
+  expect(m.store.has('rulesSeen')).toBe(false)
 })
 
 test('global lessons: a rule the store has seen (another chat) says nothing', async ($, on) => {
@@ -1508,7 +1549,7 @@ test('global lessons: a rule brought while no chat was open is toasted once, at 
 test('/al-health shows the rules line', async ($, on) => {
   const { m } = await lessonRig($, on, [], [rule])
   await typed($, 'да')
-  const counts = m.store.get('lessonCounts') as Record<string, number>
+  const counts = m.store.get('lessonCounts:id') as Record<string, number>
   expect(counts.rules).toBe(1)
   expect(counts.rulesChars).toBeGreaterThan(0)
   const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
@@ -1545,7 +1586,7 @@ test('/al-job: on and off go to cg.py with the minutes; the state shows the last
 test('/al-job: not on this system, said plainly; a failure is a toast', async ($, on) => {
   const m = await started($, on, a => (a[0] !== 'job' ? ran('{}') : a[1] === 'status' ? ran(JSON.stringify({ supported: false, minutes: null, last: null })) : failed('ValueError: the background job is for Windows for now')))
   expect((await ($ as any).command.run({ command: 'al-job', args: '' })).text).toBe([T.cgJobState(null), T.jobNever].join('\n'))
-  expect((await ($ as any).command.run({ command: 'al-job', args: 'on' })).text).toBe(T.cgJobFailed)
+  expect((await ($ as any).command.run({ command: 'al-job', args: 'on' })).text).toBe(T.cmdFailed('al-job'))
   expect(m.toasts).toEqual([T.toast(T.failed('al-job', 'ValueError: the background job is for Windows for now'))])
 })
 
@@ -1961,8 +2002,10 @@ test('after-reset is offered only near a limit', async ($, on) => {
   wire(on, [], nearLimit())
   const ui = await mountBand($)
   await ui.press({ key: 'launch' })
-  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'after-opus', 'after-sonnet', 'cancel'])
-  expect(await ui.findAll({ type: 'Button', text: T.afterReset(when(new Date(AT).toISOString(), NOW)) })).toHaveLength(3) // plain, opus, sonnet
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
+  await ui.press({ key: 'after' })
+  expect(await buttons(ui)).toEqual(['model', 'model-opus', 'model-sonnet', 'cancel']) // one time: straight to the model
+  expect(await texts(ui)).toContain(T.afterReset(when(new Date(AT).toISOString(), NOW)))
 })
 
 for (const [name, limit] of [
@@ -1980,12 +2023,14 @@ test('after-reset needs a draft and waits', async ($, on) => {
   const { m, state, ui } = await delayed($, on, '')
   await ui.press({ key: 'launch' })
   await ui.press({ key: 'after' })
+  await ui.press({ key: 'model' })
   expect(m.toasts).toEqual([T.toast(T.draftEmpty)])
   expect(m.store.has('delayed:id')).toBe(false)
 
   state.text = 'продолжаем'
   await ui.press({ key: 'launch' })
   await ui.press({ key: 'after' })
+  await ui.press({ key: 'model' })
   expect(m.store.get('delayed:id')).toEqual({ at: AT })
   expect(await texts(ui)).toContain(waitLabel)
   expect(await buttons(ui)).toEqual(['cancel-delay', 'details'])
@@ -2012,16 +2057,74 @@ const withModel = (model: string, store = new Map<string, unknown>([['delayed:id
 test('After reset with a model: the wait keeps it, the plain button keeps none', async ($, on) => {
   const { m, ui } = await delayed($, on)
   await ui.press({ key: 'launch' })
-  await ui.press({ key: 'after-sonnet' })
+  await ui.press({ key: 'after' })
+  await ui.press({ key: 'model-sonnet' })
   expect(m.store.get('delayed:id')).toEqual({ at: AT, model: 'sonnet' })
   await ui.press({ key: 'cancel-delay' })
   await ui.press({ key: 'launch' })
-  await ui.press({ key: 'after-opus' })
+  await ui.press({ key: 'after' })
+  await ui.press({ key: 'model-opus' })
   expect(m.store.get('delayed:id')).toEqual({ at: AT, model: 'opus' })
   await ui.press({ key: 'cancel-delay' })
   await ui.press({ key: 'launch' })
   await ui.press({ key: 'after' })
+  await ui.press({ key: 'model' })
   expect(m.store.get('delayed:id')).toEqual({ at: AT })
+})
+
+const two = (five: number, week: number) => () => ({ value: { ...usage, rateLimits: [{ kind: 'five_hour', percentUsed: five, resetsAt: new Date(NOW + 3_600_000).toISOString() }, { kind: 'seven_day', percentUsed: week, resetsAt: new Date(NOW + 3 * 86_400_000).toISOString() }] } })
+const MODELS = ['model', 'model-opus', 'model-sonnet', 'cancel']
+
+test('after-reset asks the time when the week has room', async ($, on) => {
+  const { m, ui } = await delayed($, on, 'продолжаем', new Map(), two(85, 91))
+  await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
+  await ui.press({ key: 'after' })
+  expect(await buttons(ui)).toEqual(['at-1', 'at-2', 'cancel'])
+  const labels = (await ui.findAll({ type: 'Button' })).map((b: { text: string }) => b.text)
+  expect(labels.slice(0, 2)).toEqual([NOW + 3_600_000 + 300_000, NOW + 3 * 86_400_000 + 300_000].map(t => T.afterReset(when(new Date(t).toISOString(), NOW))))
+  await ui.press({ key: 'at-2' })
+  expect(await buttons(ui)).toEqual(MODELS)
+  await ui.press({ key: 'model-sonnet' })
+  expect(m.store.get('delayed:id')).toEqual({ at: NOW + 3 * 86_400_000 + 300_000, model: 'sonnet' })
+})
+
+test('after-reset skips the time when the week is used up', async ($, on) => {
+  const { m, ui } = await delayed($, on, 'продолжаем', new Map(), two(100, 100))
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after' })
+  expect(await buttons(ui)).toEqual(MODELS)
+  await ui.press({ key: 'model' })
+  expect(m.store.get('delayed:id')).toEqual({ at: NOW + 3 * 86_400_000 + 300_000 })
+})
+
+test('cancel on the model level returns to a plain band', async ($, on) => {
+  const { ui } = await delayed($, on)
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after' })
+  await ui.press({ key: 'cancel' })
+  await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
+})
+
+test('cancel on the time level returns to a plain band', async ($, on) => {
+  const { ui } = await delayed($, on, 'продолжаем', new Map(), two(85, 91))
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after' })
+  await ui.press({ key: 'cancel' })
+  await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
+})
+
+test('the time level goes back to the first one when a new snapshot leaves one time', async ($, on) => {
+  let limits = two(91, 91)
+  const { m, ui } = await delayed($, on, 'продолжаем', new Map(), () => limits())
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after' })
+  expect(await buttons(ui)).toEqual(['at-1', 'at-2', 'cancel'])
+  limits = two(91, 85) // the week drops under 90%: only the 5-hour reset is left
+  await m.clock.advance(30_000)
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
 })
 
 test('a wait with a model: /model after the handoff, before /clear and the send, which then goes out', async ($, on) => {
@@ -2037,6 +2140,8 @@ test('a wait with a model that does not switch: nothing is sent, the draft stays
   expect(log).toEqual(['/model sonnet'])
   expect(state.text).toBe('продолжаем')
   expect(m.toasts).toContain(T.toast(T.modelSwitchFailed('sonnet')))
+  expect(m.store.get('delayed:id')).toEqual({ at: SOON, model: 'sonnet' }) // nothing was launched: the wait is back once
+  await m.clock.advance(3 * 30_000)
   expect(m.store.has('delayed:id')).toBe(false)
 })
 
@@ -2056,10 +2161,10 @@ test('cancel-delay removes the wait', async ($, on) => {
 })
 
 test("another chat's wait is left alone", async ($, on) => {
-  const { m, log } = await delayed($, on, 'x', new Map([['delayed:other', { at: 1 }]]))
+  const { m, log } = await delayed($, on, 'x', new Map([['delayed:other', { at: NOW }]]))
   await m.clock.advance(60_000)
   expect(log).toEqual([])
-  expect(m.store.get('delayed:other')).toEqual({ at: 1 })
+  expect(m.store.get('delayed:other')).toEqual({ at: NOW })
 })
 
 test('a wait survives a restart', async ($, on) => {
@@ -2175,6 +2280,7 @@ test('After reset and its Cancel act on the chat that is open now, with the time
   await ui.press({ key: 'launch' })
   ids.now = 'other'
   await ui.press({ key: 'after' })
+  await ui.press({ key: 'model' })
   expect(m.store.get('delayed:other')).toEqual({ at: AT })
   expect(m.store.has('delayed:id')).toBe(false)
   await ui.press({ key: 'cancel-delay' })
@@ -2240,7 +2346,7 @@ test('/al-cleanup: a wrong word gets the hint and cg.py is not run; a failure go
   expect(await run('maybe')).toBe(T.cgCleanupUsage)
   expect(ofCg(m, 'cleanup')).toEqual([])
   fail = true
-  expect(await run('on')).toBe(T.cgCleanupFailed)
+  expect(await run('on')).toBe(T.cmdFailed('al-cleanup'))
   expect(m.toasts).toEqual([T.toast(T.failed('al-cleanup', 'ValueError: boom'))])
 })
 
@@ -2454,4 +2560,272 @@ test('review hint: cg.py fails: the prompt goes through without it', async ($, o
   expect(ofCg(m, 'review-hint')).toHaveLength(1)
   await typed($, 'a')
   expect(contexts).toEqual([[]])
+})
+
+// ---- 0.9.2 audit: rules for a New worker, the rule-for-all question, lesson stops per agent ----
+const workerOrigin = (name: string, asUser?: boolean) => ({ origin: { kind: 'plugin', name, ...(asUser === undefined ? {} : { asUser }) } })
+
+test("a New worker's own asUser prompt gets the rules and lessons", async ($, on) => {
+  const contexts: string[][] = []
+  const { m } = await lessonRig($, on, [], [rule], { context: contexts })
+  withSize(m, 50_000)
+  await typed($, 'handoff and draft', workerOrigin('alethite', true))
+  expect(contexts).toEqual([[rulesText()]])
+})
+
+test("a New worker's first message is searched for lessons by the owner's draft, not by the handoff", async ($, on) => {
+  const { m } = await lessonRig($, on)
+  await typed($, '[al-handoff]\nsession abc, memory folder C:/m, recall hint\n[/al-handoff]\n\nопять 429 на сборке, что делать?', workerOrigin('alethite', true))
+  expect(ofCg(m, 'lessons-match').map(r => r.argv.find(a => a.startsWith('--text=')))).toEqual(['--text=\n\nопять 429 на сборке, что делать?'])
+})
+
+test("another plugin's asUser prompt and our prompt without asUser get none", async ($, on) => {
+  const contexts: string[][] = []
+  const { m } = await lessonRig($, on, [], [rule], { context: contexts })
+  withSize(m, 50_000)
+  await typed($, 'x', workerOrigin('other', true))
+  await typed($, 'x', workerOrigin('alethite'))
+  expect(contexts).toEqual([[], []])
+})
+
+test('a rule for all projects is saved only on Yes', async ($, on) => {
+  let answer: string | undefined = T.ruleAskNo
+  const asked: string[] = []
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: any) => (asked.push(JSON.stringify(e)), answer === undefined ? { deny: 'closed' } : { result: { answers: { [e.questions[0].question]: answer } } }))
+  const { m } = await lessonRig($, on)
+  const save = (extra: object) => ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'a', symptom: 'b', cause: 'c', fix: 'Answer in Ukrainian', ...extra })
+  expect(await save({ scope: 'all' })).toEqual({ result: T.ruleDeclined })
+  answer = undefined
+  expect(await save({ scope: 'all' })).toEqual({ result: T.ruleDeclined })
+  expect(ofCg(m, 'lesson-save')).toHaveLength(0)
+  expect(asked).toHaveLength(2)
+  expect(asked[0]).toContain('Answer in Ukrainian')
+  answer = T.ruleAskYes
+  await save({ scope: 'all' })
+  expect(ofCg(m, 'lesson-save')).toHaveLength(1)
+  await save({ scope: 'project' })
+  expect(ofCg(m, 'lesson-save')).toHaveLength(2)
+  expect(asked).toHaveLength(3) // a project lesson asks nothing
+})
+
+test('the rule question holds the rule as a chat reads it and ends with the question', async ($, on) => {
+  const asked: string[] = []
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: any) => (asked.push(e.questions[0].question), { result: { answers: { [e.questions[0].question]: T.ruleAskNo } } }))
+  await lessonRig($, on)
+  await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'a', symptom: 'b', cause: 'c', fix: 'x'.repeat(400), scope: 'all' })
+  expect(asked).toEqual([T.ruleAsk(`${'x'.repeat(299)}…`)])
+  expect(asked[0]!.endsWith('?')).toBe(true)
+})
+
+test('a rule for all projects without a fix asks nothing: cg.py refuses it', async ($, on) => {
+  const asked: unknown[] = []
+  on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: unknown) => (asked.push(e), { result: { answers: {} } }))
+  const m = await started($, on, a => (a[0] === 'lesson-save' ? failed('ValueError: a lesson for all projects needs fix') : ran('{}')))
+  for (const fix of [{ fix: '' }, {}]) {
+    const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'a', symptom: 'b', cause: 'c', scope: 'all', ...fix })
+    expect(r).toEqual({ deny: T.lessonSaveFailed('ValueError: a lesson for all projects needs fix') })
+  }
+  expect(ofCg(m, 'lesson-save')).toHaveLength(2)
+  expect(asked).toEqual([])
+})
+
+test('the review hint comes back when next() throws', async ($, on) => {
+  let isBroken = true
+  const contexts: string[][] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => {
+    contexts.push([...(e.context ?? [])])
+    if (isBroken) throw new Error('boom')
+    return { text: e.text }
+  })
+  await hintRig($, on, '{"ponytail":true,"edits":6}')
+  await mountBand($)
+  await expect(typed($, 'a')).rejects.toThrow()
+  isBroken = false
+  await typed($, 'b')
+  expect(contexts).toEqual([[hintText(6)], [hintText(6)]])
+})
+
+test("a subagent's stop does not use up the main chat's", async ($, on) => {
+  await lessonRig($, on)
+  const run = (extra: object = {}) => ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x', ...extra })
+  expect(await run({ agentId: 'a1' })).toEqual({ deny: gateText() })
+  expect(await run({ agentId: 'a1' })).toEqual({ result: 'ran' })
+  expect(await run()).toEqual({ deny: gateText() })
+  expect(await run()).toEqual({ result: 'ran' })
+})
+
+test('a failing review-hint is recorded once per chat, and again after it worked', async ($, on) => {
+  let isOk = false
+  const m = await started($, on, a => (a[0] === 'review-hint' ? (isOk ? ran('{"ponytail":true,"edits":0}') : { deny: 'boom' }) : noTurn()))
+  await mountBand($)
+  expect(m.store.get('lastError')).toMatchObject({ where: 'review' })
+  await turnTo($, m, 'id2')
+  m.store.set('lastError', { at: 1, where: 'sync', msg: 'other step' })
+  await turnTo($, m, 'id') // the same chat fails again
+  expect(ofCg(m, 'review-hint')).toHaveLength(3)
+  expect(m.store.get('lastError')).toMatchObject({ where: 'sync' })
+  isOk = true
+  await turnTo($, m, 'id2')
+  await turnTo($, m, 'id') // it works now
+  isOk = false
+  await turnTo($, m, 'id2')
+  m.store.set('lastError', { at: 1, where: 'sync', msg: 'other step' })
+  await turnTo($, m, 'id') // and fails once more: a new failure, recorded
+  expect(ofCg(m, 'review-hint')).toHaveLength(7)
+  expect(m.store.get('lastError')).toMatchObject({ where: 'review' })
+})
+
+test('the summary reads only new notes', async ($, on) => {
+  const { vault, stats, today } = await statsRig($, on)
+  await stats() // only to learn the day of the mock clock
+  const day = (back: number) => new Date(Date.parse(today()) - back * 86_400_000).toISOString().slice(0, 10)
+  const old = `${T.statsFolder}/${day(5)} PC-2.md`
+  const recent = `${T.statsFolder}/${day(1)} PC-3.md`
+  vault.files.set(old, OTHER)
+  vault.files.set(recent, OTHER)
+  await stats()
+  const reads = () => vault.calls.filter(c => c.startsWith('obsidian get_note_properties')).map(c => c.slice('obsidian get_note_properties '.length))
+  expect(reads()).toContain(old)
+  vault.calls.length = 0
+  await stats()
+  expect(reads()).not.toContain(old)
+  expect(reads()).toContain(recent) // the last two days are read again
+  expect(vault.files.get(summaryPath())).toContain('PC-2') // the kept row is still in the table
+})
+
+test('a final note read with no frontmatter is read again next time', async ($, on) => {
+  const { vault, m, stats, today } = await statsRig($, on)
+  await stats()
+  const half = `${T.statsFolder}/${new Date(Date.parse(today()) - 5 * 86_400_000).toISOString().slice(0, 10)} PC-2.md`
+  vault.files.set(half, 'half synced') // no frontmatter yet
+  await stats()
+  expect(m.store.has(`summaryRow:${half}`)).toBe(false)
+  vault.files.set(half, OTHER)
+  vault.calls.length = 0
+  await stats()
+  expect(vault.calls).toContain(`obsidian get_note_properties ${half}`)
+  expect(m.store.get(`summaryRow:${half}`)).toMatchObject({ host: 'PC-2' })
+})
+
+test('the kept row of a note no longer in the folder is deleted, and a store that refuses a row still gets the summary', async ($, on) => {
+  let isFull = false
+  class FullStore extends Map<string, unknown> {
+    override set(k: string, v: unknown) {
+      if (isFull && k.startsWith('summaryRow:')) throw new Error('the store is full')
+      return super.set(k, v)
+    }
+  }
+  const gone = `summaryRow:${T.statsFolder}/2025-01-01 PC-9.md` // moved into a year subfolder
+  const { vault, m, stats } = await statsRig($, on, undefined, undefined, new FullStore([[gone, { host: 'PC-9' }]]))
+  isFull = true
+  vault.files.set(`${T.statsFolder}/2026-01-01 PC-2.md`, OTHER)
+  await stats()
+  expect(m.store.has(gone)).toBe(false)
+  expect(vault.files.get(summaryPath())).toContain('PC-2')
+  expect(m.toasts).toEqual([])
+})
+
+test('the summary reads at most 8 notes at once and lists them all', async ($, on) => {
+  const { vault, stats } = await statsRig($, on)
+  for (let i = 1; i <= 20; i++) vault.files.set(`${T.statsFolder}/2026-01-${String(i).padStart(2, '0')} PC-2.md`, OTHER)
+  let [now, peak] = [0, 0]
+  vault.onRead = async () => {
+    peak = Math.max(peak, ++now)
+    await new Promise(r => (globalThis as any).setTimeout(r, 5))
+    now--
+  }
+  await stats()
+  expect(peak).toBe(8)
+  expect(vault.files.get(summaryPath())!.split('\n').filter(l => /^\| 2026/.test(l))).toHaveLength(21) // and the note of today
+})
+
+test('old rulesSeen and outbox are carried over', async ($, on) => {
+  const store = new Map<string, unknown>([['rulesSeen', [5, 7]]])
+  const { m } = await lessonRig($, on, [], [], { store })
+  expect([...m.store.keys()].filter(k => k.startsWith('rulesSeen'))).toEqual(expect.arrayContaining(['rulesSeen:5', 'rulesSeen:7']))
+  expect(m.store.has('rulesSeen')).toBe(false)
+})
+
+test('old outbox is carried over into one key per note', async ($, on) => {
+  const { vault, m, stats, today } = await statsRig($, on)
+  vault.fail = () => true
+  const n1 = { path: notePath('PC-1', '2026-01-01'), content: 'old' }
+  await m.store.set('outbox', [n1])
+  await stats()
+  expect(outboxKeys(m)).toEqual([`outbox:${n1.path}`, `outbox:${notePath('PC-1', today())}`])
+  expect(m.store.has('outbox')).toBe(false)
+  expect(m.store.get(`outbox:${n1.path}`)).toEqual(n1)
+})
+
+test('two chats counting at once lose nothing', async ($, on) => {
+  const { m } = await lessonRig($, on)
+  await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })
+  ids.now = 'other'
+  await ($ as any).tool.call({ tool: 'Bash', command: 'gh api /repos/x' })
+  expect(m.store.get('lessonCounts:id')).toEqual({ stopped: 1 })
+  expect(m.store.get('lessonCounts:other')).toEqual({ stopped: 1 })
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
+  expect(text).toContain(T.healthLessons(1, 0, 0, 2, true))
+})
+
+test('a chat that is pruned folds its counters into the total', async ($, on) => {
+  const store = new Map<string, unknown>([['lessonCounts', { stopped: 1 }], ['lessonCounts:c1', { stopped: 2, shown: 1 }]])
+  for (let i = 1; i <= 200; i++) store.set(`turn:c${i}`, { at: i, tokens: i })
+  wire(on, [], () => ({ value: usage }), undefined, store)
+  await ($ as any).turn.complete(turn)
+  expect(store.get('lessonCounts')).toEqual({ stopped: 3, shown: 1 })
+  expect(store.has('lessonCounts:c1')).toBe(false)
+})
+
+test('stale After-reset waits are removed at the start', async ($, on) => {
+  const store = new Map<string, unknown>([['delayed:x', { at: NOW - 25 * 3_600_000 }], ['delayed:y', { at: NOW + 3_600_000 }]])
+  const { m } = await delayed($, on, 'x', store)
+  expect(m.store.has('delayed:x')).toBe(false)
+  expect(m.store.get('delayed:y')).toEqual({ at: NOW + 3_600_000 })
+})
+
+test('a failed handoff puts the After-reset wait back once', async ($, on) => {
+  const log: string[] = []
+  const store = dueSoon()
+  box(on, 'продолжаем', log)
+  const m = await started($, on, a => (a[0] === 'handoff' ? failed('no transcript') : ran('{}')), [], nearLimit(), {}, noTurn, store)
+  await $.ui.mount(UI)
+  await m.clock.advance(SOON - NOW)
+  expect(m.store.get('delayed:id')).toEqual({ at: SOON }) // back with the same time
+  await m.clock.advance(3 * 30_000)
+  expect(m.store.has('delayed:id')).toBe(false) // the second failure with the same time is not put back
+  expect(log).toEqual([])
+})
+
+// ---- 0.9.2: the edge of cg.py, one failure text, the embed command, the cache clock ----
+test('a cut answer of cg.py is an error, not exit 0', async ($, on) => {
+  const m = await started($, on, () => ({ value: { exitCode: 0, stdout: '{"ok":1', stderr: '', isStdoutTruncated: true, isStderrTruncated: false } }))
+  expect((await ($ as any).command.run({ command: 'al-index', args: '' })).text).toBe(T.cmdFailed('al-index'))
+  expect(m.toasts).toEqual([T.toast(T.failed('al-index', T.cgTooLong))])
+})
+
+test('every command failure reads the same', async ($, on) => {
+  const m = await started($, on, () => failed('boom'))
+  expect((await ($ as any).command.run({ command: 'al-index', args: '' })).text).toBe(T.cmdFailed('al-index'))
+  expect((await ($ as any).command.run({ command: 'al-job', args: 'on' })).text).toBe(T.cmdFailed('al-job'))
+  expect(m.toasts).toEqual([T.toast(T.failed('al-index', 'boom')), T.toast(T.failed('al-job', 'boom'))])
+})
+
+test('the embed command quotes the python path', { options: { python: 'C:\\Program Files\\Python\\python.exe' } }, async ($, on) => {
+  const vectors = { model: 'embeddinggemma', with_vectors: 1, total: 2, updated: null }
+  on('fs.list', () => ({ value: [] }))
+  await started($, on, a => (a[0] === 'status' ? ran(JSON.stringify({ vectors })) : ran('{}')))
+  const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
+  expect(text).toContain('& "C:\\Program Files\\Python\\python.exe" "')
+})
+
+test('the cache clock is the start of the last request of the turn, not its end', async ($, on) => {
+  on('turn.step', async function* () {
+    return { turnId: 't', index: 0, answer: '', toolUses: [], stopReason: null, usage: null }
+  })
+  const m = await started($, on, () => noTurn())
+  for await (const _ of ($ as any).turn.step({ turnId: 't', index: 0, model: 'm', messageCount: 1 })) void _ // a stream: the hook runs as it is read
+  await m.clock.advance(5_000)
+  await ($ as any).turn.complete(turn)
+  expect(m.store.get('turn:id')).toMatchObject({ at: 10_000_000_000 })
 })

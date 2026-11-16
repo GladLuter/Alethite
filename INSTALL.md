@@ -4,7 +4,7 @@
 
 This file covers installing, setting up, updating and removing the Alethite plugin. What the plugin does is in [README.md](README.md).
 
-Steps 1 to 6 of "Installing" are quick: the longest one, the index, takes a few minutes. Step 7 (the vectors) takes hours and can run later. Everything under "Optional features" and "Only if you used an older build" can be skipped.
+Steps 1 to 4 of "Installing" are quick, and the index builds by itself in a few minutes. Step 5 (the vectors) takes hours and can run later. Everything under "Optional features" and "Only if you used an older build" can be skipped.
 
 All commands are for PowerShell.
 
@@ -25,7 +25,7 @@ On this page:
   Get-ChildItem "$env:USERPROFILE\.claude\projects" -Recurse -Filter *.jsonl | Sort-Object LastWriteTime | Select-Object -Last 1 | Get-Content -Tail 50 | Select-String '"version":"([^"]+)"' | Select-Object -Last 1 | ForEach-Object { $_.Matches[0].Groups[1].Value }
   ```
   It prints a number like `2.1.300`. If it prints nothing, you have no chats yet: open any chat, send one message and run the command again.
-- **Python 3.8 or newer, and numpy.**
+- **Python 3.8 or newer, and numpy** (numpy is needed only for the vectors).
   - Check: `python --version` prints a version number, and `python -c "import numpy; print(numpy.__version__)"` prints the numpy version.
   - No Python: install it from python.org and tick "Add python.exe to PATH".
   - No numpy: `python -m pip install numpy`. Run it in an ordinary PowerShell window that you opened yourself, not in a Claude chat. The `pip` of Claude Desktop (the Microsoft Store build) puts packages into its own sandbox, and the ordinary Python does not see them.
@@ -34,16 +34,11 @@ On this page:
   ollama pull embeddinggemma
   ```
   That is about 622 MB. The command ends with `success`.
-- **git.**
+- **git.** Only if you work from a clone.
 
 ## Installing
 
-1. **Get the code** (branch `master`):
-   ```powershell
-   git clone https://github.com/GladLuter/Alethite.git C:\_git\Alethite
-   ```
-   Keep this folder. The plugin is read straight from it, so do not move or delete it.
-2. **Find the desktop's engine.** The `claude` on PATH is a separate CLI and often older, so you need the desktop's own `claude.exe`. The newest file wins:
+1. **Find the desktop's engine.** The `claude` on PATH is a separate CLI and often older, so you need the desktop's own `claude.exe`. The newest file wins:
    ```powershell
    $CC = (Get-ChildItem "$env:LOCALAPPDATA\Claude-Data\claude_*\claude-code\*\*\claude.exe", "$env:APPDATA\Claude\claude-code\*\*\claude.exe", "$env:LOCALAPPDATA\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code\*\*\claude.exe" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1).FullName; $CC
    ```
@@ -51,32 +46,61 @@ On this page:
    ```powershell
    $CC = (Get-ChildItem $env:LOCALAPPDATA, $env:APPDATA -Recurse -Filter claude.exe -ErrorAction SilentlyContinue | Where-Object FullName -like '*claude-code*' | Sort-Object LastWriteTime | Select-Object -Last 1).FullName; $CC
    ```
-   Keep this PowerShell window open until step 3 is done: `$CC` is empty in a new window.
-3. **Install the plugin:**
+   Keep this PowerShell window open until step 2 is done: `$CC` is empty in a new window.
+2. **Install the plugin from GitHub:**
    ```powershell
-   & $CC plugin marketplace add C:\_git\Alethite
+   & $CC plugin marketplace add GladLuter/Alethite
    & $CC plugin install alethite@alethite
    ```
-   Each command prints a short confirmation. An error here usually means `$CC` is empty: repeat step 2. Then quit the desktop app completely (including its tray icon, if it sits there) and open it again.
-4. **Build the index** of this computer's conversations (the record of your old chats that the search reads). The first time takes a few minutes:
-   ```powershell
-   python C:\_git\Alethite\plugin\scripts\cg.py index
-   ```
-   When it finishes it prints one JSON line with the result.
-   - If you use two computers and sync is already set up on this one (see "Two computers: shared memory") and the index is new, run `cg.py sync` there first. This computer's records and vectors come back from its folder and need not be computed again. Otherwise ignore this.
-5. **Language.** By default the plugin speaks English: the interface, the texts the plugin gives to Claude, and the handoff (the summary of an old chat that goes into a new one). Open a new chat first: the settings file is created at the first start. Open it with `notepad $env:USERPROFILE\.claude\alethite\settings.json`, set `"language": "ru"` in it and type `/reload-plugins` in the chat box. For Ukrainian, set `"uk"`. The option `--lang ru` or `--lang uk` before `index` sets the language of the scripts' messages and errors in the terminal. Without it they are in English.
-6. **Check:** in a new chat type `/al-health` into the Claude Code chat box (all the `/al-...` commands are typed there). It should show the version, the index, the auto-memory folder, the project, the vectors "N of M" and a sync line. "Vectors 0 of N" is fine until you do step 7. A line that reports an error means a step above did not work.
-7. **Compute the vectors.** Optional and slow: it takes hours. The vectors let the search find conversations by meaning. You can skip this step now and run it later or overnight. It needs Ollama with the model from "What you need first". On an entry-level Intel processor about 25 thousand pieces of history took about 6 hours. Once stopped, it goes on from where it was:
+   Each command prints a short confirmation. An error here usually means `$CC` is empty: repeat step 1. Then quit the desktop app completely (including its tray icon, if it sits there) and open it again. The plugin builds the index of this computer's conversations by itself 3 seconds after a chat starts. The first time takes a few minutes. No command is needed.
+3. **Language.** By default the plugin speaks English: the interface, the texts the plugin gives to Claude, and the handoff (the summary of an old chat that goes into a new one). Open a new chat first: the settings file is created at the first start. Open it with `notepad $env:USERPROFILE\.claude\alethite\settings.json`, set `"language": "ru"` in it and type `/reload-plugins` in the chat box. For Ukrainian, set `"uk"`. The option `--lang ru` or `--lang uk` before `index` sets the language of the scripts' messages and errors in the terminal. Without it they are in English. This option needs a clone (see "Working from a clone").
+4. **Check:** in a new chat type `/al-health` into the Claude Code chat box (all the `/al-...` commands are typed there). It should show the version, the index, the auto-memory folder, the project, the vectors "N of M" and a sync line. "Vectors 0 of N" is fine until you do step 5. A line that reports an error means a step above did not work.
+5. **Compute the vectors.** Optional and slow: it takes hours. The vectors let the search find conversations by meaning. You can skip this step now and run it later or overnight. It needs Ollama with the model from "What you need first". On an entry-level Intel processor about 25 thousand pieces of history took about 6 hours. Once stopped, it goes on from where it was:
    ```powershell
    python C:\_git\Alethite\plugin\scripts\cg.py embed --max-seconds 100000
    ```
    `--max-seconds 100000` is a ceiling of about 28 hours. The command stops earlier when all the vectors are done. After that, new records are embedded by themselves at the start of a session, up to 2 minutes at a time.
    - **Laptop:** keep it awake during the run. On the charger it falls asleep without input and stops the run. After waking up, run the command again.
    - **Built-in Intel graphics (Iris Xe):** the run goes about twice as fast on it. See "Good to know".
+   - **Without a clone:** the command above needs one (see "Working from a clone"). The vectors still fill by themselves at the start of a session, up to 2 minutes at a time.
+
+### Working from a clone
+
+Use this path to change the code or to run `cg.py` by hand. The plugin is then read straight from the clone folder.
+
+1. **Get the code** (branch `master`):
+   ```powershell
+   git clone https://github.com/GladLuter/Alethite.git C:\_git\Alethite
+   ```
+   Keep this folder. The plugin is read straight from it, so do not move or delete it.
+2. **Register the clone** with the `$CC` of step 1. If you installed from GitHub before, first run `& $CC plugin uninstall alethite@alethite` and `& $CC plugin marketplace remove alethite`:
+   ```powershell
+   & $CC plugin marketplace add C:\_git\Alethite
+   & $CC plugin install alethite@alethite
+   ```
+   Each command prints a short confirmation. Then quit the desktop app completely and open it again.
+3. **Build the index at once** instead of waiting for the plugin. The first time takes a few minutes:
+   ```powershell
+   python C:\_git\Alethite\plugin\scripts\cg.py index
+   ```
+   When it finishes it prints one JSON line with the result.
+   - If you use two computers and sync is already set up on this one (see "Two computers: shared memory") and the index is new, run `cg.py sync` there first. This computer's records and vectors come back from its folder and need not be computed again. Otherwise ignore this.
 
 ## Updating
 
-The plugin is read straight from the clone folder, so an update is a `git pull`.
+The plugin installed from GitHub updates in three steps.
+
+1. Set `$CC` as in "Installing", step 1, then refresh the catalog and update the plugin:
+   ```powershell
+   & $CC plugin marketplace update alethite
+   & $CC plugin update alethite@alethite
+   ```
+2. Quit the desktop app completely and open it again. The update applies after the restart.
+3. Check: type `/al-health`.
+
+### With a clone
+
+The plugin is then read straight from the clone folder, so an update is a `git pull`.
 
 1. Keep the clone on the `master` branch. In the clone:
    ```powershell
@@ -89,7 +113,7 @@ The plugin is read straight from the clone folder, so an update is a `git pull`.
 ## Removing Alethite
 
 1. If the background job is on, turn it off in a chat: `/al-job off`.
-2. Remove the plugin and its marketplace. A new PowerShell window has `$CC` empty, so first run the command from "Installing", step 2. Then:
+2. Remove the plugin and its marketplace. A new PowerShell window has `$CC` empty, so first run the command from "Installing", step 1. Then:
    ```powershell
    & $CC plugin uninstall alethite@alethite
    & $CC plugin marketplace remove alethite
@@ -119,14 +143,14 @@ The plugin is read straight from the clone folder, so an update is a `git pull`.
   - The `projectAliases` line is yours to write when a project folder is renamed or moved: `"projectAliases": {"C:\\work\\new": ["C:\\work\\old"]}`. The new folder then finds the conversations and lessons of the old one when it searches. New conversations and lessons are saved under the new folder. Nothing in the index is rewritten and nothing goes to the sync folder, so every computer has its own aliases. The plugin reads the file at every call. No `/reload-plugins` is needed. `/config` does not show this key.
   - A broken file (invalid JSON) gives a toast naming the file, and the plugin keeps the `/config` values. An unknown key or a value of the wrong type gives the same toast, and that key is skipped.
 - **The band above the prompt** is one area shared by all plugins. The Alethite row has no frame, Details opens in a frame with a title, and the bands of other plugins stay under it.
-- **The After reset button** shows up after you press New worker, when a limit is 90% used or more. It waits for the limit to reset only while the app is open. If it was closed, the worker starts when you open this chat after the reset. You can pick the model: the current one, opus or sonnet. If the model does not switch, nothing is sent and the draft stays in the box.
+- **The After reset button** shows up after you press New worker, when a limit is 90% used or more. It waits for the limit to reset only while the app is open. If it was closed, the worker starts when you open this chat after the reset. It asks for the time first (the 5-hour reset while the weekly limit is not used up, and the reset of each limit that is at 90%), then for the model: the current one, opus or sonnet. If the weekly limit is used up, there is one time, and the time question is skipped. If the model does not switch, nothing is sent and the draft stays in the box.
 - **The review hint** is for people who also have the third-party plugin [ponytail](https://github.com/DietrichGebert/ponytail). Alethite only checks that it is installed and not switched off. It does not copy, ship or use its code. When the New worker button is ready and the chat has 5 or more edits of code (Edit, Write, NotebookEdit, by the agents too) since the last `/ponytail-review`, the main chat gets a note with your next message, once. Before the handoff it asks you whether to run `/ponytail-review`. The band shows nothing of it, and Alethite starts nothing. Without ponytail you see nothing.
 - **The savings** are counted from the transcripts on this computer. No model call is made for it.
 - **`/al-stats` needs Obsidian.** Skip this command if you do not use Obsidian. It writes through an MCP server named `obsidian` that offers the tools `list_vault_files`, `get_note_properties` and `create_vault_file`, and the server must be connected on this computer.
   - The notes go into a vault folder named in the mod's language. In English it is `Alethite/Measurements` with the summary `Summary.md`, in Russian `Alethite/Замеры` and `Сводка.md`, in Ukrainian `Alethite/Заміри` and `Зведення.md`. After a language change new notes go to the new folder and the old ones stay put.
   - If Obsidian is unavailable, the measurement waits in a queue and goes out at the next run.
   - Everything else in the plugin works without Obsidian.
-- **Faster vectors on built-in Intel graphics (Iris Xe).** The one-off run (Installing, step 7) is about twice as fast on it, and the vectors are the same (measured 2026-10-19 on a laptop: 2.44 long pieces per second against 1.15 on the processor). Ollama sees such a card only when started with `OLLAMA_IGPU_ENABLE=1`. Stop the usual Ollama in the tray, then in a PowerShell window:
+- **Faster vectors on built-in Intel graphics (Iris Xe).** The one-off run (Installing, step 5) is about twice as fast on it, and the vectors are the same (measured 2026-10-19 on a laptop: 2.44 long pieces per second against 1.15 on the processor). Ollama sees such a card only when started with `OLLAMA_IGPU_ENABLE=1`. Stop the usual Ollama in the tray, then in a PowerShell window:
   ```powershell
   $env:OLLAMA_IGPU_ENABLE = '1'; ollama serve
   ```
@@ -134,7 +158,7 @@ The plugin is read straight from the clone folder, so an update is a `git pull`.
 
 ## Optional features
 
-Everything below, up to "Only if you used an older build", is optional. Skip it on the first install.
+Everything below, up to "Only if you used an older build", is optional. Skip it on the first install. The `cg.py` commands below run from a clone (see "Working from a clone"). Without a clone, use the slash commands.
 
 ### The background job
 
@@ -191,6 +215,8 @@ Repairs, only when something went wrong:
   python C:\_git\Alethite\plugin\scripts\cg.py forget --conv <conversation id> --pos <pos>
   ```
   `conv` and `pos` come from the line of a `recall` hit. Nothing else ever leaves the index: not on a rebuild, and not when Claude Code rewrites or deletes transcripts.
+  The text is forgotten, not one line. The same text of the same kind goes from every chat, now and later, and no longer reaches the index, even from a session resumed later.
+  If the record had already gone to the sync folder (lessons too), the forget starts a new generation of the folder. This computer sends all its records and vectors there again. As soon as the new generation is fully out, the old ones are deleted without a question, including the ones you kept with No in `/al-encrypt`. The other computer reads the new generation again and skips the repeats.
 
 ### Memory compression
 
@@ -248,7 +274,7 @@ The index (with its backup `index.before-stage2.db`, if there is one) and everyt
    - The index and its backup are encrypted. With `sqlcipher` the unencrypted copies (`index.db.plain`) are deleted only after Yes. After No they stay, and `/al-encrypt on` asks again.
    - With `efs` the plugin folder and the index folder go under the encryption of Windows, and a SQLCipher index becomes an ordinary database under EFS with 16 KB pages. There is never an unencrypted copy outside EFS, so there is no question about `index.db.plain`.
    - The sync folder: the computer puts its own subfolder out again, in the cipher you chose. The older data there (unencrypted or in another cipher) is deleted only after Yes, and only once the new data is fully out.
-4. **The second computer:** `git pull`, its own ciphers in `settings.json` (step 1), `/reload-plugins`, `/al-encrypt join`. The recovery code is entered in a window with hidden input. One key serves all computers, so `on` on the second one refuses and points to `join`.
+4. **The second computer:** `git pull` in the clone (without a clone, the plugin update from "Updating"), its own ciphers in `settings.json` (step 1), `/reload-plugins`, `/al-encrypt join`. The recovery code is entered in a window with hidden input. One key serves all computers, so `on` on the second one refuses and points to `join`.
    - If you change the cipher of the folder on the first computer (for example, SQLCipher to AES-GCM), join the second one only after that. Otherwise it will see a SQLCipher generation, which it cannot open under Smart App Control.
 5. **Check:** `/al-health` on both computers says, for example, "Encryption: on (index: EFS, sync folder: AES-GCM)". If something is unfinished, the lines under it say what to repeat. `/al-encrypt status` shows the state alone.
 
@@ -343,7 +369,7 @@ For installs made before the marketplace was renamed. The plugin id is now `alet
    ```powershell
    $CC = (Get-ChildItem "$env:LOCALAPPDATA\Claude-Data\claude_*\claude-code\*\*\claude.exe", "$env:APPDATA\Claude\claude-code\*\*\claude.exe", "$env:LOCALAPPDATA\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code\*\*\claude.exe" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1).FullName; $CC
    ```
-   If nothing is found, use the wider search in "Installing", step 2.
+   If nothing is found, use the wider search in "Installing", step 1.
 2. Remove the old registration and make the new one:
    ```powershell
    & $CC plugin uninstall alethite@alethite-local
@@ -360,13 +386,13 @@ The data folder and `settings.json` stay where they are. Values that you set thr
 The plugin used to be called Claude-CacheGuard, and so was its repository. This was the earlier private build. A computer that has the old one moves with the steps below. Keep the order.
 
 0. **Send the waiting measurements.** In a chat, type `/cg-stats` once. Measurement notes that Obsidian has not taken yet wait in the old plugin's store, and they are lost with it.
-1. **Remove the old plugin.** In a new PowerShell window `$CC` is empty. Set it as in "Installing", step 2 (if no path is found, the wider search is there too), and remove the old plugin:
+1. **Remove the old plugin.** In a new PowerShell window `$CC` is empty. Set it as in "Installing", step 1 (if no path is found, the wider search is there too), and remove the old plugin:
    ```powershell
    $CC = (Get-ChildItem "$env:LOCALAPPDATA\Claude-Data\claude_*\claude-code\*\*\claude.exe", "$env:APPDATA\Claude\claude-code\*\*\claude.exe", "$env:LOCALAPPDATA\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code\*\*\claude.exe" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1).FullName; $CC
    & $CC plugin uninstall cacheguard@cacheguard-local
    & $CC plugin marketplace remove cacheguard-local
    ```
-2. **Install the new one.** If there is no clone in `C:\_git\Alethite` yet, clone it first ("Installing", step 1). Then:
+2. **Install the new one.** If there is no clone in `C:\_git\Alethite` yet, clone it first ("Installing", "Working from a clone", step 1). Then:
    ```powershell
    & $CC plugin marketplace add C:\_git\Alethite
    & $CC plugin install alethite@alethite

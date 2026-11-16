@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Review, Savings, Snap } from '../types'
-import { columns, delayAt, money, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
+import { columns, delayTimes, money, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
 import { isStale, shouldDenyBackground, shouldStop, size, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
@@ -14,11 +14,11 @@ import { cleanupArgs, cleanupReply } from './cleanup'
 import type { CleanupResult } from './cleanup'
 import { indexDirArgs, indexDirRefusal, indexDirReply } from './indexdir'
 import type { IndexDirResult } from './indexdir'
-import { healthLines, homeNotesOf, indexProblemOf, message, parseCg } from './py'
+import { healthLines, homeNotesOf, indexProblemOf, message, parseCg, parseJson } from './py'
 import type { LastError } from './py'
 import { jobArgs, jobHealth } from './job'
 import type { JobRun } from './job'
-import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, lessonsMatchArgs, oneLine, plain, RULES_EVERY, rulesContext, rulesDue, START } from './lessons'
+import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, lessonsMatchArgs, oneLine, plain, ruleLine, RULES_EVERY, rulesContext, rulesDue, START } from './lessons'
 import type { Found, Lesson } from './lessons'
 import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
@@ -32,11 +32,14 @@ import type { LaunchIO, Model } from './worker'
 const snap = atom({ plugin: 'alethite', key: 'snap' } as const, null)
 const hiddenId = atom({ plugin: 'alethite', key: 'hiddenId' } as const, '')
 const isArmed = atom({ plugin: 'alethite', key: 'isArmed' } as const, false)
+const afterLevel = atom({ plugin: 'alethite', key: 'afterLevel' } as const, null)
 const isBusy = atom({ plugin: 'alethite', key: 'isBusy' } as const, false)
 const info = atom({ plugin: 'alethite', key: 'info' } as const, null)
 const isDetails = atom({ plugin: 'alethite', key: 'isDetails' } as const, false)
 const calmId = atom({ plugin: 'alethite', key: 'calmId' } as const, '')
 const delayedAt = atom({ plugin: 'alethite', key: 'delayedAt' } as const, null)
+// the New worker picker closes and opens next time at its first level
+const disarm = ($: EngineInterface) => Promise.all([update($, isArmed, () => false), update($, afterLevel, () => null)])
 
 // The helpers below take `$` and so stay in this file: the loader follows `$` only into functions declared here, never across an import.
 
@@ -69,14 +72,16 @@ const runCg = async ($: EngineInterface, python: string, args: string[], timeout
   const r = await $.process.run([python, `${$.plugin.root}/scripts/cg.py`, '--lang', language(), ...args], { timeoutMs }).catch((err: unknown) => {
     throw new Error(`${T.pythonMissing(python)} (${message(err)})`)
   })
-  const problem = indexProblemOf(r.stdout) // before parseCg throws: an error answer carries it too
+  if (r.isStdoutTruncated) throw new Error(T.cgTooLong) // the engine cut it at 4 MiB: what is left is no answer, and exit 0 would pass it for one
+  const json = parseJson(r.stdout)
+  const problem = indexProblemOf(json) // before parseCg throws: an error answer carries it too
   if (problem !== undefined) setProblem($, problem)
-  for (const note of homeNotesOf(r.stdout)) {
+  for (const note of homeNotesOf(json)) {
     if (toastedNotes.includes(note)) continue
     toastedNotes.push(note)
     toast($, note)
   }
-  const out = parseCg(r)
+  const out = parseCg(r, json)
   const notice = typeof out.index_notice === 'string' ? out.index_notice : ''
   if (!notice) lastNotice = ''
   else if (notice !== lastNotice) {
@@ -115,6 +120,12 @@ const indexErrors = async ($: EngineInterface, where: string, errors: IndexError
   if (isAsked) toast($, text)
   else showStatus($, text)
   await noteError($, where, T.indexErrorFirst(errors.length, errors[0]!.path, errors[0]!.error))
+}
+
+// An owner-started command failed: the reason in a toast and /al-health, the reply says only that it did not work.
+const failedCmd = async ($: EngineInterface, name: string, err: unknown) => {
+  await fail($, name, err)
+  return { text: T.cmdFailed(name) }
 }
 
 // A memory tool call: its text for the model, or a refusal the model reads as an error, and the owner sees the failure too.
@@ -198,13 +209,23 @@ const lessonsOr = async ($: EngineInterface, python: string, kept: Lesson[]) => 
 // A rule for all projects that this computer has not seen yet (the other computer's, brought by the sync, maybe while no chat was open) is
 // toasted: it becomes a standing order in every chat here and must not arrive silently. The positions seen are kept in the store, for all
 // chats; the first run after the update only stores them. `own` is the rule a save has just toasted itself.
-const noteRules = async ($: EngineInterface, list: Lesson[], on: boolean, own?: number) => {
+// One store key per position (`rulesSeen:<pos>`, so two chats never overwrite each other) and a `rulesSeen:init` marker for "not the first run".
+// The old single array `rulesSeen` is carried over into keys on its first read.
+// shortcut: one chain per process, two chats starting at the same moment may toast a new rule twice
+let rulesChain: Promise<void> = Promise.resolve() // one run at a time in this process: two at once would each take the other's half-written keys for news
+const noteRules = ($: EngineInterface, list: Lesson[], on: boolean, own?: number) => (rulesChain = rulesChain.then(() => noteRulesNow($, list, on, own)))
+const noteRulesNow = async ($: EngineInterface, list: Lesson[], on: boolean, own?: number) => {
   try {
-    const seen = (await $.store.get('rulesSeen')) as number[] | undefined
-    const fresh = list.filter(l => l.global && !seen?.includes(l.pos))
+    const old = (await $.store.get('rulesSeen')) as number[] | undefined
+    const keys = new Set((await $.store.keys()).filter(k => k.startsWith('rulesSeen:')))
+    const isFirst = old === undefined && keys.size === 0
+    const key = (pos: number) => `rulesSeen:${pos}`
+    const fresh = list.filter(l => l.global && !keys.has(key(l.pos)) && !old?.includes(l.pos))
     const { left } = rulesContext(list)
-    if (seen !== undefined) for (const l of fresh) if (l.pos !== own) toast($, T.lessonToast(oneLine(l.text), { left, on, stale: false }))
-    if (seen === undefined || fresh.length) await $.store.set('rulesSeen', [...(seen ?? []), ...fresh.map(l => l.pos)])
+    if (!isFirst) for (const l of fresh) if (l.pos !== own) toast($, T.lessonToast(oneLine(l.text), { left, on, stale: false }))
+    if (isFirst || old !== undefined) await $.store.set('rulesSeen:init', true)
+    for (const pos of [...(old ?? []), ...fresh.map(l => l.pos)]) if (!keys.has(key(pos))) await $.store.set(key(pos), true)
+    if (old !== undefined) await $.store.delete('rulesSeen') // after the keys are written: a cut run carries over again
   } catch {} // the list matters more than the notice
 }
 
@@ -216,18 +237,37 @@ const reloadLessons = async ($: EngineInterface, python: string, kept: Lesson[],
 }
 
 // How often the lessons came back, on this computer, for /al-health: what they cost and whether they stop anything.
+// One key per chat (`lessonCounts:<id>`): two chats counting at once never overwrite each other. `lessonCounts` is the total of the chats pruneTurns folded in.
+type Counts = Record<string, number>
 const countLessons = async ($: EngineInterface, key: 'shown' | 'chars' | 'stopped' | 'rules' | 'rulesChars', n: number) => {
-  const all = ((await $.store.get('lessonCounts')) as Record<string, number> | undefined) ?? {}
-  await $.store.set('lessonCounts', { ...all, [key]: (all[key] ?? 0) + n })
+  const at = `lessonCounts:${await $.session.id()}`
+  const all = ((await $.store.get(at)) as Counts | undefined) ?? {}
+  await $.store.set(at, { ...all, [key]: (all[key] ?? 0) + n })
+}
+const sumCounts = async ($: EngineInterface) => {
+  const total: Counts = {}
+  for (const k of (await $.store.keys()).filter(k => k === 'lessonCounts' || k.startsWith('lessonCounts:')))
+    for (const [f, n] of Object.entries(((await $.store.get(k)) as Counts | undefined) ?? {})) total[f] = (total[f] ?? 0) + n
+  return total
 }
 
-// The turn size is kept for the last 200 chats; the oldest by `at` go first.
+// The turn size is kept for the last 200 chats; the oldest by `at` go first, their counters are folded into the total.
+// shortcut: two chats pruning at the same moment may fold one chat twice or lose a fold; /al-health figures only, move the fold into the background job if it matters
 const KEEP_TURNS = 200
 const pruneTurns = async ($: EngineInterface) => {
   const keys = (await $.store.keys()).filter(k => k.startsWith('turn:'))
   if (keys.length <= KEEP_TURNS) return
   const ats = await Promise.all(keys.map(async k => [k, ((await $.store.get(k)) as { at: number | null } | undefined)?.at ?? 0] as const))
-  for (const [k] of ats.sort((a, b) => a[1] - b[1]).slice(0, keys.length - KEEP_TURNS)) await $.store.delete(k)
+  for (const [k] of ats.sort((a, b) => a[1] - b[1]).slice(0, keys.length - KEEP_TURNS)) {
+    await $.store.delete(k)
+    const own = `lessonCounts:${k.slice('turn:'.length)}`
+    const mine = (await $.store.get(own)) as Counts | undefined
+    if (mine === undefined) continue
+    const total = ((await $.store.get('lessonCounts')) as Counts | undefined) ?? {}
+    for (const [f, n] of Object.entries(mine)) total[f] = (total[f] ?? 0) + n
+    await $.store.set('lessonCounts', total)
+    await $.store.delete(own)
+  }
 }
 
 // chats whose size was already asked of cg.py in this load, so a failure is not retried on every tick
@@ -280,14 +320,34 @@ const obsidian = async ($: EngineInterface, tool: string, args: Record<string, u
 }
 
 // The summary note: the frontmatter of every .md note directly in the folder, as one table (not the summary itself).
-const rebuildSummary = async ($: EngineInterface) => {
+// A note dated before the last two days is final: its row is kept in the store (`summaryRow:<path>`) and not read again. Newer ones are read each time.
+// At most 8 calls to Obsidian at once.
+const rebuildSummary = async ($: EngineInterface, today: string) => {
   const [folder, summary] = [T.statsFolder, summaryPath()]
-  // 1000 is the server's maximum: past it the summary would silently miss notes
+  // shortcut: list_vault_files gives at most 1000 notes (~1.4 years on two PCs), move old notes into a year subfolder when it bites
   const { files, truncated } = JSON.parse(await obsidian($, 'list_vault_files', { directory: folder, limit: 1000 })) as { files: string[]; truncated: boolean }
   if (truncated === true) throw new Error(T.summaryTruncated)
   const notes = files.filter(p => p.endsWith('.md') && p !== summary && p.startsWith(`${folder}/`) && !p.includes('/', folder.length + 1))
-  const fronts = await Promise.all(notes.map(async path => JSON.parse(await obsidian($, 'get_note_properties', { path })).frontmatter ?? {}))
+  const final = new Date(Date.parse(today) - 2 * 86_400_000).toISOString().slice(0, 10)
+  const fronts: Record<string, unknown>[] = []
+  let next = 0
+  const worker = async () => {
+    while (next < notes.length) {
+      const [i, path] = [next, notes[next++]!]
+      const day = path.slice(folder.length + 1, folder.length + 11)
+      const isFinal = /^\d{4}-\d\d-\d\d$/.test(day) && day < final
+      const kept = isFinal ? ((await $.store.get(`summaryRow:${path}`)) as Record<string, unknown> | undefined) : undefined
+      const front = kept ?? ((JSON.parse(await obsidian($, 'get_note_properties', { path })).frontmatter ?? {}) as Record<string, unknown>)
+      fronts[i] = front
+      // a note with no frontmatter yet (half synced) is read again next time; a full store must not cost the summary
+      if (isFinal && kept === undefined && Object.keys(front).length > 0) await $.store.set(`summaryRow:${path}`, front).catch(() => {})
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(8, notes.length) }, worker))
   await obsidian($, 'create_vault_file', { path: summary, content: summaryNote(fronts) })
+  // the rows of notes no longer in the folder (moved into a year subfolder) go: the store has a hard size cap
+  const listed = new Set(notes.map(p => `summaryRow:${p}`))
+  for (const k of await $.store.keys().catch(() => [] as string[])) if (k.startsWith('summaryRow:') && !listed.has(k)) await $.store.delete(k).catch(() => {})
 }
 
 // One /al-stats run: measure, queue the note, send the queue, rebuild the summary. Returns what the owner reads.
@@ -302,18 +362,24 @@ const runStats = async ($: EngineInterface, python: string, days: number, compre
   const { note, errors } = (await runCg($, python, args, 600_000)) as { note: string; errors: IndexError[] }
   await indexErrors($, 'al-stats', errors, true) // an unreadable transcript lowers the figures; the note is written all the same
   const path = notePath(host, today)
-  // one note per computer and day: a note still waiting for this day is replaced, not doubled
-  const queue = [...(((await $.store.get('outbox')) as Note[] | undefined) ?? []).filter(n => n.path !== path), { path, content: note }]
-  await $.store.set('outbox', queue) // kept before sending, so nothing is lost if the send is cut short
-  const sent = await flush(queue, async n => void (await obsidian($, 'create_vault_file', n)))
-  await $.store.set('outbox', sent.left)
+  // one note, one key (`outbox:<path>`): one note per computer and day, so a note still waiting for this day is replaced, not doubled
+  const old = (await $.store.get('outbox')) as Note[] | undefined // the single array of before 0.9.2: carried over into keys
+  for (const n of old ?? []) await $.store.set(`outbox:${n.path}`, n)
+  if (old !== undefined) await $.store.delete('outbox')
+  await $.store.set(`outbox:${path}`, { path, content: note }) // kept before sending, so nothing is lost if the send is cut short
+  const keys = (await $.store.keys()).filter(k => k.startsWith('outbox:'))
+  const queue = ((await Promise.all(keys.map(k => $.store.get(k)))) as (Note | undefined)[]).filter((n): n is Note => n !== undefined)
+  const sent = await flush(queue, async n => {
+    await obsidian($, 'create_vault_file', n)
+    await $.store.delete(`outbox:${n.path}`)
+  })
   const figures = note.replace(/^---\n[\s\S]*?\n---\n/, '').trim() + (errors.length ? `\n\n${T.cgStatsErrors(errors.length)}` : '') // the frontmatter is for the vault
   if (sent.error !== undefined) {
     await fail($, 'al-stats', sent.error)
     return `${figures}\n\n${T.cgStatsQueued(sent.left.length)}`
   }
   try {
-    await rebuildSummary($)
+    await rebuildSummary($, today)
   } catch (err) {
     await fail($, 'al-stats-summary', err)
     return `${figures}\n\n${T.cgStatsSummaryFailed}`
@@ -370,7 +436,7 @@ const fireDue = async ($: EngineInterface, python: string, compression: string) 
   if (at === null || at > now || isWorking || shown !== at) return
   await $.store.delete(`delayed:${id}`)
   await update($, delayedAt, () => null)
-  // false = nothing was launched (busy, the busy flag could not be set, or a step before /clear threw): the wait goes back. A throw from startWorker's tail comes after the launch: no put-back.
+  // false = nothing was launched (busy, the busy flag could not be set, or a step before /clear threw or failed): the wait goes back. A throw from startWorker's tail comes after the launch: no put-back.
   const r = await startWorker($, python, 'send', compression, model)
   if (r) return
   if (r === null) {
@@ -394,7 +460,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
   let outcome: Awaited<ReturnType<typeof launch>> | undefined
   let isCleared = false
   try {
-    await update($, isArmed, () => false)
+    await disarm($)
     let told = '' // the last thing launch told the owner; it is the reason when the launch did not go through
     const io: LaunchIO = {
       draft: async () => (await $.prompt.read()).text,
@@ -427,11 +493,12 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
     await fail($, 'launch', err)
   } finally {
     // /clear changed the session id: the picker must not stay armed for the new chat
-    await update($, isArmed, () => false)
+    await disarm($)
     await update($, isBusy, () => false)
     await guarded($, 'launch', () => refresh($, python))
   }
-  return outcome !== undefined || isCleared ? true : null // null: a throw before /clear launched nothing, the delayed wait goes back
+  // null: a throw or a 'failed' before /clear launched nothing, the delayed wait goes back (once, see fireDue)
+  return outcome === 'failed' && !isCleared ? null : outcome !== undefined || isCleared ? true : null
 }
 
 export const register: Register = (on, options) => {
@@ -468,6 +535,7 @@ export const register: Register = (on, options) => {
   let readyIn = '' // the chat whose New worker button was ready at the last draw ('' when none)
   const REVIEW_EDITS = 5 // unreviewed code edits from which the main chat is told to offer /ponytail-review
   const reviewDue = new Map<string, number>() // by chat: the edits count of a review hint the main chat has not been told yet
+  const reviewFailed = new Set<string>() // chats whose failing review-hint was recorded already: one line in /al-health per chat, not one per turn
   const reviewSaid = new Set<string>() // chats told since their count was last under the limit; in memory only, a reload may say it once more
   let isPonytailOff = false // the last hint said ponytail is not installed: stop asking
   let isLessonsNoted = false // a lesson search that fails on every message is kept for /al-health once, not on each
@@ -486,6 +554,11 @@ export const register: Register = (on, options) => {
           const file = withFile(options, await $.fs.read(settingsFile))
           apply(file.options)
           if (file.bad.length) await fail($, 'settings', T.settingsBad(settingsFile, file.bad))
+          // the keys of a later version: the job reads this file only, cg.py adds them under the lock the other writers take; never awaited
+          if (file.missing.length) {
+            const values = JSON.stringify(Object.fromEntries(file.missing.map(k => [k, options[k]])))
+            void runCg($, python, ['settings-fill', `--values=${values}`], 20_000).catch(err => noteError($, 'settings', err))
+          }
         } else await $.fs.write(settingsFile, `${JSON.stringify(options, null, 2)}\n`)
       } catch (err) {
         await fail($, 'settings', `${settingsFile}: ${message(err)}`)
@@ -517,6 +590,11 @@ export const register: Register = (on, options) => {
     )
     await guarded($, 'session.start', () => refresh($, python))
     await guarded($, 'session.start', async () => {
+      // a wait of a chat that is closed for good is never read again: drop what is over a day old
+      for (const k of (await $.store.keys()).filter(k => k.startsWith('delayed:'))) {
+        const at = ((await $.store.get(k)) as { at?: unknown } | undefined)?.at
+        if (typeof at === 'number' && at < loadedAt - 86_400_000) await $.store.delete(k)
+      }
       const isOpen = (await $.store.get('details')) === true
       await update($, isDetails, () => isOpen)
       const { at } = await waitOf($, await $.session.id()) // a wait outlives a restart
@@ -604,6 +682,16 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // The start of the latest request of the main chat's turn: the cache lifetime counts from it, not from the turn's end (a few seconds on).
+  let stepAt: { turn: string; at: number } | undefined
+  on('turn.step', async function* ($, e, next) {
+    const at = e.agentId === undefined ? $.clock.now().catch(() => undefined) : undefined // asked now, awaited after: the request does not wait for it
+    const r = yield* next(e)
+    const t = await at
+    if (t !== undefined) stepAt = { turn: e.turnId, at: t }
+    return r
+  })
+
   on('turn.complete', async ($, e, next) => {
     if (e.agentId !== undefined) {
       running.delete(e.agentId)
@@ -615,10 +703,10 @@ export const register: Register = (on, options) => {
     if (e.agentId === undefined && e.usage !== undefined) {
       await guarded($, 'turn.complete', async () => {
         // an armed picker never outlives a turn
-        await update($, isArmed, () => false)
+        await disarm($)
         const [id, now, usage] = await Promise.all([$.session.id(), $.clock.now(), $.session.usage()])
         const prev = (await $.store.get(`turn:${id}`)) as { at: number | null } | undefined
-        await $.store.set(`turn:${id}`, { at: now, tokens: usage.context.tokens ?? null })
+        await $.store.set(`turn:${id}`, { at: stepAt?.turn === e.turnId ? stepAt.at : now, tokens: usage.context.tokens ?? null })
         await pruneTurns($)
         await refresh($, python)
         if (!prev?.at) void refreshInfo($, python) // the first reply of a chat (a new worker's): only now has its transcript a call for the savings to read
@@ -653,8 +741,8 @@ export const register: Register = (on, options) => {
       ])
       const facts = files.filter(f => f.name.endsWith('.md') && f.name !== 'MEMORY.md').length
       const memory = dir === null ? null : { dir, facts, tokens: autoMemTokens(mem) }
-      const embedCmd = `${python} "${$.plugin.root}/scripts/cg.py" --lang ${language()} embed --model ${embedModel} --max-seconds 100000`
-      const counts = ((await $.store.get('lessonCounts')) as Record<string, number> | undefined) ?? {}
+      const embedCmd = `& "${python}" "${$.plugin.root}/scripts/cg.py" --lang ${language()} embed --model ${embedModel} --max-seconds 100000`
+      const counts = await sumCounts($)
       const lessons = { count: lessonList.filter(l => !l.global).length, shown: counts.shown ?? 0, chars: counts.chars ?? 0, stopped: counts.stopped ?? 0, on: isLessonsOn }
       const rules = { global: lessonList.filter(l => l.global).length, rules: counts.rules ?? 0, chars: counts.rulesChars ?? 0, left: rulesContext(lessonList).left }
       if (homeDir !== undefined) settingsFile = await settingsFileOf($, homeDir) // after the status run, which may have moved the folder
@@ -662,8 +750,7 @@ export const register: Register = (on, options) => {
         text: healthLines({ version, index, memory, root, embedCmd, lastError: lastError as LastError | undefined, syncDir, compression, settingsFile, shareCipher, lessons, rules, homeNotes: typeof index === 'string' ? [] : (index.home_notes as string[] | undefined) }).join('\n'),
       }
     } catch (err) {
-      await fail($, 'al-health', err)
-      return { text: T.cgHealthFailed }
+      return await failedCmd($, 'al-health', err)
     }
   })
 
@@ -674,8 +761,7 @@ export const register: Register = (on, options) => {
       void refreshInfo($, python)
       return { text: T.cgIndexDone(i) }
     } catch (err) {
-      await fail($, 'al-index', err)
-      return { text: T.cgIndexFailed }
+      return await failedCmd($, 'al-index', err)
     }
   })
 
@@ -694,8 +780,7 @@ export const register: Register = (on, options) => {
       }
       return { text: syncReport(r).join('\n') }
     } catch (err) {
-      await fail($, 'al-sync', err)
-      return { text: T.cgSyncFailed }
+      return await failedCmd($, 'al-sync', err)
     }
   })
 
@@ -747,8 +832,7 @@ export const register: Register = (on, options) => {
     try {
       return { text: cleanupReply((await runCg($, python, args, 60_000)) as unknown as CleanupResult) }
     } catch (err) {
-      await fail($, 'al-cleanup', err)
-      return { text: T.cgCleanupFailed }
+      return await failedCmd($, 'al-cleanup', err)
     }
   })
 
@@ -758,8 +842,7 @@ export const register: Register = (on, options) => {
     try {
       return { text: await runStats($, python, days, compression) }
     } catch (err) {
-      await fail($, 'al-stats', err)
-      return { text: T.cgStatsFailed }
+      return await failedCmd($, 'al-stats', err)
     }
   })
 
@@ -795,6 +878,12 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'mcp__alethite__lesson_save' }, ($, e) =>
     served($, 'lesson_save', async () => {
       const input = e as unknown as Record<string, unknown>
+      // tool.call runs ahead of the permission check: a rule for every chat on every computer needs the owner's yes, and anything else (a closed dialog too) saves nothing
+      // without a fix there is no rule to ask about: cg.py refuses it, and the model reads why
+      if (input.scope === 'all' && typeof input.fix === 'string' && input.fix.trim()) {
+        const yes = await $.ui.ask(T.ruleAsk(ruleLine(input.fix)), [T.ruleAskYes, T.ruleAskNo]).catch(() => undefined)
+        if (yes !== T.ruleAskYes) return T.ruleDeclined
+      }
       const r = await runCg($, python, lessonSaveArgs(input, await $.session.root(), embedModel))
       let stale = false // the list could not be re-read: the new rule is missing from it and the count of rules that do not fit is without it
       try {
@@ -823,8 +912,7 @@ export const register: Register = (on, options) => {
       if (args[1] === 'remove') return { text: T.cgJobOff }
       return { text: [T.cgJobState(r.minutes as number | null), ...jobHealth(r.last as JobRun | null)].join('\n') }
     } catch (err) {
-      await fail($, 'al-job', err)
-      return { text: T.cgJobFailed }
+      return await failedCmd($, 'al-job', err)
     }
   })
 
@@ -840,8 +928,7 @@ export const register: Register = (on, options) => {
       lessonList = await lessonsOf($, python)
       return { text: T.cgLessonsForgotten(n) }
     } catch (err) {
-      await fail($, 'al-lessons', err)
-      return { text: T.cgLessonsFailed }
+      return await failedCmd($, 'al-lessons', err)
     }
   })
 
@@ -851,16 +938,23 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     // an engine older than the origin (2.1.29x) stamps none: there a prompt is the owner's; in the desktop Code tab (an SDK host) it is `sdk`, or `unclassified` from a channel the engine cannot attest
     const kind = (e.origin as { kind?: string } | undefined)?.kind
-    const isOwners = kind === undefined || kind === 'composer' || kind === 'bridge' || kind === 'sdk' || kind === 'unclassified'
+    const origin = e.origin as { kind?: string; name?: string; asUser?: boolean } | undefined
+    // our own New worker sends its first message as the owner's (asUser); another plugin's, or ours without asUser, is not
+    const isOwners = kind === undefined || kind === 'composer' || kind === 'bridge' || kind === 'sdk' || kind === 'unclassified' || (kind === 'plugin' && origin?.name === 'alethite' && origin.asUser === true)
     if (isOwners && !e.isMeta) await recheck($, python)
     // the review hint rides the owner's next message once; a failure here costs nothing but the hint
     const blocks: string[] = []
     let hint: [id: string, edits: number] | undefined
     // a dropped prompt never reached the model: the hint comes back for the next one
     const pass = async () => {
-      const r = await next(blocks.length ? { ...e, context: [...(e.context ?? []), ...blocks] } : e)
-      if (hint && r.drop !== undefined) (reviewDue.set(hint[0], hint[1]), reviewSaid.delete(hint[0]))
-      return r
+      try {
+        const r = await next(blocks.length ? { ...e, context: [...(e.context ?? []), ...blocks] } : e)
+        if (hint && r.drop !== undefined) (reviewDue.set(hint[0], hint[1]), reviewSaid.delete(hint[0]))
+        return r
+      } catch (err) {
+        if (hint) (reviewDue.set(hint[0], hint[1]), reviewSaid.delete(hint[0]))
+        throw err
+      }
     }
     if (isOwners && !e.isMeta && e.command === undefined) {
       try {
@@ -892,14 +986,16 @@ export const register: Register = (on, options) => {
       isLessonsNoted = true
     }
     const own = lessonList.filter(l => !l.global)
-    if (own.length && e.text.trim().length >= 12) {
+    // only our New worker's first message gets here as 'plugin': the handoff first, then the owner's draft, which is what the lessons are searched by
+    const words = kind === 'plugin' ? e.text.split('[/al-handoff]').pop()! : e.text
+    if (own.length && words.trim().length >= 12) {
       try {
         const [root, id] = await Promise.all([$.session.root(), $.session.id()])
         const shown = setOf(shownIn, id)
         // every lesson shown already: no Python; else ask for the shown ones too, so they do not take the places of the fresh ones
         const found = own.every(l => shown.has(l.id))
           ? []
-          : ((await runCg($, python, lessonsMatchArgs(e.text, root, embedModel, lessonsMinScore, 2 + shown.size), 8_000)).lessons as Found[])
+          : ((await runCg($, python, lessonsMatchArgs(words, root, embedModel, lessonsMinScore, 2 + shown.size), 8_000)).lessons as Found[])
         const fresh = found.filter(l => !shown.has(l.id)).slice(0, 2)
         if (fresh.length) {
           const block = lessonContext(fresh)
@@ -931,7 +1027,7 @@ export const register: Register = (on, options) => {
     if (!isLessonsOn || lessonList.length === 0) return next(e)
     let lesson: Lesson | undefined
     try {
-      const stopped = setOf(stoppedIn, await $.session.id())
+      const stopped = setOf(stoppedIn, `${await $.session.id()}:${e.agentId ?? ''}`) // a subagent has its own stop
       lesson = gateFor(e.command, lessonList, stopped)
       if (lesson !== undefined) {
         stopped.add(lesson.id)
@@ -973,7 +1069,7 @@ export const register: Register = (on, options) => {
       if (e.trigger !== 'precompute' && e.agentId === undefined && r.skip === undefined) {
         const id = await $.session.id()
         shownIn.delete(id)
-        stoppedIn.delete(id)
+        for (const k of stoppedIn.keys()) if (k.startsWith(`${id}:`)) stoppedIn.delete(k)
         rulesAt.delete(id)
         // turn:<id> is written by a finished turn only: an interrupted first turn would leave the size from before the compaction there; the
         // rules then come once, with the mark unknown, and the first size measured afterwards is the mark
@@ -1006,6 +1102,7 @@ export const register: Register = (on, options) => {
     const wait = await read($, delayedAt)
     const data = await read($, info)
     const isOpen = await read($, isDetails)
+    const rawLevel = await read($, afterLevel)
 
     isWorking = e.props.isWorking // /clear in the middle of a turn is dangerous: no New worker then, and no waiting one either
     if (s === null || e.props.hasSurvey || s.id === hidden) return next(e)
@@ -1017,35 +1114,54 @@ export const register: Register = (on, options) => {
     const below = await next(e)
     const isLit = isStale(s, minTokens, idleMinutes) && s.id !== calm
     const title = <Text bold>{T.bandTitle}</Text>
-    const after = delayAt(s.limits, s.now)
+    const times = delayTimes(s.limits, s.now)
+    // a new usage snapshot may leave one time (no list to pick from) or put the picked time in the past: back to the first level then
+    const level = (rawLevel === 'time' && times.length < 2) || (typeof rawLevel === 'number' && rawLevel <= s.now) ? null : rawLevel
 
     if (armed && !isWorking) {
+      const whenOf = (t: number) => T.afterReset(when(new Date(t).toISOString(), s.now))
+      const setWait = (at: number, model?: string) =>
+        guarded($, 'band', async () => {
+          await disarm($)
+          if (!(await $.prompt.read()).text.trim()) return toast($, T.draftEmpty)
+          await $.store.set(`delayed:${await $.session.id()}`, model ? { at, model } : { at }) // the time printed on the button; the chat that is open now (a /clear may have come)
+          await update($, delayedAt, () => at)
+        })
+      const cancel = <Button key="cancel" label={T.cancel} onPress={() => disarm($)} />
+      const menu =
+        typeof level === 'number' ? (
+          <>
+            <Text dimColor>{whenOf(level)}</Text>
+            <Box gap={1} flexWrap="wrap">
+              <Button key="model" label={T.currentModel} onPress={() => setWait(level)} />
+              {(['opus', 'sonnet'] as const).map(model => (
+                <Button key={`model-${model}`} label={model} onPress={() => setWait(level, model)} />
+              ))}
+              {cancel}
+            </Box>
+          </>
+        ) : level === 'time' ? (
+          <Box gap={1} flexWrap="wrap">
+            {times.map((t, i) => (
+              <Button key={`at-${i + 1}`} label={whenOf(t)} onPress={() => update($, afterLevel, () => t)} />
+            ))}
+            {cancel}
+          </Box>
+        ) : (
+          <Box gap={1} flexWrap="wrap">
+            <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send', compression)} />
+            <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill', compression)} />
+            {times.length > 0 && <Button key="after" label={T.afterResetMenu} onPress={() => update($, afterLevel, () => (times.length > 1 ? 'time' : times[0]))} />}
+            {cancel}
+          </Box>
+        )
       return (
         <Box flexDirection="column">
           {rule}
           <Box borderStyle="round" borderDimColor flexDirection="column" paddingX={1}>
             {title}
             <Text>{T.willClear}</Text>
-            <Box gap={1} flexWrap="wrap">
-              <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send', compression)} />
-              <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill', compression)} />
-              {after !== null &&
-                ([undefined, 'opus', 'sonnet'] as const).map(model => (
-                  <Button
-                    key={model ? `after-${model}` : 'after'}
-                    label={`${T.afterReset(when(new Date(after).toISOString(), s.now))}${model ? ` ${T.afterResetModel(model)}` : ''}`}
-                    onPress={() =>
-                      guarded($, 'band', async () => {
-                        await update($, isArmed, () => false)
-                        if (!(await $.prompt.read()).text.trim()) return toast($, T.draftEmpty)
-                        await $.store.set(`delayed:${await $.session.id()}`, model ? { at: after, model } : { at: after }) // the time printed on the button; the chat that is open now (a /clear may have come)
-                        await update($, delayedAt, () => after)
-                      })
-                    }
-                  />
-                ))}
-              <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
-            </Box>
+            {menu}
             <Text dimColor>{T.atFilesHint}</Text>
           </Box>
           {below}
@@ -1061,7 +1177,15 @@ export const register: Register = (on, options) => {
       if (readyId && !isPonytailOff)
         void guarded($, 'review', async () => {
           const id = await $.session.id()
-          const r = (await runCg($, python, ['review-hint', '--session', id], 8_000)) as unknown as Review
+          let r: Review
+          try {
+            r = (await runCg($, python, ['review-hint', '--session', id], 8_000)) as unknown as Review
+          } catch (err) {
+            if (reviewFailed.has(id)) return
+            reviewFailed.add(id)
+            throw err
+          }
+          reviewFailed.delete(id) // it works again: its next failure is a new one
           isPonytailOff = r.ponytail === false
           if (r.ponytail && r.edits >= REVIEW_EDITS) {
             if (!reviewSaid.has(id)) reviewDue.set(id, r.edits)

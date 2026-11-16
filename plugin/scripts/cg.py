@@ -20,7 +20,7 @@ from compress import LEVELS, compress
 from transcripts import find_session, last_usage, project_key, project_keys
 
 
-INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings', 'agent-age', 'review-hint')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
+INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings', 'agent-age', 'review-hint', 'settings-fill')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
 SHORT = (*INDEX_FREE, 'lessons-match')  # the runs that do not merge, nor open the index again to keep forgets (lessons-match reads it and writes no forget)
 
 
@@ -144,25 +144,14 @@ def _sync_dir(s):
     return s['syncDir'].strip().strip('"') if isinstance(s.get('syncDir'), str) else ''
 
 
-def _cipher(s, flag=None):
-    """How the sync folder is sealed: --share-cipher, else shareCipher of the settings file, else sqlcipher. A name no cipher has is an error
-    that names the setting, not a KeyError of the cipher table."""
-    c = flag or s.get('shareCipher')
+def _cipher(s, flag=None, index=False):
+    """How the sync folder is sealed (`index`: how the index is encrypted): --share-cipher (--index-cipher), else shareCipher (indexCipher) of
+    the settings file, else sqlcipher. A name no cipher has is an error that names the setting, not a KeyError of the cipher table."""
+    c = flag or s.get('indexCipher' if index else 'shareCipher')
     if c is None:
         return 'sqlcipher'
-    if c not in crypto.CIPHERS:
-        raise ValueError(texts.t('share_cipher_bad', value=c))
-    return c
-
-
-def _index_cipher(s, flag=None):
-    """How the index is encrypted: --index-cipher, else indexCipher of the settings file, else sqlcipher; a name no cipher has is an error that
-    names the setting."""
-    c = flag or s.get('indexCipher')
-    if c is None:
-        return 'sqlcipher'
-    if c not in crypto.INDEX_CIPHERS:
-        raise ValueError(texts.t('index_cipher_bad', value=c))
+    if c not in (crypto.INDEX_CIPHERS if index else crypto.CIPHERS):
+        raise ValueError(texts.t('index_cipher_bad' if index else 'share_cipher_bad', value=c))
     return c
 
 
@@ -324,6 +313,14 @@ def _cleanup(a):
     return {'on': _cleanup_on(a), 'preview': preview}
 
 
+def _settings_fill(a):
+    """The mod gives the values of /config for the keys its file lacks: the job reads the file only, and gets what the chats use."""
+    values = json.loads(a.values)
+    if not isinstance(values, dict):
+        raise ValueError('--values: not an object')
+    return {'added': crypto.set_fields(crypto.settings_path(a.db), values, fill=True)}
+
+
 def _handoff(a):
     from handoff import build_handoff
     text = build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress, _cleanup_on(a))
@@ -391,7 +388,7 @@ def _encrypt(a):
         ui = dialogs.WindowsUI()
         if a.action == 'off':
             return encrypt.off(a.db, sync_dir, a.machine, ui, **kw)
-        return getattr(encrypt, a.action)(a.db, sync_dir, _cipher(s, a.share_cipher), a.machine, ui, index_cipher=_index_cipher(s, a.index_cipher), **kw)
+        return getattr(encrypt, a.action)(a.db, sync_dir, _cipher(s, a.share_cipher), a.machine, ui, index_cipher=_cipher(s, a.index_cipher, True), **kw)
 
 
 def _index_dir(a):
@@ -548,6 +545,7 @@ def _parser():
     s.add_argument('action', choices=('install', 'remove', 'status'))
     s.add_argument('--minutes', type=int, default=None)  # job.MINUTES
     add('cleanup', _cleanup).add_argument('action', choices=('on', 'off', 'status'))
+    add('settings-fill', _settings_fill).add_argument('--values', required=True)  # JSON object
     s = add('forget', _forget)
     s.add_argument('--conv', required=True)
     s.add_argument('--pos', type=int, required=True)
@@ -596,7 +594,9 @@ def main(argv):
     try:
         a = _parser().parse_args(argv)
         texts.lang = a.lang
-        if a.db is None:
+        if a.db is not None:
+            a.db = os.path.abspath(a.db)  # a bare name has no folder: the settings and locks lie beside the index
+        else:
             # job is imported (it costs time) only when the old folder or --follow-job asks for it; the flag finds an old task that outlived the move
             minutes = (os.path.isdir(crypto.OLD_HOME_DIR) or a.follow_job) and _job_step(home_notes, 'home_old_task_failed', _old_task_off)
             if minutes is None and os.path.isdir(crypto.OLD_HOME_DIR) and not os.path.exists(crypto.HOME_DIR):  # None: the old task stays
@@ -634,7 +634,8 @@ def main(argv):
         elif a.where and a.where.configured and a.cmd not in SHORT:
             # forgets made on C: while the settings were unreadable; never on the per-prompt path, and a busy index takes them on the next run
             with contextlib.suppress(Exception):
-                indexdir.apply_forgets(a.db)
+                # shortcut: may re-send forget lines the other computer already has (a new or older folder index, or a home index synced while settings were broken); it ignores a forget it has, upgrade if duplicate lines ever cost a real amount
+                indexdir.apply_forgets(a.db, push=True)  # that home index is never merged: its outbox line would stay there
         try:
             out, code = a.fn(a), 0
         finally:

@@ -42,9 +42,9 @@ _RULES = [(re.compile(p), r) for p, r in [
     # which starts a search of its own, and a mysql right after a letter or a digit starts none (run_mysql.sh does): a line with
     # thousands of mysql stays linear.
     (r'((?<![^\W_])(?i:mysql)(?:(?!(?<![^\W_])(?i:mysql))[^\n|;&])*?[ \t]-p(?=\S)["\']?)' + _ANY, r'\1' + H),
-    # other commands that take a password as an argument
-    (r'(?i)(\bcurl\b[^\n|;&]*?\s(?:-u|--user)[ =]+[^\s:]+:)\S+', r'\1' + H),
-    (r'(?i)(\b(?:sshpass|docker\s+login)\b[^\n|;&]*?\s-p\s*)\S+', r'\1' + H),
+    # other commands that take a password as an argument: the search stops at the next such command, as for mysql
+    (r'(?i)(\bcurl\b(?:(?!\bcurl\b)[^\n|;&])*?\s(?:-u|--user)[ =]+[^\s:]+:)\S+', r'\1' + H),
+    (r'(?i)(\b(?:sshpass|docker\s+login)\b(?:(?!\b(?:sshpass|docker\s+login)\b)[^\n|;&])*?\s-p\s*)\S+', r'\1' + H),
     (r'(?i)(\bnet\s+use\s+(?:\S+\s+)?\\\\\S+\s+)(?!/)\S+', r'\1' + H),
 ]]
 

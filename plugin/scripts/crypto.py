@@ -69,10 +69,10 @@ def move_home(old=None, new=None, wait=True):
 
 def moved(path):
     """A path stored under the old name that lies in the old mod folder: with that folder gone, the same place in the new one."""
-    p = pathlib.Path(path)
-    if os.path.exists(OLD_HOME_DIR) or not p.is_relative_to(OLD_HOME_DIR):
+    p, old = os.path.abspath(path), norm(OLD_HOME_DIR)
+    if os.path.exists(OLD_HOME_DIR) or not (norm(p) == old or norm(p).startswith(old + os.sep)):
         return path
-    return str(pathlib.Path(HOME_DIR, p.relative_to(OLD_HOME_DIR)))
+    return str(pathlib.Path(HOME_DIR, os.path.relpath(p, OLD_HOME_DIR)))  # not p[len(old):]: a lower-cased name can be longer ('İ')
 
 
 def settings_path(db):
@@ -185,15 +185,26 @@ def atomic_write(path, data):
     os.replace(tmp, path)
 
 
-def set_fields(settings, updates):
-    """Writes `updates` into the settings file in one atomic write (a None value takes its key out); the other fields as they were."""
-    s = _read(settings)
-    for k, v in updates.items():
-        if v is None:
-            s.pop(k, None)
-        else:
-            s[k] = v
-    atomic_write(settings, json.dumps(s, ensure_ascii=False, indent=2).encode('utf-8'))
+def set_fields(settings, updates, wait=5, fill=False):
+    """Writes `updates` into the settings file in one atomic write (a None value takes its key out); the other fields as they were. Read and
+    write sit under one lock on a file beside the settings, so two writers never lose each other's field (sqlite3.OperationalError after
+    `wait` seconds). `fill`: only the keys that are not there yet; their names come back."""
+    import memdb  # at the call: memdb imports this module
+    lock = memdb.lock(settings, 'settings', wait)
+    try:
+        s = _read(settings)
+        if fill:
+            updates = {k: v for k, v in updates.items() if k not in s and v is not None}
+        for k, v in updates.items():
+            if v is None:
+                s.pop(k, None)
+            else:
+                s[k] = v
+        if updates:
+            atomic_write(settings, json.dumps(s, ensure_ascii=False, indent=2).encode('utf-8'))
+    finally:
+        lock.close()  # the lock file stays, like every memdb.lock file: removing it would let a waiter lock a file nobody else sees
+    return list(updates)
 
 
 def save_key(settings, key, cipher=None, index_cipher=None):

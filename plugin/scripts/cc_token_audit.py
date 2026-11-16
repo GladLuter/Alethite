@@ -7,7 +7,6 @@ import os
 import re
 import statistics
 import sys
-import tempfile
 import time
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -356,7 +355,7 @@ def analyze(projects, since=None, until=None, visit=None, saved=None):
     t0 = time.time()
     root = lp(projects)
     if not os.path.isdir(root):
-        raise SystemExit('projects dir not found: ' + str(projects))
+        raise FileNotFoundError('projects dir not found: ' + str(projects))
     kept = {_rel_path(root, s): s for s in saved or ()}
     files = sorted([os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs if f.endswith('.jsonl')] + list(kept))
     A = {'calls': 0, 'cost': 0.0, 'dup_cost': 0.0, 'first': '', 'last': '', 'rows': [], 'cat': defaultdict(lambda: [0.0, 0.0]),
@@ -422,111 +421,3 @@ def analyze(projects, since=None, until=None, visit=None, saved=None):
         'stats': {'all': stats(rows), 'main': stats([r for r in rows if r['kind'] == 'main']),
                   'subagent': stats([r for r in rows if r['kind'] == 'subagent'])},
     }
-
-
-def selftest():
-    """Tiny synthetic transcript: duplicate message ids, a tool_result, an attachment, a compaction, a subagent chain."""
-    att1, att2 = {'type': 'skill_listing', 'content': 'x' * 350}, {'type': 'task_reminder', 'content': 'z' * 100}
-    # bookkeeping attachments (must be ignored in baseline and growth split), 4 kinds
-    noise = [{'type': 'attachment', 'attachment': a} for a in (
-        {'type': 'hook_success', 'hookEvent': 'PostToolUse', 'command': 'c' * 500, 'stdout': '{}', 'content': ''},
-        {'type': 'credential_org', 'organizationUuid': 'u'},
-        {'type': 'command_permissions', 'allowedTools': []},
-        {'type': 'async_hook_response', 'exitCode': 1, 'stdout': '', 'response': '{}', 'stderr': 'e' * 100})]
-    u1 = {'input_tokens': 10, 'cache_creation_input_tokens': 1000, 'cache_read_input_tokens': 0, 'output_tokens': 20,
-          'output_tokens_details': {'thinking_tokens': 10}, 'cache_creation': {'ephemeral_1h_input_tokens': 0, 'ephemeral_5m_input_tokens': 1000}}
-    u2 = {'input_tokens': 5, 'cache_creation_input_tokens': 100, 'cache_read_input_tokens': 1000, 'output_tokens': 30,
-          'cache_creation': {'ephemeral_1h_input_tokens': 100, 'ephemeral_5m_input_tokens': 0}}
-    u3 = {'input_tokens': 3, 'cache_creation_input_tokens': 200, 'cache_read_input_tokens': 0, 'output_tokens': 10}
-    u4 = {'input_tokens': 7, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 0, 'output_tokens': 3}
-
-    def asst(mid, ts, usage, content, model='claude-sonnet-5'):
-        return {'type': 'assistant', 'timestamp': ts, 'message': {'id': mid, 'model': model, 'usage': usage, 'content': content}}
-    text = [{'type': 'text', 'text': 'hi'}]
-    main = noise + [
-        {'type': 'attachment', 'attachment': att1},
-        {'type': 'user', 'message': {'content': 'hello'}},
-        asst('m1', '2026-01-05T10:00:00Z', u1, text),
-        asst('m1', '2026-01-05T10:00:01Z', dict(u1, output_tokens=50), [{'type': 'tool_use', 'id': 't1', 'name': 'Read', 'input': {}}]),
-        asst('m1', '2026-01-05T10:00:02Z', u1, text),  # duplicate with lower output_tokens must not win
-        asst('s', '2026-01-05T10:00:02Z', u1, text, '<synthetic>'),
-        {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1', 'content': 'y' * 350}]}},
-        {'type': 'attachment', 'attachment': att2},
-    ] + noise + [
-        asst('m2', '2026-01-05T10:01:00Z', u2, text),
-        {'type': 'system', 'subtype': 'compact_boundary'},
-        {'type': 'user', 'isCompactSummary': True, 'message': {'content': 'summary'}},
-        asst('m3', '2026-02-02T10:00:00Z', u3, []),
-    ]
-    u5 = {'input_tokens': 6, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 0, 'output_tokens': 2}  # 6/7 of m4: small drop
-    sub = [{'type': 'user', 'message': {'content': 'do it!'}}, asst('m4', '2026-02-03T10:00:00Z', u4, text),
-           asst('m5', '2026-02-03T10:00:05Z', u5, text)]
-    with tempfile.TemporaryDirectory() as tmp:
-        os.makedirs(os.path.join(tmp, 'proj-a', 's1', 'subagents'))
-        with open(os.path.join(tmp, 'proj-a', 's1.jsonl'), 'w', encoding='utf-8') as f:
-            f.write('\n'.join(json.dumps(x) for x in main) + '\nnot json\n')
-        with open(os.path.join(tmp, 'proj-a', 's1', 'subagents', 'agent-1.jsonl'), 'w', encoding='utf-8') as f:
-            f.write('\n'.join(json.dumps(x) for x in sub) + '\n')
-        R = analyze(tmp)
-    cats = {c['category']: c for c in R['categories']}
-    close = lambda a, b: abs(a - b) < 1e-9
-    h = len(json.dumps(att2))
-    exp = ((10 * 2 + 1000 * 2.5) + 50 * 10 + (5 * 2 + 100 * 4 + 1000 * .2) + 30 * 10 + (3 * 2 + 200 * 2.5) + 10 * 10 + (7 * 2) + 3 * 10 + (6 * 2) + 2 * 10) / 1e6
-    assert R['totals']['calls'] == 5 and R['totals']['chains'] == 2, R['totals']  # dedupe + synthetic skipped
-    assert R['meta']['odd']['small_context_drops_scaled_not_reset'] == 1 and 'context_resets_without_compact_boundary' not in R['meta']['odd']
-    assert R['meta']['lines_skipped'] == 1 and R['meta']['files_parsed'] == 2
-    assert close(R['totals']['cost_usd'], exp) and close(sum(c['cost_usd'] for c in R['categories']), exp)  # cost split sums to total
-    assert close(sum(R['cost_by_token_type'].values()), exp)
-    assert set(R['by_kind']) == {'main', 'subagent'} and R['by_kind']['subagent']['calls'] == 2
-    assert cats['output:visible']['tokens_added'] == 40 + 30 + 10 + 3 + 2 and cats['output:thinking']['tokens_added'] == 10
-    assert cats['assistant_output_in_context']['tokens_added'] == 40  # call 1 visible output, delta 95
-    assert close(cats['tool:Read']['tokens_added'], 55 * 350 / (350 + h)) and close(cats['att:task_reminder']['tokens_added'], 55 * h / (350 + h))
-    sa = len(json.dumps(att1))
-    # bookkeeping attachments take no share of the baseline or the growth (the numbers above only add up without them)
-    assert not [k for k in cats if k.split(':')[-1] in ('hook_success', 'credential_org', 'command_permissions', 'async_hook_response')], cats.keys()
-    assert {k: v['entries'] for k, v in R['meta']['attachments_excluded_as_bookkeeping'].items()} == {k: 2 for k in EXCLUDED}
-    assert close(cats['baseline:tools+other']['tokens_added'], 1010 - (sa + 5) / 3.5 + 7 - 6 / 3.5)
-    assert close(cats['baseline:att:skill_listing']['tokens_added'], sa / 3.5)
-    # context tokens added = first prompt (1010) + growth (95) + reset (0) + subagent first prompt (7)
-    ctx_added = sum(c['tokens_added'] for k, c in cats.items() if not k.startswith('output:'))
-    assert close(ctx_added, 1010 + 95 + 0 + 7), ctx_added
-    assert R['stats']['all']['compactions'] == 1 and R['meta']['compact_boundary_entries'] == 1
-    assert R['stats']['main']['baseline_tokens_median'] == 1010 and R['stats']['all']['prompt_total_max'] == 1105
-    assert not R['meta']['unpriced_model_calls']
-    assert R['cache_rewrites']['total']['calls'] == 0  # nothing above 100k prompt_total in the chains above
-
-    # cache rewrites: one call per cause, plus two near-misses (small cache write; prompt_total < 100k)
-    def rw(mid, minute, model, inp, cci, cr, h1=0):
-        u = {'input_tokens': inp, 'cache_creation_input_tokens': cci, 'cache_read_input_tokens': cr, 'output_tokens': 1,
-             'cache_creation': {'ephemeral_1h_input_tokens': h1}}
-        return asst(mid, '2026-03-01T%02d:%02d:00Z' % (10 + minute // 60, minute % 60), u, text, model)
-    S, O = 'claude-sonnet-5', 'claude-opus-5'
-    kept = {'type': 'attachment', 'attachment': {'type': 'async_hook_response', 'exitCode': 2, 'stdout': '', 'response': '{}', 'stderr': 'e' * 136}}
-    chain = [kept, noise[0],  # blocking async hook error is kept, hook_success is not
-             {'type': 'user', 'message': {'content': 'x'}},
-             rw('r1', 0, S, 1000, 150000, 0),                  # first call in chain: 150000 * 2.5
-             rw('r2', 90, S, 10, 120000, 50000, h1=120000),    # 90 min idle, 1h write: 120000 * 4
-             rw('r3', 100, S, 5, 90000, 50000),                # 10 min idle: 90000 * 2.5
-             rw('r4', 101, O, 5, 90000, 60000),                # model switch: 90000 * 6.25
-             rw('r5', 102, O, 5, 100000, 50000),               # nothing else explains it: 100000 * 6.25
-             {'type': 'system', 'subtype': 'compact_boundary'},
-             rw('r6', 103, O, 5, 100000, 30000),               # after compaction: 100000 * 6.25
-             rw('r7', 104, O, 5, 1000, 130000),                # not a rewrite: little cache written
-             rw('r8', 105, O, 5, 80000, 10000)]                # not a rewrite: prompt_total < 100k
-    with tempfile.TemporaryDirectory() as tmp:
-        os.makedirs(os.path.join(tmp, 'proj-b'))
-        with open(os.path.join(tmp, 'proj-b', 's2.jsonl'), 'w', encoding='utf-8') as f:
-            f.write('\n'.join(json.dumps(x) for x in chain) + '\n')
-        R2 = analyze(tmp)
-    # same order as REWRITE_CAUSES: first call, after compaction, model switch, idle >= 60, idle 5-60, prefix changed
-    W, want = R2['cache_rewrites'], [150000 * 2.5, 100000 * 6.25, 90000 * 6.25, 120000 * 4, 90000 * 2.5, 100000 * 6.25]
-    assert list(W['by_cause']) == REWRITE_CAUSES
-    for (cause, r), usd_ in zip(W['by_cause'].items(), want):
-        assert r['calls'] == 1 and close(r['cost_usd'], usd_ / 1e6) and r['main']['calls'] == 1 and r['subagent']['calls'] == 0, cause
-        assert close(r['share_of_all_cost'], r['cost_usd'] / R2['totals']['cost_usd'])
-    assert W['total']['calls'] == 6 and close(W['total']['cost_usd'], sum(want) / 1e6)
-    assert W['by_cause']['idle >= 60 min']['median_gap_min'] == 90 and W['by_cause']['idle 5-60 min']['median_gap_min'] == 10
-    assert R2['stats']['all']['compactions'] == 1
-    cats2 = {c['category'] for c in R2['categories']}
-    assert 'baseline:att:async_hook_response' in cats2 and 'baseline:att:hook_success' not in cats2
-    print('selftest OK', file=sys.stderr)

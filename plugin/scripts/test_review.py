@@ -62,6 +62,11 @@ class ReviewTest(unittest.TestCase):
         main = self.put('S.jsonl', [line(i, edit) for i in range(6)] + [line(7, use('Skill', {'skill': 'ponytail:ponytail-review'}))] + [line(8, use('Write')), line(9, use('NotebookEdit'))])
         self.assertEqual(review.edits([main]), 2)
 
+    def test_docs_and_memory_edits_do_not_count(self):
+        main = self.put('S.jsonl', [line(1, use('Write', {'file_path': 'C:/x/notes.md'})), line(2, use('Edit', {'file_path': 'C:/x/a.txt'})),
+                                    line(3, use('Edit', {'file_path': 'C:/x/app.py'})), line(4, use('NotebookEdit', {'notebook_path': 'C:/x/n.MARKDOWN'}))])
+        self.assertEqual(review.edits([main]), 1)
+
     def test_edits_in_an_agent_file_count_and_order_is_by_time(self):
         main = self.put('S.jsonl', [line(1, use('Edit')), line(5, use('Skill', {'skill': 'ponytail-review'})), line(6, use('Read'))])
         sub = self.put('S/subagents/agent-a1.jsonl', [line(2, use('Edit')), line(7, use('Edit')), line(8, use('Write'))])

@@ -16,5 +16,6 @@ export const withFile = (options: Record<string, unknown>, text: string) => {
   if (typeof file !== 'object' || file === null || Array.isArray(file)) throw new Error(T.settingsNotObject)
   const isField = ([k, v]: [string, unknown]) => k in options && typeof v === typeof options[k]
   const entries = Object.entries(file)
-  return { options: { ...options, ...Object.fromEntries(entries.filter(isField)) }, bad: entries.filter(e => !isField(e) && !SILENT.includes(e[0])).map(([k]) => k) }
+  const missing = Object.keys(options).filter(k => !(k in file)) // the file lacks them: the background job would run without
+  return { options: { ...options, ...Object.fromEntries(entries.filter(isField)) }, bad: entries.filter(e => !isField(e) && !SILENT.includes(e[0])).map(([k]) => k), missing }
 }

@@ -7,6 +7,7 @@ import re
 from transcripts import _blocks, _load, lp
 
 EDIT_TOOLS = ('Edit', 'Write', 'NotebookEdit')
+DOCS = ('.md', '.markdown', '.txt')
 REVIEW = 'ponytail-review'
 _COMMAND = re.compile(r'<command-name>/(?:[\w-]+:)?' + REVIEW + r'</command-name>')  # how a typed slash command is stored
 
@@ -47,7 +48,9 @@ def _events(path):
                     inp = b.get('input') if isinstance(b.get('input'), dict) else {}
                     if o.get('type') == 'assistant' and b.get('type') == 'tool_use':
                         if b.get('name') in EDIT_TOOLS:
-                            yield ts, 'edit'
+                            path = inp.get('file_path') or inp.get('notebook_path')
+                            if not (isinstance(path, str) and path.lower().endswith(DOCS)):  # memory and docs are no code; no path counts
+                                yield ts, 'edit'
                         elif (b.get('name') == 'Skill' and REVIEW in str(inp.get('skill'))) or (b.get('name') == 'Agent' and REVIEW in str(inp.get('prompt'))):
                             yield ts, 'review'
                     elif o.get('type') == 'user' and b.get('type') == 'text' and isinstance(b.get('text'), str):

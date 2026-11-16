@@ -1,7 +1,8 @@
 """Shared memory of the owner's computers through one folder (a network share), stage 2 design §5. Every computer writes only into its
 own subfolder, in batches that never change once they have their name; the others only read them. No database file is ever shared:
 SQLite locks do not hold on network file systems, and two writers would break the file. A computer that has to publish everything again
-(in another format) starts a new generation of its folder, gen-NNNN/; the others read it from its first batch."""
+(in another format, or without a text of it that was forgotten) starts a new generation of its folder, gen-NNNN/; the others read it from
+its first batch."""
 import base64
 import collections
 import contextlib
@@ -11,7 +12,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
+import stat
 import time
 import urllib.request
 
@@ -88,8 +91,8 @@ def generation(machine_dir):
 
 
 def old_generations(machine_dir):
-    """Paths of what in a computer's folder is not of its current generation, for a cleanup once the others have read the new one: the
-    batches and memory of generation 0 that lie in the folder itself, and the folders of the generations before the current one."""
+    """Paths of what in a computer's folder is not of its current generation, which nothing reads any more, for a cleanup once the new one
+    is all out: the batches and memory of generation 0 that lie in the folder itself, and the folders of the generations before the current one."""
     cur = generation(machine_dir).n
     if not cur:
         return []  # generation 0 is the current one: nothing is old
@@ -97,15 +100,28 @@ def old_generations(machine_dir):
             + [p for n, p in sorted(_gens(machine_dir).items()) if n < cur])
 
 
+def delete(path):
+    """A file, a folder or a link out of the share: a link goes by itself, never what it points to (the share is not to be trusted). A
+    junction is told by its reparse point bit (Windows only), a symlink by lstat: nothing here needs Python above 3.8."""
+    st = os.lstat(path)
+    if stat.S_ISDIR(st.st_mode) and not getattr(st, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        shutil.rmtree(path)
+    else:
+        os.remove(path)
+
+
 def _restart(conn, machine, n):
     """Inside the caller's transaction: we are at generation `n` of our folder from its first batch, and everything of ours goes out again
-    into it (records, vectors, and every forget, which the new readers never saw)."""
+    into it (records, vectors, and every forget, which the new readers never saw). A restart for a forgotten text of ours (meta.restart_share
+    '1') leaves 'old': `sync` deletes the older generations once this one is all out."""
     conn.execute("INSERT INTO peers(machine, gen) VALUES(?, ?) ON CONFLICT(machine) DO UPDATE SET gen = excluded.gen, last_batch = 0, "
                  "skipped = '[]', error = NULL", (machine, n))
     conn.execute('UPDATE keys SET origin = NULL, pushed = 0, vec_pushed = 0 WHERE origin IS NULL OR origin = ?', (machine,))
+    conn.execute('DELETE FROM outbox')  # every line in it is a forget, and each goes out once again below
     for k in conn.execute('SELECT conv, cls, hash, n FROM forgotten').fetchall():
         memdb.forget_key(conn, *k)
     conn.execute("DELETE FROM meta WHERE key = 'share_plain'")
+    conn.execute("UPDATE meta SET value = 'old' WHERE key = 'restart_share'")
 
 
 def start_generation(conn, machine_dir, machine, cipher, key):
@@ -123,7 +139,7 @@ def start_generation(conn, machine_dir, machine, cipher, key):
         gen = Gen(n, os.path.join(machine_dir, 'gen-%04d' % n), cipher, crypto.fingerprint(key) if key else None)
         os.makedirs(gen.path)
         path = os.path.join(gen.path, 'generation.json')
-        _put(path, _dumps({'format': FORMAT, 'gen': n, 'cipher': cipher, 'fingerprint': gen.fingerprint, 'created': _now()}).encode('utf-8'))
+        crypto.atomic_write(path, _dumps({'format': FORMAT, 'gen': n, 'cipher': cipher, 'fingerprint': gen.fingerprint, 'created': _now()}).encode('utf-8'))
         label = path
         _restart(conn, machine, n)
         conn.commit()
@@ -137,8 +153,9 @@ def start_generation(conn, machine_dir, machine, cipher, key):
 
 
 def _own_generation(conn, own, machine, cipher, key, pull):
-    """The generation of our folder we write into: the current one when it is of our (cipher, key), else a new one (`cipher` and `key` both
-    None for an open one). With no key we do not leave an encrypted share by ourselves: only `encrypt off` does, by meta.share_plain.
+    """The generation of our folder we write into: the current one when it is of our (cipher, key) and holds no forgotten text of ours
+    (meta.restart_share), else a new one (`cipher` and `key` both None for an open one). With no key we do not leave an encrypted share by
+    ourselves: only `encrypt off` does, by meta.share_plain.
     A generation we leave is first all in the index here (a fresh index holds of our records only what it has read back, and the new
     generation sends everything of ours again): one we can read is taken in with `pull(gen)`. None: that is not all read yet (a broken
     batch, the time cap); nothing starts. One we cannot read (no key, another key, no package) and have not all read is `own_share_unread`."""
@@ -149,7 +166,8 @@ def _own_generation(conn, own, machine, cipher, key, pull):
             conn.execute('BEGIN IMMEDIATE')
             with conn:
                 _restart(conn, machine, gen.n)
-        return gen
+        if memdb.meta(conn, 'restart_share') != '1':
+            return gen
     if not key and gen.cipher and memdb.meta(conn, 'share_plain') != '1':
         raise ValueError(t('share_needs_join', machine=machine))
     unreadable = _refusal(gen, key, machine, False)
@@ -329,7 +347,7 @@ def _import(conn, path, peer, gen, n, own, key, model, digest, report):
                     conv, cls, h, k = o['key']
                     if memdb.text_hash(o['text']) != h:
                         raise ValueError(t('bad_hash'))
-                    if conn.execute('SELECT 1 FROM forgotten WHERE conv = ? AND cls = ? AND hash = ? AND n = ?', (conv, cls, h, k)).fetchone():
+                    if conn.execute('SELECT 1 FROM forgotten WHERE cls = ? AND hash = ?', (cls, h)).fetchone():
                         continue
                     row = conn.execute('SELECT id FROM keys WHERE conv = ? AND cls = ? AND hash = ? AND n = ?', (conv, cls, h, k)).fetchone()
                     if row:
@@ -367,6 +385,7 @@ def _import(conn, path, peer, gen, n, own, key, model, digest, report):
                     conn.execute('INSERT OR REPLACE INTO vecs VALUES(?, ?, ?, ?)', (rid, o['part'], o['key'][0], vec))
                 elif kind == 'forget':
                     memdb.forget_key(conn, *o['key'], push=False)
+                    memdb.forget_text(conn, *o['key'][1:3], push=False)  # our copies under other convs too
                     counts['forgets'] += 1
                 # another type is of a later format: left for the version that knows it
             except (ValueError, KeyError, TypeError) as e:
@@ -427,6 +446,8 @@ def _pull(conn, machine_dir, peer, own, key, model, digest, deadline, now, repor
     try:
         gen = gen or generation(machine_dir)
     except OSError as e:  # a share that hiccups: nothing is reset, the next sync tries again
+        if not conn.execute('SELECT 1 FROM peers WHERE machine = ?', (peer,)).fetchone():
+            return  # a folder we cannot list and never took in is no computer to show
         return _refuse(conn, peer, t('generation_unreadable', machine=peer, e='%s: %s' % (type(e).__name__, e)), report)
     names = _batches(gen.path, crypto.EXT[gen.cipher])
     if not names and not conn.execute('SELECT 1 FROM peers WHERE machine = ?', (peer,)).fetchone():
@@ -487,13 +508,6 @@ def _read(path):
         return f.read()
 
 
-def _put(path, data):
-    tmp = path + '.cg-tmp'
-    with open(tmp, 'wb') as f:
-        f.write(data)
-    os.replace(tmp, path)
-
-
 def project_folder(key):
     """A folder name for a project key: readable, and unique by the hash at its end."""
     return (re.sub(r'[^0-9A-Za-z]+', '-', key).strip('-')[-60:] or 'home') + '-' + hashlib.sha1(key.encode('utf-8')).hexdigest()[:8]
@@ -546,7 +560,7 @@ def _write_facts(gen, machine, project, secret, facts):
         folder = os.path.join(gen.path, 'memory', project_folder(project))
         os.makedirs(folder, exist_ok=True)
         for name, data in facts.items():
-            _put(os.path.join(folder, name), data)
+            crypto.atomic_write(os.path.join(folder, name), data)
         return
     have = _read_facts(gen, machine, project, secret)
     merged = {**have, **facts}
@@ -555,7 +569,7 @@ def _write_facts(gen, machine, project, secret, facts):
     path, aad = _memory_file(gen, machine, project, secret)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     head = _dumps({'type': 'memory', 'machine': machine, 'gen': gen.n})
-    _put(path, crypto.seal([head] + [_dumps({'name': n, 'data': base64.b64encode(d).decode('ascii')}) for n, d in sorted(merged.items())],
+    crypto.atomic_write(path, crypto.seal([head] + [_dumps({'name': n, 'data': base64.b64encode(d).decode('ascii')}) for n, d in sorted(merged.items())],
                            gen.cipher, secret, aad))
 
 
@@ -617,7 +631,7 @@ def sync_memory(conn, sync_dir, machine, peers, memory_dir, key, gens, secret, e
                     if not os.path.exists(path):
                         if rec:
                             return 'deleted'  # the owner deleted it after it came: it stays deleted
-                        _put(path, data)
+                        crypto.atomic_write(path, data)
                         added.append((local, data))
                         got = 'written'
                     elif _hash(_read(path)) == h:
@@ -626,7 +640,7 @@ def sync_memory(conn, sync_dir, machine, peers, memory_dir, key, gens, secret, e
                             return 'same'
                         got = 'same'
                     elif rec and rec[:2] == (peer, name) and _hash(_read(path)) == rec[2]:
-                        _put(path, data)  # our copy is as it came, and its source has a newer version
+                        crypto.atomic_write(path, data)  # our copy is as it came, and its source has a newer version
                         got = 'written'
                     else:
                         return 'busy'  # the owner's own text, or a copy the owner changed
@@ -644,7 +658,7 @@ def sync_memory(conn, sync_dir, machine, peers, memory_dir, key, gens, secret, e
         old = _read(index).decode('utf-8') if os.path.isfile(index) else ''
         new = [_pointer(n, d) for n, d in added if '](%s)' % n not in old]
         if new:
-            _put(index, (old + ('\n' if old and not old.endswith('\n') else '') + '\n'.join(new) + '\n').encode('utf-8'))
+            crypto.atomic_write(index, (old + ('\n' if old and not old.endswith('\n') else '') + '\n'.join(new) + '\n').encode('utf-8'))
     return out
 
 
@@ -670,6 +684,9 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
     try:
         if _BAD_NAME.search(machine) or not machine:
             raise ValueError(t('sync_bad_machine', name=machine))
+        # for memdb.forget_key: a record read back from our own folder (origin our name) is in our batches as well
+        if memdb.meta(conn, 'machine') != machine:
+            conn.execute("INSERT OR REPLACE INTO meta VALUES('machine', ?)", (machine,))
         try:
             peers = sorted(d for d in os.listdir(sync_dir) if d != machine and os.path.isdir(os.path.join(sync_dir, d)))
         except OSError as e:
@@ -685,6 +702,17 @@ def sync(conn, sync_dir, machine=None, model=MODEL, max_seconds=60, memory_dir=N
             _push(conn, gen, machine, key, digest_once, deadline, now, report)
         for peer in peers:
             _pull(conn, os.path.join(sync_dir, peer), peer, False, key, model, digest_once, deadline, now, report)
+        if gen:  # after the pulls: a delete that fails (a file open on the other computer) must not stop them
+            try:
+                # a forget is an erase: once the new generation holds all of ours, the older ones (never read again) leave the share
+                if memdb.meta(conn, 'restart_share') == 'old' and not pending(conn) and generation(own).n == gen.n:
+                    for path in old_generations(own):
+                        delete(path)
+                    # only the value acted on: a forget during the deletes set '1', and its restart still has to come
+                    conn.execute("DELETE FROM meta WHERE key = 'restart_share' AND value = 'old'")
+                    conn.execute("DELETE FROM meta WHERE key = 'share_unfinished' AND value = 'old'")
+            except (OSError, ValueError) as e:
+                report['errors'].append({'where': 'cleanup', 'error': t('share_cleanup_failed', e='%s: %s' % (type(e).__name__, e))})
         if memory_dir and gen:  # none of it while our own new generation is blocked: where our facts would go is not decided yet
             gens = {machine: gen}
             for p in peers:

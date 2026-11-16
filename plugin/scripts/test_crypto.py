@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import pathlib
 import re
 import sqlite3
 import subprocess
@@ -168,6 +169,18 @@ class HomeTest(unittest.TestCase):
         for same in (self.old + 'x', join(self.old + 'x', 'a'), self.new, 'D:\\elsewhere', 'relative\\x'):  # a sibling that only begins alike is no inside
             self.assertEqual(crypto.moved(same), same)
 
+    def test_moved_without_is_relative_to(self):  # Python 3.8 has no Path.is_relative_to
+        join = os.path.join
+        with mock.patch.object(pathlib.Path, 'is_relative_to', side_effect=AssertionError('3.9 only'), create=True):
+            self.assertEqual(crypto.moved(join(self.old, 'far')), join(self.new, 'far'))
+            self.assertEqual(crypto.moved('D:\\elsewhere'), 'D:\\elsewhere')
+
+    def test_moved_cuts_by_the_path_not_by_its_lower_case(self):  # before 3.12 normcase is .lower(), and 'İ'.lower() is two characters
+        join, old = os.path.join, os.path.join(os.path.dirname(self.old), 'İLKİN', 'cacheguard')
+        with mock.patch.object(crypto, 'OLD_HOME_DIR', old), mock.patch.object(crypto, 'norm', lambda p: os.path.abspath(p).lower()):
+            self.assertEqual(crypto.moved(join(old, 'handoffs', 'x.md')), join(self.new, 'handoffs', 'x.md'))
+            self.assertEqual(crypto.moved(old), self.new)
+
     def test_moved_keeps_path_when_old_exists(self):
         os.makedirs(self.old)
         path = os.path.join(self.old, 'far')
@@ -211,6 +224,23 @@ class SettingsTest(unittest.TestCase):
             crypto.set_fields(self.path, {'indexDir': 'D:\\X'})
         self.assertEqual(self.raw(), b'[1]')
         self.assertFalse(os.path.exists(self.path + '.cg-tmp'))
+
+    def test_set_fields_locked(self):
+        self.write('{"a": 1}')
+        import memdb
+        held = memdb.lock(self.path, 'settings', 0)  # another writer is inside its read and write
+        with self.assertRaises(sqlite3.OperationalError):
+            crypto.set_fields(self.path, {'b': 2}, wait=0.1)
+        self.assertEqual(json.loads(self.raw()), {'a': 1})  # nothing written
+        held.close()
+        crypto.set_fields(self.path, {'b': 2})
+        self.assertEqual(json.loads(self.raw()), {'a': 1, 'b': 2})
+
+    def test_set_fields_fill_names_only_what_it_writes_and_keeps_its_lock_file(self):  # removing it opened a race on POSIX
+        self.write('{"a": 1}')
+        self.assertEqual(crypto.set_fields(self.path, {'a': 2, 'b': None, 'c': 3}, fill=True), ['c'])
+        self.assertEqual(json.loads(self.raw()), {'a': 1, 'c': 3})
+        self.assertTrue(os.path.exists(self.path + '.settings.lock'))
 
     def test_set_fields_puts_the_bytes_on_the_disk_before_the_replace(self):
         calls = []

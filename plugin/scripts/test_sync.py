@@ -22,7 +22,7 @@ from test_memdb import TS, claude_line, owner_line, search
 from test_vectors import fake
 from texts import t
 from transcripts import project_key
-from vectors import DOC_PREFIX, MODEL, embed_pending, hybrid_search, pack, search_vectors
+from vectors import DOC_PREFIX, MODEL, embed_pending, hybrid_search, pack, search_many
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
 HOMES = {'HOMEPC': 'C:\\Users\\Ann', 'NOTEBOOK': 'C:\\Users\\alice', 'THIRD': 'C:\\Users\\third'}
@@ -142,7 +142,7 @@ class SyncTest(unittest.TestCase):
         # the laptop's conversation is found on the i3 by its words and by its vectors
         self.assertEqual(search(self.a.conn, 'ноутбуке')[0]['conv'], 'SB')
         sb = self.a.q("SELECT rowid FROM chunks WHERE text = 'кэш протух на ноутбуке'")
-        self.assertEqual(search_vectors(self.a.conn, pack(fake(['протух ноутбуке'])[0]), None)[0][0], sb)
+        self.assertEqual(search_many(self.a.conn, [pack(fake(['протух ноутбуке'])[0])], None)[0][0][0], sb)
         hits, state = hybrid_search(self.a.conn, 'кэш протух', embed_fn=fake)
         self.assertEqual((state, hits[0]['conv']), ('ok', 'SB'))
         # neither computer embedded the other's records, now or later
@@ -404,6 +404,22 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(last['errors'], 1)
         self.assertFalse(os.path.exists(os.path.join(self.root, 'nas-off')))  # an absent share is not made on the local disk
 
+    def test_unlistable_folder_is_not_a_peer(self):  # a folder of something else that we may not list: no computer, no error
+        bad = os.path.join(self.share, 'private')
+        os.makedirs(bad)
+        self.ready(self.a)
+        real = os.listdir
+
+        def listdir(p='.'):
+            if os.path.normcase(os.fspath(p)) == os.path.normcase(bad):
+                raise PermissionError(13, 'Access is denied', bad)
+            return real(p)
+
+        with mock.patch.object(os, 'listdir', listdir):
+            r = self.a.sync()
+        self.assertEqual((r['errors'], r['peers']), ([], {}))
+        self.assertEqual(self.a.q("SELECT count(*) FROM peers WHERE machine = 'private'"), 0)
+
     def test_a_folder_without_batches_is_no_computer(self):
         os.makedirs(os.path.join(self.share, 'notes'))
         self.ready(self.a)
@@ -592,7 +608,7 @@ class SyncTest(unittest.TestCase):
         self.exchange()
         pos = self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'")
         self.assertEqual(memdb.forget(self.a.conn, 'SA', pos), 1)
-        self.assertEqual(self.a.sync()['pushed'], 0)
+        self.assertEqual(self.a.sync()['pushed'], 1)  # it was in our batches: a new generation, with the other record of ours again
         r = self.b.sync()
         self.assertEqual(r['forgotten'], 1)
         self.assertEqual(search(self.b.conn, 'тумане'), [])
@@ -621,7 +637,7 @@ class SyncTest(unittest.TestCase):
             self.assertEqual(self.a.index(rebuild=True)['rows'], 1)
         self.a.embed()
         r = self.a.sync()
-        self.assertEqual((r['pushed'], r['vectors']['pushed']), (1, 1))
+        self.assertEqual((r['pushed'], r['vectors']['pushed']), (2, 2))  # the old text was in our batches: a new generation, all of ours again
         r = self.b.sync()
         self.assertEqual((r['pulled'], r['forgotten'], r['vectors']['pulled']), (1, 1, 1))
         self.assertEqual(search(self.b.conn, 'zq'), [])
@@ -764,6 +780,184 @@ class SyncTest(unittest.TestCase):
         open(os.path.join(own, 'batch-00000002.jsonl.gz.tmp'), 'w').close()
         self.start(self.a)
         self.assertEqual(names(), ['batch-00000001.jsonl.gz', 'batch-00000002.jsonl.gz.tmp', 'gen-0001', 'memory'])
+
+    # a finished batch never changes: only a new generation of our folder takes a forgotten text of ours out of the share (audit B2)
+    def test_forget_of_pushed_record_starts_new_generation(self):
+        self.a.say('SS', 'пароль zq-0123456789 тут', 'ок')
+        self.exchange()
+        own = os.path.join(self.share, 'HOMEPC')
+        pos = self.a.q("SELECT pos FROM chunks WHERE text = 'пароль zq-0123456789 тут'")
+        self.assertEqual(memdb.forget(self.a.conn, 'SS', pos), 1)
+        self.assertEqual(memdb.meta(self.a.conn, 'restart_share'), '1')
+        r = self.a.sync()
+        self.assertEqual((r['errors'], r['pushed'], r['vectors']['pushed']), ([], 3, 3))  # the rest of ours goes out again
+        self.assertEqual(os.listdir(own), ['gen-0001'])  # all out: the batches of generation 0, the secret's among them, are gone
+        self.assertIsNone(memdb.meta(self.a.conn, 'restart_share'))
+        lines = self.gen_lines(self.a, 1)
+        self.assertNotIn('zq-0123456789', json.dumps(lines, ensure_ascii=False))
+        self.assertEqual([l['key'][0] for l in lines if l['type'] == 'forget'], ['SS'])  # once, not once more for the restart
+        r = self.b.sync()  # the laptop reads the new generation from its first batch
+        self.assertEqual((r['errors'], r['pulled'], r['forgotten']), ([], 0, 1))
+        self.assertEqual(search(self.b.conn, 'zq'), [])
+        self.assertEqual((self.a.sync()['pushed'], cgsync.generation(own).n), (0, 1))  # once only
+
+    def test_applied_forget_restarts_origin_share(self):
+        self.exchange()
+        pos = self.b.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'")
+        self.assertEqual(memdb.forget(self.b.conn, 'SA', pos), 1)
+        self.assertIsNone(memdb.meta(self.b.conn, 'restart_share'))  # the i3's record is in the i3's batches, not the laptop's
+        self.b.sync()
+        self.assertEqual(self.a.sync()['forgotten'], 1)
+        self.assertEqual(memdb.meta(self.a.conn, 'restart_share'), '1')  # taken in after the i3's push: its next sync starts the generation
+        r = self.a.sync()
+        self.assertEqual((r['errors'], r['pushed']), ([], 1))
+        self.assertEqual(os.listdir(os.path.join(self.share, 'HOMEPC')), ['gen-0001'])
+        self.assertNotIn('тумане', json.dumps(self.gen_lines(self.a, 1), ensure_ascii=False))
+        self.assertEqual(cgsync.generation(os.path.join(self.share, 'NOTEBOOK')).n, 0)
+
+    def test_old_generation_stays_until_the_new_one_is_all_out(self):
+        self.ready(self.a)
+        self.a.sync()
+        own = os.path.join(self.share, 'HOMEPC')
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        with mock.patch.object(cgsync, '_write', side_effect=OSError('the share went away')):  # a push that fails
+            self.assertTrue(self.a.sync()['errors'])
+        ticks = iter(range(100))
+        self.assertEqual(self.a.sync(max_seconds=1, now=lambda: next(ticks))['pushed'], 0)  # a push the time cap cuts short
+        self.assertEqual((sorted(os.listdir(own)), memdb.meta(self.a.conn, 'restart_share')), (['batch-00000001.jsonl.gz', 'gen-0001'], 'old'))
+        self.assertEqual(self.a.sync()['errors'], [])
+        self.assertEqual((os.listdir(own), memdb.meta(self.a.conn, 'restart_share')), (['gen-0001'], None))
+
+    SECRET = 'пароль zq-0123456789 тут'
+
+    def test_a_forgotten_text_stays_out_under_a_new_conv(self):  # a resumed session copies its history into a new transcript
+        self.a.say('SS', self.SECRET, 'ок')
+        self.exchange()
+        memdb.forget(self.a.conn, 'SS', self.a.q('SELECT pos FROM chunks WHERE text = ?', self.SECRET))
+        self.a.sync()
+        self.a.say('SS2', self.SECRET, 'ок')
+        self.a.index()
+        self.assertEqual(self.a.q('SELECT count(*) FROM chunks WHERE text = ?', self.SECRET), 0)
+        before = self.a.q('SELECT count(*) FROM outbox')
+        self.a.sync()
+        self.assertEqual(self.a.q('SELECT count(*) FROM outbox'), before)
+        self.assertNotIn('zq-0123456789', json.dumps(self.gen_lines(self.a, 1), ensure_ascii=False))
+
+    def test_a_peer_chunk_of_a_forgotten_text_under_another_conv_is_skipped(self):
+        self.b.say('SX', self.SECRET, 'ок')
+        self.ready(self.b)
+        self.b.sync()
+        self.a.say('SS', self.SECRET, 'ок')
+        self.ready(self.a)
+        memdb.forget(self.a.conn, 'SS', self.a.q('SELECT pos FROM chunks WHERE text = ?', self.SECRET))
+        self.assertEqual(self.a.sync()['errors'], [])
+        self.assertEqual(self.a.q('SELECT count(*) FROM chunks WHERE text = ?', self.SECRET), 0)
+
+    def test_an_applied_forget_removes_our_copies_under_other_convs(self):
+        self.a.say('SS', self.SECRET, 'ок')
+        self.exchange()
+        self.b.say('SX', self.SECRET, 'ок')  # a copy the i3 never saw: its forget line names SS only
+        self.b.index()
+        self.assertEqual(self.b.q('SELECT count(*) FROM chunks WHERE text = ?', self.SECRET), 2)
+        memdb.forget(self.a.conn, 'SS', self.a.q('SELECT pos FROM chunks WHERE text = ? AND conv = ?', self.SECRET, 'SS'))
+        self.a.sync()
+        self.assertEqual(self.b.sync()['errors'], [])
+        self.assertEqual(self.b.q('SELECT count(*) FROM chunks WHERE text = ?', self.SECRET), 0)
+        self.assertEqual(self.b.q('SELECT count(*) FROM outbox'), 0)  # applied, not sent on
+        self.assertEqual(memdb.meta(self.b.conn, 'restart_share'), '1')  # the laptop pushed SX before it pulled the forget
+
+    def test_a_failing_cleanup_does_not_stop_the_pull(self):
+        self.ready(self.a, self.b)
+        self.a.sync()
+        self.b.sync()
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        self.b.say('SB', 'кэш протух на ноутбуке', 'ответ про кэш', 'ещё одна строка')
+        self.b.index()
+        self.b.sync()
+        with mock.patch.object(cgsync, 'delete', side_effect=OSError('in use')):
+            r = self.a.sync()
+        self.assertEqual(([e['where'] for e in r['errors']], 'ещё одна строка' in self.a.texts()), (['cleanup'], True))
+        self.assertEqual(memdb.meta(self.a.conn, 'restart_share'), 'old')
+        self.assertEqual(self.a.sync()['errors'], [])
+        self.assertEqual(os.listdir(os.path.join(self.share, 'HOMEPC')), ['gen-0001'])
+
+    def test_cleanup_clears_share_unfinished_old(self):
+        self.ready(self.a)
+        self.a.sync()
+        self.a.conn.execute("INSERT INTO meta VALUES('share_unfinished', 'old')")
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        self.a.sync()
+        self.assertIsNone(memdb.meta(self.a.conn, 'share_unfinished'))
+
+    def test_a_forget_during_the_cleanup_keeps_its_restart(self):
+        self.ready(self.a)
+        self.a.sync()
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        other = connect(self.a.db, home=self.a.home)  # another chat's cg.py forget
+        self.addCleanup(other.close)
+        real, done = cgsync.delete, []
+
+        def delete(path):
+            real(path)
+            if not done:  # the old generation is half deleted when the owner forgets a record that is out in gen-0001
+                done.append(memdb.forget(other, 'SA', other.execute("SELECT pos FROM chunks WHERE text = 'ответ про ёжика'").fetchone()[0]))
+        with mock.patch.object(cgsync, 'delete', delete):
+            self.assertEqual(self.a.sync()['errors'], [])
+        self.assertEqual((done, memdb.meta(self.a.conn, 'restart_share')), ([1], '1'))
+        self.a.sync()  # gen-0002 starts, and gen-0001 goes once it is all out
+        self.assertNotIn('ответ про ёжика', json.dumps(self.gen_lines(self.a, 2), ensure_ascii=False))
+
+    def test_a_memory_step_that_fails_does_not_keep_the_old_generation(self):  # the cleanup comes before it
+        self.ready(self.a)
+        self.a.sync()
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        with mock.patch.object(cgsync, 'sync_memory', side_effect=OSError('the share hiccups')):
+            self.a.sync()
+        self.assertEqual((os.listdir(os.path.join(self.share, 'HOMEPC')), memdb.meta(self.a.conn, 'restart_share')), (['gen-0001'], None))
+
+    def test_a_failed_cleanup_is_told_in_the_owners_words(self):
+        self.ready(self.a)
+        self.a.sync()
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        with mock.patch.object(cgsync, 'delete', side_effect=OSError('in use')):
+            r = self.a.sync()
+        self.assertEqual(r['errors'], [{'where': 'cleanup', 'error': t('share_cleanup_failed', e='OSError: in use')}])
+
+    def test_a_killed_start_with_a_forgotten_text_is_repaired_without_a_new_label(self):
+        self.ready(self.a)
+        self.a.sync()
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        with mock.patch.object(cgsync, '_restart'):
+            self.start(self.a)  # the label is out, the reset is not
+        self.assertEqual(memdb.meta(self.a.conn, 'restart_share'), '1')
+        self.assertEqual(self.a.sync()['errors'], [])
+        own = os.path.join(self.share, 'HOMEPC')
+        self.assertEqual((os.listdir(own), memdb.meta(self.a.conn, 'restart_share')), (['gen-0001'], None))  # no gen-0002
+        self.assertNotIn('тумане', json.dumps(self.gen_lines(self.a, 1), ensure_ascii=False))
+
+    def test_forget_of_a_record_read_back_from_our_folder_restarts_the_share(self):
+        self.ready(self.a)
+        self.a.sync()
+        self.a.close()
+        os.remove(self.a.db)
+        self.a.open()
+        self.a.sync()  # a restored index: the records come back from our own folder with our name as origin
+        self.assertEqual(memdb.meta(self.a.conn, 'machine'), 'HOMEPC')
+        self.assertEqual(self.a.q("SELECT count(*) FROM keys WHERE origin = 'HOMEPC' AND pushed = 1"), 2)
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        self.assertEqual(memdb.meta(self.a.conn, 'restart_share'), '1')
+        self.assertEqual(self.a.sync()['errors'], [])
+        self.assertEqual(os.listdir(os.path.join(self.share, 'HOMEPC')), ['gen-0001'])
+        self.assertNotIn('тумане', json.dumps(self.gen_lines(self.a, 1), ensure_ascii=False))
+
+    def test_forget_of_unpushed_record_keeps_generation(self):
+        self.ready(self.a)
+        pos = self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'")
+        memdb.forget(self.a.conn, 'SA', pos)
+        self.assertIsNone(memdb.meta(self.a.conn, 'restart_share'))
+        r = self.a.sync()
+        self.assertEqual((r['errors'], r['pushed']), ([], 1))
+        self.assertEqual((cgsync.generation(os.path.join(self.share, 'HOMEPC')).n, self.a.batches()), (0, [1]))
 
     def test_a_start_that_fails_leaves_no_generation_and_changes_nothing(self):
         self.exchange()

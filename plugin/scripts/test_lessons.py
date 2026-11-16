@@ -13,6 +13,7 @@ from memdb import connect
 from test_memdb import search
 from test_texts import use_lang
 from test_vectors import fake, never
+from texts import t
 from transcripts import project_key
 from vectors import MODEL, embed_pending, hybrid_search
 
@@ -42,6 +43,15 @@ class LessonsTest(unittest.TestCase):
         self.assertEqual(self.conn.execute('SELECT cls, origin, pushed FROM keys WHERE id = ?', (out['id'],)).fetchone(), ('lesson', None, 0))
         self.assertEqual(lessons.save(self.conn, A, dict(RATE))['new'], False)  # the same lesson again changes nothing
         self.assertEqual(search(self.conn, '429', [A])[0]['kind'], 'lesson')  # recall finds it as any record
+
+    def test_a_lesson_forgotten_earlier_is_not_saved_again(self):  # every other computer would skip it
+        out = lessons.save(self.conn, A, RATE)
+        memdb.forget(self.conn, out['conv'], out['pos'])
+        for project in (A, B):  # in any project: a forgotten text is out under every conv
+            with self.assertRaises(ValueError) as e:
+                lessons.save(self.conn, project, RATE)
+            self.assertEqual(str(e.exception), t('lesson_forgotten'))
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM keys').fetchone(), (0,))
 
     def test_what_a_lesson_needs(self):
         with self.assertRaisesRegex(ValueError, 'cause'):

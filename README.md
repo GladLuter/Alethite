@@ -15,6 +15,8 @@ A free, MIT-licensed plugin for the Claude Code desktop app on Windows.
 
 **English** · [Русский](README.ru.md) · [Українська](README.uk.md)
 
+<img src="assets/alethite-demo.gif" alt="Alethite shows a row above the prompt with the chat size, the cache state and the price of the next send." width="900">
+
 </div>
 
 ---
@@ -30,6 +32,8 @@ The money goes on coming back to a big idle chat. Alethite shows you the price b
 
 After four weeks with Alethite (October 19 to November 15, same computer, API prices) each message I sent cost about half as much, subagents included. The first message after a long pause went from 32% of all spend to 3%. This is a before-and-after count on one person's work, not a controlled test.
 
+<picture><source media="(prefers-color-scheme: dark)" srcset="assets/before-after-dark.svg"><img src="assets/before-after-light.svg" alt="Before and after four weeks with Alethite: one message costs 54% less, the first message after a long pause falls from 32% to 3% of all spend, and cache rewrites from 41% to 4%." width="880"></picture>
+
 The same count showed where the money goes now. Subagents grew to 44% of all spend, and nearly half of their cost is the start every agent pays before it does any work. A general-purpose agent starts with about 64k tokens of tool descriptions, skill lists and instructions. Alethite now ships lean agent types that start with 5-16k.
 
 ---
@@ -39,7 +43,7 @@ The same count showed where the money goes now. Subagents grew to 44% of all spe
 | Feature | What it does | Command |
 |---|---|---|
 | 🛡️ **Cache guard** | The status line shows the context size and the minutes left in the cache. One row above the prompt is always there: chat size, cache, the price of a send here and how much the handoffs and the lean agents saved. The Details button opens it into columns. | `/al-band` |
-| 🆕 **New worker** | A button that starts a clean chat with a handoff of the old one (no model calls) and the message you already typed. The After reset button does the same once the limit resets, on the current model, opus or sonnet as you choose. It shows up after you press New worker, when a limit is 90% used or more. If the third-party plugin [ponytail](https://github.com/DietrichGebert/ponytail) is installed, the main chat is told once, when the chat has 5 unreviewed code edits, and asks you before the handoff whether to run `/ponytail-review`. The band shows nothing of it. | buttons in the band |
+| 🆕 **New worker** | A button that starts a clean chat with a handoff of the old one (no model calls) and the message you already typed. The After reset button does the same once a limit resets. It shows up after you press New worker, when a limit is 90% used or more. It asks for the time first (the 5-hour reset while the weekly limit is not used up, and the reset of each limit that is at 90%), then for the model: the current one, opus or sonnet. If the weekly limit is used up, there is one time, and the time question is skipped. If the third-party plugin [ponytail](https://github.com/DietrichGebert/ponytail) is installed, the main chat is told once, when the chat has 5 unreviewed code edits, and asks you before the handoff whether to run `/ponytail-review`. The band shows nothing of it. | buttons in the band |
 | 📝 **Short memory** | One short rule for Claude: write decisions down at once, save an understood error as a lesson, check memory before proposing. A toast shows each saved fact. | |
 | 🔎 **Long memory** | Every past conversation of every project, subagents included, in a local SQLite index with vectors from a local Ollama model. Claude searches it with `recall`, by words and by meaning. Secrets are hidden before indexing. Nothing that got into the index is ever lost, and tool errors are indexed too. | `/al-index` |
 | 🎓 **Lessons** | An understood error is saved as a lesson and comes back only where it fits. A command that holds a lesson's trigger is stopped once with it, and at most 2 lessons come per message. No fitting lesson, zero tokens. A lesson can also be for all projects (`scope: all`). That kind is the exception: it comes as a short reminder every ~20k tokens of chat and costs those tokens in every project. The reminder holds at most 1000 characters, newest first, and older rules that do not fit stay out of the reminder. They stay in `/al-lessons`, and their triggers still stop commands. | `/al-lessons` |
@@ -53,27 +57,17 @@ The same count showed where the money goes now. Subagents grew to 44% of all spe
 
 ## 🚀 Quick start
 
-You need the Claude Code desktop app (engine 2.1.295 or newer), Python 3.8+ with numpy, and git. Ollama is optional, but without it the search goes by words only. Run the commands in PowerShell.
+You need the Claude Code desktop app (engine 2.1.295 or newer) and Python 3.8+. Ollama is optional, but without it the search goes by words only. numpy is needed only for the vectors. Run the commands in PowerShell.
 
-```powershell
-git clone https://github.com/GladLuter/Alethite.git C:\_git\Alethite
-```
-
-Then register the plugin with the desktop app's own `claude.exe`. The first line finds it and must print a path ending in `claude.exe` (if it prints nothing, INSTALL.md has a wider search):
+The first line finds the desktop app's own `claude.exe` and must print a path ending in `claude.exe` (if it prints nothing, INSTALL.md has a wider search). The other two install the plugin from GitHub, no clone needed:
 
 ```powershell
 $CC = (Get-ChildItem "$env:LOCALAPPDATA\Claude-Data\claude_*\claude-code\*\*\claude.exe", "$env:APPDATA\Claude\claude-code\*\*\claude.exe", "$env:LOCALAPPDATA\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code\*\*\claude.exe" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1).FullName; $CC
-& $CC plugin marketplace add C:\_git\Alethite
+& $CC plugin marketplace add GladLuter/Alethite
 & $CC plugin install alethite@alethite
 ```
 
-Restart the app, then build the index:
-
-```powershell
-python C:\_git\Alethite\plugin\scripts\cg.py index
-```
-
-Type `/al-health` in a new chat to check it. Computing the vectors (it takes hours the first time) and the other steps are in **[INSTALL.md](INSTALL.md)**.
+Restart the app and type `/al-health` in a new chat to check it. The plugin builds the index by itself 3 seconds after a chat starts. Computing the vectors (it takes hours the first time), updating and working from a clone are in **[INSTALL.md](INSTALL.md)**.
 
 ---
 
@@ -99,7 +93,7 @@ Type `/al-health` in a new chat to check it. Computing the vectors (it takes hou
 
 <br>
 
-The file `%USERPROFILE%\.claude\alethite\settings.json` is one per computer. The plugin creates it at the first start with all the current values, so you only open it and edit. Its values win over `/config`. After an edit, type `/reload-plugins`. Backslashes in JSON are doubled.
+The file `%USERPROFILE%\.claude\alethite\settings.json` is one per computer. The plugin creates it at the first start with all the current values, so you only open it and edit. The plugin adds a missing key itself at the start of a chat, with the value from `/config`. The background job reads only the file. Its values win over `/config`. After an edit, type `/reload-plugins`. Backslashes in JSON are doubled.
 
 | Key | What it sets | Default |
 |---|---|---|
@@ -109,7 +103,7 @@ The file `%USERPROFILE%\.claude\alethite\settings.json` is one per computer. The
 | `bandMinTokens` | Row highlight: chat size, tokens | `100000` |
 | `bandIdleMinutes` | Row highlight: idle time, minutes | `55` |
 | `showLimits` | Limits column in Details | `true` |
-| `python` | Python command | `"python"` |
+| `python` | Python command, one executable with no arguments | `"python"` |
 | `embedModel` | Ollama embedding model | `"embeddinggemma"` |
 | `lessons` | Bring lessons back to messages and commands. Off also stops the reminder of rules for all projects (every ~20k tokens) | `true` |
 | `lessonsMinScore` | How close a message must be (0 to 1) | `0.45` |
@@ -160,15 +154,15 @@ Alethite ships five agent types (`scout`, `researcher`, `reviewer`, `coder`, `re
 ## 📋 Requirements
 
 - The Claude Code desktop app, engine 2.1.295 or newer
-- Python 3.8+ with numpy
-- git
+- Python 3.8+ (numpy only for the vectors)
+- git, only to work from a clone
 - Ollama, for the search by meaning (optional)
 - The `sqlcipher3` package for the SQLCipher ciphers (optional, Windows only)
 - Windows Pro and an NTFS drive for the EFS cipher (optional)
 
 ## 🔒 Privacy
 
-The index and the vectors hold your conversations. They stay on your computers and your network folder. They are never in this repository and never sent anywhere else. The only network calls go to your local Ollama and to your shared folder.
+The index and the vectors hold your conversations. They stay on your computers and your network folder. They are never in this repository and never sent anywhere else. The only network calls go to your local Ollama, to your shared folder and, for `/al-stats`, to your Obsidian MCP server.
 
 ## 📄 License
 

@@ -1,15 +1,17 @@
 import { expect, test } from 'claude-code/testing'
-import { healthLines, homeNotesOf, parseCg } from '../hooks/py'
+import { healthLines, homeNotesOf, parseCg, parseJson } from '../hooks/py'
 import { T } from '../hooks/text'
 
-test('parseCg: ok JSON', () => expect(parseCg({ exitCode: 0, stdout: '{"hits":[]}', stderr: '' })).toEqual({ hits: [] }))
-test('parseCg: error JSON', () => expect(() => parseCg({ exitCode: 1, stdout: '{"error":"OperationalError: x"}', stderr: '' })).toThrow('OperationalError: x'))
-test('parseCg: traceback without JSON', () => expect(() => parseCg({ exitCode: 1, stdout: '', stderr: 'Traceback…\nNameError: y' })).toThrow('NameError: y'))
-test('parseCg: silent failure', () => expect(() => parseCg({ exitCode: 3, stdout: '', stderr: '' })).toThrow('exit 3'))
+const parse = (r: { exitCode: number; stdout: string; stderr: string }) => parseCg(r, parseJson(r.stdout))
+
+test('parseCg: ok JSON', () => expect(parse({ exitCode: 0, stdout: '{"hits":[]}', stderr: '' })).toEqual({ hits: [] }))
+test('parseCg: error JSON', () => expect(() => parse({ exitCode: 1, stdout: '{"error":"OperationalError: x"}', stderr: '' })).toThrow('OperationalError: x'))
+test('parseCg: traceback without JSON', () => expect(() => parse({ exitCode: 1, stdout: '', stderr: 'Traceback…\nNameError: y' })).toThrow('NameError: y'))
+test('parseCg: silent failure', () => expect(() => parse({ exitCode: 3, stdout: '', stderr: '' })).toThrow('exit 3'))
 test('parseCg: only the last 300 characters of stderr', () => {
   let msg = ''
   try {
-    parseCg({ exitCode: 1, stdout: '', stderr: 'HEAD' + 'x'.repeat(300) })
+    parse({ exitCode: 1, stdout: '', stderr: 'HEAD' + 'x'.repeat(300) })
   } catch (err) {
     msg = (err as Error).message
   }
@@ -80,11 +82,11 @@ test('health: the notes of the mod folder move come after the notes of the index
   expect(healthLines({ version: '2.1.295', index, memory: null, root: 'C:/w', embedCmd: cmd, homeNotes: [] })).toEqual(healthLines({ version: '2.1.295', index, memory: null, root: 'C:/w', embedCmd: cmd }))
 })
 test('home notes of an answer: the strings of home_notes, nothing for another shape or no JSON', () => {
-  expect(homeNotesOf('{"home_notes":["a","b"],"error":"x"}')).toEqual(['a', 'b'])
-  expect(homeNotesOf('{"home_notes":["a",1,null,""]}')).toEqual(['a'])
-  expect(homeNotesOf('{"home_notes":"a"}')).toEqual([])
-  expect(homeNotesOf('{}')).toEqual([])
-  expect(homeNotesOf('Traceback…')).toEqual([])
+  expect(homeNotesOf(parseJson('{"home_notes":["a","b"],"error":"x"}'))).toEqual(['a', 'b'])
+  expect(homeNotesOf(parseJson('{"home_notes":["a",1,null,""]}'))).toEqual(['a'])
+  expect(homeNotesOf(parseJson('{"home_notes":"a"}'))).toEqual([])
+  expect(homeNotesOf(parseJson('{}'))).toEqual([])
+  expect(homeNotesOf(parseJson('Traceback…'))).toEqual([])
 })
 test('health: the rules line follows the lessons line, only when some lessons are global', () => {
   const lessons = { count: 2, shown: 0, chars: 0, stopped: 0, on: true }

@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS keys(id INTEGER PRIMARY KEY, conv TEXT NOT NULL, cls 
   origin TEXT, pushed INTEGER NOT NULL DEFAULT 0, vec_pushed INTEGER NOT NULL DEFAULT 0, UNIQUE(conv, cls, hash, n));
 -- keys deleted on purpose (cg.py forget, a text the secret filter now hides): never added again, here or from a batch
 CREATE TABLE IF NOT EXISTS forgotten(conv TEXT, cls TEXT, hash TEXT, n INTEGER, PRIMARY KEY(conv, cls, hash, n));
+-- a forgotten text is out in every conv: looked up by (cls, hash)
+CREATE INDEX IF NOT EXISTS forgotten_text ON forgotten(cls, hash);
+CREATE INDEX IF NOT EXISTS keys_text ON keys(cls, hash);
 -- forget lines for our next batch
 CREATE TABLE IF NOT EXISTS outbox(seq INTEGER PRIMARY KEY, line TEXT NOT NULL);
 -- every computer whose folder we read, ourselves included: the last batch taken in, the ones skipped by hand, what its batches said;
@@ -87,24 +90,15 @@ def _migrate(conn, home):
         conn.execute("INSERT OR REPLACE INTO meta VALUES('schema', '2')")
 
 
-def _gen_column(conn):
-    """Stage 5, once: peers.gen on an index made before it."""
+def _add_column(conn, table, column, decl):
+    """Once, on an index made before the column (peers.gen: stage 5, removed.agents: 0.8.0)."""
     def missing():
-        return 'gen' not in [r[1] for r in conn.execute('PRAGMA table_info(peers)')]
+        return column not in [r[1] for r in conn.execute('PRAGMA table_info(%s)' % table)]
     if missing():
         conn.execute('BEGIN IMMEDIATE')
         with conn:
             if missing():  # another process got here first
-                conn.execute('ALTER TABLE peers ADD COLUMN gen INTEGER NOT NULL DEFAULT 0')
-
-
-def _agents_column(conn):
-    """0.8.0, once: removed.agents on an index made before it."""
-    if 'agents' not in [r[1] for r in conn.execute('PRAGMA table_info(removed)')]:
-        conn.execute('BEGIN IMMEDIATE')
-        with conn:
-            if 'agents' not in [r[1] for r in conn.execute('PRAGMA table_info(removed)')]:  # another process got here first
-                conn.execute('ALTER TABLE removed ADD COLUMN agents TEXT')
+                conn.execute('ALTER TABLE %s ADD COLUMN %s %s' % (table, column, decl))
 
 
 def db_errors():
@@ -160,34 +154,61 @@ def connect(path=None, home=None):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     conn = _open(path)
     conn.executescript(_SCHEMA)
-    _gen_column(conn)
-    _agents_column(conn)
+    _add_column(conn, 'peers', 'gen', 'INTEGER NOT NULL DEFAULT 0')
+    _add_column(conn, 'removed', 'agents', 'TEXT')
     if meta(conn, 'schema') != '2':
         _migrate(conn, home)
+    if meta(conn, 'forget_sweep') != '1':
+        _sweep_forgets(conn)
     return conn
+
+
+def _sweep_forgets(conn):
+    """0.9.2, once: a forget of 0.9.1 or earlier took one conv only, so the copies of a forgotten text under other convs go now. Each computer
+    sweeps its own index from its own `forgotten`, so nothing goes to the outbox; a swept copy out in our batches restarts the share."""
+    conn.execute('BEGIN IMMEDIATE')
+    with conn:
+        if meta(conn, 'forget_sweep') == '1':  # another process got here first
+            return
+        for cls, h in conn.execute('SELECT DISTINCT f.cls, f.hash FROM forgotten f JOIN keys k ON k.cls = f.cls AND k.hash = f.hash').fetchall():
+            forget_text(conn, cls, h, push=False)
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('forget_sweep', '1')")
 
 
 def forget_key(conn, conv, cls, h, n, push=True):
     """Delete the record of this key with its vectors, if it is here, and keep the key from ever coming back. Inside the caller's transaction.
-    With `push` the forget goes into our next batch, for the other computers."""
-    for (rid,) in conn.execute('SELECT id FROM keys WHERE conv = ? AND cls = ? AND hash = ? AND n = ?', (conv, cls, h, n)).fetchall():
+    With `push` the forget goes into our next batch, for the other computers. A record in our batches already (ours, or read back from our
+    own folder: origin the name sync keeps in meta.machine) sets meta.restart_share: a finished batch never changes, so only a new
+    generation of our folder takes its text out of the share."""
+    for rid, out in conn.execute("SELECT id, pushed = 1 AND (origin IS NULL OR origin = (SELECT value FROM meta WHERE key = 'machine')) "
+                                 'FROM keys WHERE conv = ? AND cls = ? AND hash = ? AND n = ?', (conv, cls, h, n)).fetchall():
         conn.execute('DELETE FROM chunks WHERE rowid = ?', (rid,))
         conn.execute('DELETE FROM vecs WHERE chunk = ?', (rid,))
         conn.execute('DELETE FROM keys WHERE id = ?', (rid,))
+        if out:
+            conn.execute("INSERT OR REPLACE INTO meta VALUES('restart_share', '1')")
     conn.execute('INSERT OR IGNORE INTO forgotten VALUES(?, ?, ?, ?)', (conv, cls, h, n))
     if push:
         conn.execute('INSERT INTO outbox(line) VALUES(?)', (json.dumps({'type': 'forget', 'key': [conv, cls, h, n]}, ensure_ascii=False),))
 
 
+def forget_text(conn, cls, h, push=True):
+    """Forget every copy of a text (class, hash) in any conv and any occurrence. Inside the caller's transaction. The number of keys taken."""
+    keys = conn.execute('SELECT conv, n FROM keys WHERE cls = ? AND hash = ?', (cls, h)).fetchall()
+    for conv, n in keys:
+        forget_key(conn, conv, cls, h, n, push)
+    return len(keys)
+
+
 def forget(conn, conv, pos):
-    """The one way to delete from the index (a secret the filter missed): every record at `pos` of `conv`, here and, through our next
-    batch, on the other computers. The number of records forgotten."""
+    """The one way to delete from the index (a secret the filter missed): every record at `pos` of `conv` and every copy of its text in any
+    conv (a resumed session copies its history into a new transcript), here and, through our next batch, on the other computers. The
+    number of records forgotten."""
     conn.execute('BEGIN IMMEDIATE')
     with conn:
-        keys = conn.execute('SELECT k.cls, k.hash, k.n FROM keys k JOIN chunks c ON c.rowid = k.id WHERE k.conv = ? AND c.pos = ?', (conv, pos)).fetchall()
-        for k in keys:
-            forget_key(conn, conv, *k)
-    return len(keys)
+        texts = conn.execute('SELECT DISTINCT k.cls, k.hash FROM keys k JOIN chunks c ON c.rowid = k.id WHERE k.conv = ? AND c.pos = ?',
+                             (conv, pos)).fetchall()
+        return sum(forget_text(conn, *x) for x in texts)
 
 
 def _records(conn, conv, recs, whole, replace):
@@ -221,7 +242,8 @@ def _records(conn, conv, recs, whole, replace):
                 orphans.setdefault((pos, key[0]), []).append((rid, key))
     added, report = 0, None
     for i, (r, kind, text, key) in enumerate(plan):
-        if key in gone:
+        # a forgotten text stays out under any conv (a resumed session copies its history into a new transcript)
+        if key in gone or conn.execute('SELECT 1 FROM forgotten WHERE cls = ? AND hash = ?', key[:2]).fetchone():
             continue
         if key in have:
             rid = have[key][0]

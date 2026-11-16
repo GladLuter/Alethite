@@ -5,8 +5,6 @@ recovery code are in no result, exception or output; the code goes only to the w
 import contextlib
 import os
 import secrets
-import shutil
-import stat
 import time
 
 import crypto
@@ -267,16 +265,6 @@ def _to_efs(path, key):
 
 # ---- the sync folder
 
-def _delete(path):
-    """A file, a folder or a link out of the share: a link goes by itself, never what it points to (the share is not to be trusted). A
-    junction is told by its reparse point bit, a symlink by lstat: nothing here needs Python above 3.8 (Windows only, like the command)."""
-    st = os.lstat(path)
-    if stat.S_ISDIR(st.st_mode) and not st.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
-        shutil.rmtree(path)
-    else:
-        os.remove(path)
-
-
 def _flag(conn, value):
     """meta.share_unfinished for /al-health: 'pending' (the new generation is not all out), 'old' (the old data is still in the folder)."""
     if value:
@@ -312,7 +300,7 @@ def _share(conn, sync_dir, machine, key, cipher, ui, notes, **kw):
             notes.append(t('note_old_share_kept'))
             return
         for path in old:
-            _delete(path)
+            sync.delete(path)
     _flag(conn, None)
 
 
