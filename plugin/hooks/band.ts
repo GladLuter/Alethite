@@ -43,7 +43,7 @@ export const lineTokens = (s: Snap, info: Info | null, isStaleLit: boolean): Tok
   const state = cacheState(s.at, s.now)
   const warn = isStaleLit ? ('warning' as const) : undefined
   const worker = info?.savings?.worker
-  const saved = worker && worker.links > 0 ? money(worker.usd) : undefined
+  const saved = worker && (worker.links > 0 || worker.lean.agents > 0) ? money(worker.usd) : undefined
   return [
     { key: 'size', text: size(s.tokens), tone: warn },
     { key: 'cache', text: cacheText(s) },
@@ -84,10 +84,10 @@ export const columns = (s: Snap, info: Info | null, showLimits: boolean): Col[] 
   }
 
   const w = sv?.worker
-  const wm = w && w.links > 0 ? money(w.usd) : undefined
+  const wm = w && (w.links > 0 || w.lean.agents > 0) ? money(w.usd) : undefined
   const workerCol: Col = {
     key: 'worker', label: T.col.worker, value: sv ? (wm ? upTo(wm) : '—') : '?', tone: wm?.tone,
-    sub: sv ? [...(w && w.links > 0 ? [T.workerSub(w.links, w.calls)] : []), ...(sv.project ? [T.projectSub(upTo(money(sv.project.usd)), sv.project.links)] : [])] : [],
+    sub: sv ? [...(w && w.links > 0 ? [T.workerSub(w.links, w.calls)] : []), ...(w && w.lean.agents > 0 ? [T.leanSub(money(w.lean.usd).text, w.lean.agents)] : []), ...(sv.project ? [T.projectSub(upTo(money(sv.project.usd)), sv.project.links)] : [])] : [],
   }
   if (sv?.project && money(sv.project.usd).tone) workerCol.subTone = { [workerCol.sub.length - 1]: 'error' } // the project line is the last one
 

@@ -31,6 +31,7 @@ export const ru: Partial<Texts> = {
   spent: (usd: string) => `потрачено ${usd}`,
   coldPrice: (cost: string) => `холодно ${cost}`,
   workerSub: (links: number, calls: number) => `передач: ${links} · вызовов: ${calls}`,
+  leanSub: (usd: string, n: number) => `из них лёгкие агенты ${usd} (${n})`,
   projectSub: (usd: string, links: number) => `проект: ${usd} (${links})`,
   resets: (when: string) => `сброс ${when}`,
   baseConvs: (n: number) => `разговоров: ${n}`,
@@ -159,6 +160,10 @@ export const ru: Partial<Texts> = {
   summaryTitle: '# Сводка замеров',
   summaryHint: 'Собрана командой /al-stats из заметок по компьютерам; руками не править.',
   summaryColumns: ['дата', 'компьютер', '$ на сообщение владельца', 'перезаписи кэша', 'из них после паузы ≥ 60 мин', 'медианный контекст', 'сообщений владельца', 'результаты recall'],
+
+  // lean agents: the rule the model reads in every prompt, to pick the cheap subagent types
+  leanRule:
+    'Субагенты (Alethite). Субагенту, которому не нужны браузер, Obsidian, другие MCP-инструменты и навыки, давай лёгкий тип: alethite:coder, alethite:reviewer, alethite:scout или alethite:researcher. Они стартуют в 5–10 раз дешевле. general-purpose — только когда это нужно. В скриптах воркфлоу то же для agent(prompt, { agentType }). alethite:resident дорогой (часовой кэш, каждая запись в 1,6 раза дороже): только когда одна большая картина проекта нужна нескольким задачам с паузами дольше 5 минут, продолжай его через SendMessage. Другого готового агента продолжай через SendMessage, только если он закончил меньше 5 минут назад и следующей задаче нужно то, что он прочитал. Иначе запусти нового лёгкого агента: остывший агент переписывает весь свой контекст (медиана около 100 тыс. токенов).',
 
   // short memory: the rule the model reads in every prompt, and the owner's note that a fact was saved
   memoryRule:
