@@ -2299,3 +2299,33 @@ test('guard: a name given at the spawn is the agent id', async ($, on) => {
   expect(await send($, 'scout-1')).toEqual({ deny: coldText() })
   expect(flag(ofCg(m, 'agent-age')[0]!.argv, '--agent')).toBe(AG)
 })
+
+const hintRig = async ($: any, on: any, reply: string) => started($, on, a => (a[0] === 'review-hint' ? ran(reply) : noTurn()))
+
+test('review hint: asked when New worker becomes ready, drawn on the row, not asked again on a redraw', async ($, on) => {
+  const m = await hintRig($, on, '{"ponytail":true,"edits":6}')
+  await $.command.run({ command: 'al-band', args: '' })
+  const ui = await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props: { ...props, bodyColumns: 140 } } as never) // the hint goes before the cache and the size in a tight row
+  expect(ofCg(m, 'review-hint')).toHaveLength(1)
+  expect(flag(ofCg(m, 'review-hint')[0]!.argv, '--session')).toBe('id')
+  await ui.press({ key: 'details' })
+  await ui.press({ key: 'details' }) // two more draws, still ready
+  expect(ofCg(m, 'review-hint')).toHaveLength(1)
+  expect(await texts(ui)).toContain(`· ${T.reviewHint}`)
+})
+
+test('review hint: not asked while the model works', async ($, on) => {
+  const m = await hintRig($, on, '{"ponytail":true,"edits":6}')
+  await $.command.run({ command: 'al-band', args: '' })
+  const ui = await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props: { ...props, isWorking: true } } as never)
+  expect(ofCg(m, 'review-hint')).toHaveLength(0)
+  expect(await texts(ui)).not.toContain(`· ${T.reviewHint}`)
+})
+
+for (const reply of ['{"ponytail":true,"edits":4}', '{"ponytail":false,"edits":9}'])
+  test(`review hint: ${reply} draws nothing`, async ($, on) => {
+    const m = await hintRig($, on, reply)
+    const ui = await mountBand($)
+    expect(ofCg(m, 'review-hint')).toHaveLength(1)
+    expect(await texts(ui)).not.toContain(`· ${T.reviewHint}`)
+  })

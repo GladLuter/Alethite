@@ -25,6 +25,7 @@ export const en = {
   saved: (usd: string) => `saved ≤ ${usd}`,
   dearer: (usd: string) => `${usd} dearer`,
   upTo: (usd: string) => `up to ${usd}`,
+  reviewHint: 'before the handoff: /ponytail-review',
   baseTrouble: 'base !',
   col: { chat: 'This chat', last: 'Last handoff', worker: 'Whole worker', limits: 'Limits', base: 'Base' },
   spent: (usd: string) => `spent ${usd}`,

@@ -26,6 +26,7 @@ export const uk: Partial<Texts> = {
   saved: (usd: string) => `економія ≤ ${usd}`,
   dearer: (usd: string) => `дорожче на ${usd}`,
   upTo: (usd: string) => `до ${usd}`,
+  reviewHint: 'перед передачею: /ponytail-review',
   baseTrouble: 'база !',
   col: { chat: 'Цей чат', last: 'Остання передача', worker: 'Весь працівник', limits: 'Ліміти', base: 'База' },
   spent: (usd: string) => `витрачено ${usd}`,

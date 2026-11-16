@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { baseTrouble, columns, delayAt, fitTokens, lineTokens, money } from '../hooks/band'
+import { baseTrouble, columns, delayAt, fitTokens, lineTokens, money, tokensWidth } from '../hooks/band'
 import { setLanguage, T } from '../hooks/text'
 
 setLanguage('ru')
@@ -144,4 +144,21 @@ test('columns and line: a Savings value without `lean` (kept across /reload-plug
   const old = { last: null, worker: { usd: 1, links: 2, calls: 3 }, project: { usd: 2, links: 3 } } as any
   expect(() => columns(snap(), info({ savings: old }), true)).not.toThrow()
   expect(() => lineTokens(snap(), info({ savings: old }), false)).not.toThrow()
+})
+
+test('line: the review hint shows with a ready New worker and ponytail at 5 edits or more, nowhere else', () => {
+  const keys = (review: { ponytail: boolean; edits: number } | null, ready: boolean) => lineTokens(snap(), info(), false, review, ready).map(x => x.key)
+  expect(keys({ ponytail: true, edits: 5 }, true)).toContain('review')
+  expect(lineTokens(snap(), info(), false, { ponytail: true, edits: 9 }, true).find(x => x.key === 'review')?.text).toBe(T.reviewHint)
+  expect(keys({ ponytail: true, edits: 4 }, true)).not.toContain('review')
+  expect(keys({ ponytail: false, edits: 50 }, true)).not.toContain('review')
+  expect(keys({ ponytail: true, edits: 5 }, false)).not.toContain('review')
+  expect(keys(null, true)).not.toContain('review')
+})
+test('fitTokens: the review hint goes after the price and before the cache; the row stays one line', () => {
+  const t = lineTokens(snap(), info({ status: status({ index_problem: 'x' }) }), false, { ponytail: true, edits: 5 }, true)
+  expect(t.map(x => x.key)).toEqual(['size', 'cache', 'send', 'saved', 'review', 'base'])
+  const w = (keys: string[]) => tokensWidth(t.filter(x => keys.includes(x.key)))
+  expect(fitTokens(t, w(['size', 'cache', 'review', 'base'])).map(x => x.key)).toEqual(['size', 'cache', 'review', 'base'])
+  expect(fitTokens(t, w(['size', 'cache', 'base'])).map(x => x.key)).toEqual(['size', 'cache', 'base'])
 })

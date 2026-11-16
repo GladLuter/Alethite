@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Savings, Snap } from '../types'
+import type { Review, Savings, Snap } from '../types'
 import { columns, delayAt, money, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
 import { isStale, shouldStop, size, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
@@ -37,6 +37,7 @@ const info = atom({ plugin: 'alethite', key: 'info' } as const, null)
 const isDetails = atom({ plugin: 'alethite', key: 'isDetails' } as const, false)
 const calmId = atom({ plugin: 'alethite', key: 'calmId' } as const, '')
 const delayedAt = atom({ plugin: 'alethite', key: 'delayedAt' } as const, null)
+const review = atom({ plugin: 'alethite', key: 'review' } as const, null)
 
 // The helpers below take `$` and so stay in this file: the loader follows `$` only into functions declared here, never across an import.
 
@@ -468,6 +469,7 @@ export const register: Register = (on, options) => {
   const stoppedIn = new Map<string, Set<number>>()
   const rulesAt = new Map<string, number | null>() // the context size at the last reminder of the rules for all projects, by chat (null: it was unknown)
   const setOf = (m: Map<string, Set<number>>, id: string) => m.get(id) ?? m.set(id, new Set()).get(id)!
+  let wasReady = false // the New worker button was ready at the last draw of the band
   let isLessonsNoted = false // a lesson search that fails on every message is kept for /al-health once, not on each
 
   on('session.start', async ($, e, next) => {
@@ -970,6 +972,7 @@ export const register: Register = (on, options) => {
     const armed = await read($, isArmed)
     const busy = await read($, isBusy)
     const wait = await read($, delayedAt)
+    const hint = await read($, review)
     const data = await read($, info)
     const isOpen = await read($, isDetails)
 
@@ -1019,6 +1022,16 @@ export const register: Register = (on, options) => {
     }
 
     const launchLabel = busy ? T.busy : T.newWorker
+    // the hint is asked of cg.py when the New worker button becomes ready, not on every redraw; a draw while it stays ready asks nothing
+    const isReady = wait === null && !isWorking && !busy
+    if (isReady !== wasReady) {
+      wasReady = isReady
+      if (isReady)
+        void guarded($, 'review', async () => {
+          const r = (await runCg($, python, ['review-hint', '--session', await $.session.id(), '--cwd', await $.session.root()], 8_000)) as unknown as Review
+          await update($, review, () => r)
+        })
+    }
     const detailsLabel = isOpen ? T.compact : T.details
     const toggle = () => guarded($, 'band', async () => (await update($, isDetails, () => !isOpen), await $.store.set('details', !isOpen)))
     const waitText = wait === null ? '' : T.waitingAt(when(new Date(wait).toISOString(), s.now))
@@ -1039,7 +1052,7 @@ export const register: Register = (on, options) => {
       // the row is the title, the tokens ("· " + text), a spacer and the buttons, one gap between neighbours; a Button draws `[ label ]`, its label plus 4.
       // The tokens' ' · ' joins in tokensWidth are 3 cells short of what they take in the row, and the spacer's gap is one more.
       const room = (rowTitle: string) => (e.surface === 'terminal' ? e.props.bodyColumns - rowTitle.length - buttons.join('').length - 5 * buttons.length - 4 : Infinity)
-      const all = lineTokens(s, data, isLit)
+      const all = lineTokens(s, data, isLit, hint, isReady)
       let [rowTitle, left] = [T.bandTitle, room(T.bandTitle)]
       let tokens = fitTokens(all, left)
       if (tokensWidth(tokens) > left) [rowTitle, left, tokens] = [SHIELD, room(SHIELD), fitTokens(all, room(SHIELD))] // not even the base alarm fits beside the name: the shield alone

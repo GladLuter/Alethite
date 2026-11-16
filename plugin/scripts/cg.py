@@ -20,7 +20,7 @@ from compress import LEVELS, compress
 from transcripts import find_session, last_usage, project_key, project_keys
 
 
-INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings', 'agent-age')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
+INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings', 'agent-age', 'review-hint')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
 SHORT = (*INDEX_FREE, 'lessons-match')  # the runs that do not merge, nor open the index again to keep forgets (lessons-match reads it and writes no forget)
 
 
@@ -300,6 +300,12 @@ def _agent_age(a):
     return savings.agent_age(a.projects, _session(a.session), a.agent, a.ended, time.time())
 
 
+def _review_hint(a):
+    import review
+    main, subs = find_session(a.projects, _session(a.session))
+    return {'ponytail': review.ponytail(os.path.expanduser('~')), 'edits': review.edits([main, *subs] if main else subs)}
+
+
 def _cleanup_on(a):
     return _settings(crypto.settings_path(a.db))[0].get('deleteOldChats') is True
 
@@ -494,6 +500,9 @@ def _parser():
     s.add_argument('--session', required=True)
     s.add_argument('--agent', required=True)
     s.add_argument('--ended')  # the mod's own record of when the agent finished (ISO time); its last call without it
+    s.add_argument('--cwd')  # the mod passes it like for savings; the chat's folder is found by the session id
+    s = add('review-hint', _review_hint)
+    s.add_argument('--session', required=True)
     s.add_argument('--cwd')  # the mod passes it like for savings; the chat's folder is found by the session id
     s = add('sync', _sync)
     s.add_argument('--sync-dir', required=True)
