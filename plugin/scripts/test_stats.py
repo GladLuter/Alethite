@@ -12,6 +12,7 @@ import cg
 from memdb import connect
 from stats import metrics, note_markdown
 from test_texts import use_lang
+from texts import t
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
 IN_1M = {'input_tokens': 1_000_000, 'output_tokens': 0, 'cache_read_input_tokens': 0, 'cache_creation_input_tokens': 0}  # sonnet-5: $2.00
@@ -135,6 +136,34 @@ class StatsTest(unittest.TestCase):
         self.write('P/T.jsonl', [owner_line(old, '2026-10-06T10:00:00.000Z'), owner_line('  ' + new + '\n\nчерновик', '2026-10-06T10:00:01.000Z')])
         m = metrics(self.projects, self.conn, '2026-10-01')
         self.assertEqual((m['handoffs'], m['handoff_tokens']), (2, round((len(old) + len(new)) / 3.5)))
+
+    def agent(self, name, typ, objs):
+        self.write('P/S/subagents/%s.jsonl' % name, objs)
+        with open(os.path.join(self.projects, 'P', 'S', 'subagents', name + '.meta.json'), 'w') as f:
+            json.dump({'agentType': typ}, f)
+
+    def test_metrics_count_lean_agents(self):
+        def acall(mid, ts, **u):
+            usage = dict(IN_1M, input_tokens=0, cache_creation_input_tokens=u.get('c5', 0) + u.get('c1', 0), cache_read_input_tokens=u.get('cr', 0),
+                         cache_creation={'ephemeral_5m_input_tokens': u.get('c5', 0), 'ephemeral_1h_input_tokens': u.get('c1', 0)})
+            return call(mid, ts, usage)
+        T = '2026-10-05T10:00:02.000Z'
+        m = metrics(self.projects, self.conn, '2026-10-01')
+        self.assertEqual((m['subagents'], m['lean_agents'], m['lean_usd']), (0, 0, 0))
+        self.assertIn(t('stats_lean_none'), note_markdown(m, 'PC-1', '2026-11-13', [], 0))
+        self.agent('agent-g', 'general-purpose', [acall('g1', T, c5=50000, cr=10000)])
+        self.agent('agent-c', 'alethite:coder', [acall('c1', T, c1=8000, cr=2000), acall('c2', T, cr=3000)])
+        self.agent('agent-s', 'alethite:scout', [acall('s1', '2026-09-05T10:00:00.000Z', c1=8000, cr=2000)])  # before the period
+        m = metrics(self.projects, self.conn, '2026-10-01')
+        self.assertEqual((m['subagents'], m['lean_agents']), (2, 1))
+        self.assertGreater(m['lean_usd'], 0)
+        self.assertEqual((m['lean_ref_tokens'], m['lean_ref_since']), (60000, '2026-10-05'))
+        self.assertIn(t('stats_lean', total=2, lean=1, share='50%', usd='$%.2f' % m['lean_usd'], ref='60 000', since='2026-10-05'),
+                      note_markdown(m, 'PC-1', '2026-11-13', [], 0))
+        self.assertEqual(metrics(self.projects, self.conn, '2026-10-01', '2026-10-05')['subagents'], 0)  # until excludes the day
+        gone = {'X': {'agents': [{'type': 'alethite:coder', 'ts': T, 'model': 'claude-sonnet-5-5', 'usage': [0, 0, 8000, 2000], 'calls': 2, 'workflow': False,
+                                  'resumes': [], 'cw1h_total': 8000}]}}
+        self.assertEqual(metrics(self.projects, self.conn, '2026-10-01', gone=gone)['lean_agents'], 2)  # a removed chat still counts
 
     def test_metrics_reads_each_transcript_once(self):
         real_open, opened = open, []

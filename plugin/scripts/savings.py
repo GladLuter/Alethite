@@ -268,6 +268,27 @@ def _lean(projects, paths, cache, gone):
     return of, set(recs)
 
 
+def lean_stats(projects, since, until, gone, now):
+    """The subagents that started on [since, until) over all chats (disk while the chat is there, else `gone`): {agents, lean, usd, ref_tokens, ref_since}.
+    The reference is the 'agent' one of the disk records."""
+    paths = _paths(projects)
+    on_disk = _agents(projects, paths)
+    disk = {}
+    for p in {p for ps in on_disk.values() for p in ps}:
+        try:
+            disk[p] = agent_start(p)
+        except OSError:  # removed or locked meanwhile
+            pass
+    ref = reference([r for r in disk.values() if r], now)
+    recs = [(disk.get(p), s) for s, ps in on_disk.items() if s in paths for p in ps]
+    recs += [(r, s) for s, g in (gone or {}).items() if s not in paths for r in g.get('agents') or []]
+    mine = [r for r, _ in recs if r and isinstance(r['ts'], str) and r['ts'][:10] >= since and (until is None or r['ts'][:10] < until)]
+    lean = [r for r in mine if r['type'] in LEAN_TYPES]
+    a = ref['agent']
+    return {'agents': len(mine), 'lean': len(lean), 'usd': sum(lean_usd(r, ref['workflow' if r['workflow'] else 'agent']) for r in lean),
+            'ref_tokens': a and round(a['start']), 'ref_since': a and a['since'] and a['since'][:10]}
+
+
 def savings(projects, session, convs, cache_path, gone=None):
     """{last, worker, project}; `convs` are the project's conversations from the index, None if it could not be read."""
     try:

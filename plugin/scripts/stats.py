@@ -1,8 +1,10 @@
 """The success metrics of the design (§9): cost and cache figures from the token audit, owner messages from the index; and what the
 memory takes of the context (stage 3: measure before compressing more)."""
 import math
+import time
 import cc_token_audit
 import memdb
+import savings
 from texts import t
 from transcripts import HANDOFF_BLOCK, MOD_TOOL_PREFIXES
 
@@ -12,7 +14,7 @@ MOD_CATEGORIES = {cc_token_audit.tool_cat(n) for n in MOD_TOOLS}
 BASELINE = {'usd_per_owner_msg': 5.20, 'rewrite_share': 0.417, 'idle60_share': 0.319, 'median_main_context': 428000}  # weekly limit: t('stats_weekly_base')
 
 
-def metrics(projects, conn, since, until=None, errors=None, machine=None, saved=None):
+def metrics(projects, conn, since, until=None, errors=None, machine=None, saved=None, gone=None):
     """Figures for the API calls on/after `since` (and before `until`) in the transcripts under `projects`.
     What would make them wrong (unreadable transcripts, models without a price) is appended to the `errors` list, as the index reports its own."""
     errors = [] if errors is None else errors
@@ -33,7 +35,9 @@ def metrics(projects, conn, since, until=None, errors=None, machine=None, saved=
     rw = R['cache_rewrites']
     # what the audit charges to the results of recall and recall_more: their tokens in the context of every later request
     tools = [c for c in R['categories'] if c['category'] in MOD_CATEGORIES]
-    return {'since': since, 'until': until, 'cost_main': cost, 'owner_msgs': n, 'usd_per_owner_msg': cost / n if n else None,
+    lean = savings.lean_stats(projects, since, until, gone, time.time())
+    return {'since': since, 'until': until, 'subagents': lean['agents'], 'lean_agents': lean['lean'], 'lean_usd': lean['usd'],
+            'lean_ref_tokens': lean['ref_tokens'], 'lean_ref_since': lean['ref_since'], 'cost_main': cost, 'owner_msgs': n, 'usd_per_owner_msg': cost / n if n else None,
             'rewrite_share': rw['total']['share_of_all_cost'], 'idle60_share': rw['by_cause']['idle >= 60 min']['share_of_all_cost'],
             'median_main_context': main.get('prompt_total_median', 0), 'main_calls': main.get('calls', 0),
             'recall_calls': load['recall_calls'], 'recall_tokens': round(load['recall_chars'] / cc_token_audit.CHARS_PER_TOKEN),
@@ -116,5 +120,8 @@ def note_markdown(m, host, today, limits, rule_chars, memory_tokens=0, compressi
          t('stats_period', since=m['since'], until=m['until'] or today, owner=m['owner_msgs'], calls=m['main_calls'], cost=_usd(m['cost_main'])), '',
          t('stats_columns'), '|---|---|---|'] + ['| %s | %s | %s |' % r for r in rows] +
         ([''] + [t('stats_limits') + ', '.join('%s %s%%' % (l['kind'], l['percentUsed']) for l in limits)] if limits else []) +
-        ['', t('stats_rule', rule=rule, calls=m['main_calls'], total=_int(rule * m['main_calls']))] +
+        ['', t('stats_rule', rule=rule, calls=m['main_calls'], total=_int(rule * m['main_calls'])), '',
+         t('stats_lean', total=m['subagents'], lean=m['lean_agents'], share='%d%%' % round(100 * m['lean_agents'] / m['subagents']), usd=_usd(m['lean_usd']),
+           ref='—' if m['lean_ref_tokens'] is None else _int(m['lean_ref_tokens']), since=m['lean_ref_since'] or '—')
+         if m['subagents'] else t('stats_lean_none')] +
         _memory_rows(m, rule, memory_tokens, compression)) + '\n'
