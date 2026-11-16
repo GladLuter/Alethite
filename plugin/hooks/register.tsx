@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Review, Savings, Snap } from '../types'
-import { columns, delayAt, money, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
+import { columns, delayTimes, money, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
 import { isStale, shouldDenyBackground, shouldStop, size, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
@@ -32,6 +32,7 @@ import type { LaunchIO, Model } from './worker'
 const snap = atom({ plugin: 'alethite', key: 'snap' } as const, null)
 const hiddenId = atom({ plugin: 'alethite', key: 'hiddenId' } as const, '')
 const isArmed = atom({ plugin: 'alethite', key: 'isArmed' } as const, false)
+const afterLevel = atom({ plugin: 'alethite', key: 'afterLevel' } as const, null)
 const isBusy = atom({ plugin: 'alethite', key: 'isBusy' } as const, false)
 const info = atom({ plugin: 'alethite', key: 'info' } as const, null)
 const isDetails = atom({ plugin: 'alethite', key: 'isDetails' } as const, false)
@@ -1101,35 +1102,54 @@ export const register: Register = (on, options) => {
     const below = await next(e)
     const isLit = isStale(s, minTokens, idleMinutes) && s.id !== calm
     const title = <Text bold>{T.bandTitle}</Text>
-    const after = delayAt(s.limits, s.now)
+    const times = delayTimes(s.limits, s.now)
+    const level = await read($, afterLevel)
 
     if (armed && !isWorking) {
+      const endArm = () => Promise.all([update($, isArmed, () => false), update($, afterLevel, () => null)])
+      const whenOf = (t: number) => T.afterReset(when(new Date(t).toISOString(), s.now))
+      const setWait = (at: number, model?: string) =>
+        guarded($, 'band', async () => {
+          await endArm()
+          if (!(await $.prompt.read()).text.trim()) return toast($, T.draftEmpty)
+          await $.store.set(`delayed:${await $.session.id()}`, model ? { at, model } : { at }) // the time printed on the button; the chat that is open now (a /clear may have come)
+          await update($, delayedAt, () => at)
+        })
+      const cancel = <Button key="cancel" label={T.cancel} onPress={endArm} />
+      const menu =
+        typeof level === 'number' ? (
+          <>
+            <Text dimColor>{whenOf(level)}</Text>
+            <Box gap={1} flexWrap="wrap">
+              <Button key="model" label={T.currentModel} onPress={() => setWait(level)} />
+              {(['opus', 'sonnet'] as const).map(model => (
+                <Button key={`model-${model}`} label={model} onPress={() => setWait(level, model)} />
+              ))}
+              {cancel}
+            </Box>
+          </>
+        ) : level === 'time' ? (
+          <Box gap={1} flexWrap="wrap">
+            {times.map((t, i) => (
+              <Button key={`at-${i + 1}`} label={whenOf(t)} onPress={() => update($, afterLevel, () => t)} />
+            ))}
+            {cancel}
+          </Box>
+        ) : (
+          <Box gap={1} flexWrap="wrap">
+            <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send', compression)} />
+            <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill', compression)} />
+            {times.length > 0 && <Button key="after" label={T.afterResetMenu} onPress={() => update($, afterLevel, () => (times.length > 1 ? 'time' : times[0]))} />}
+            {cancel}
+          </Box>
+        )
       return (
         <Box flexDirection="column">
           {rule}
           <Box borderStyle="round" borderDimColor flexDirection="column" paddingX={1}>
             {title}
             <Text>{T.willClear}</Text>
-            <Box gap={1} flexWrap="wrap">
-              <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send', compression)} />
-              <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill', compression)} />
-              {after !== null &&
-                ([undefined, 'opus', 'sonnet'] as const).map(model => (
-                  <Button
-                    key={model ? `after-${model}` : 'after'}
-                    label={`${T.afterReset(when(new Date(after).toISOString(), s.now))}${model ? ` ${T.afterResetModel(model)}` : ''}`}
-                    onPress={() =>
-                      guarded($, 'band', async () => {
-                        await update($, isArmed, () => false)
-                        if (!(await $.prompt.read()).text.trim()) return toast($, T.draftEmpty)
-                        await $.store.set(`delayed:${await $.session.id()}`, model ? { at: after, model } : { at: after }) // the time printed on the button; the chat that is open now (a /clear may have come)
-                        await update($, delayedAt, () => after)
-                      })
-                    }
-                  />
-                ))}
-              <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
-            </Box>
+            {menu}
             <Text dimColor>{T.atFilesHint}</Text>
           </Box>
           {below}
@@ -1170,7 +1190,7 @@ export const register: Register = (on, options) => {
       <Box gap={1} flexWrap={wrap ? 'wrap' : undefined}>
         {wait !== null && <Text color="warning">{waitText}</Text>}
         {wait !== null && <Button key="cancel-delay" label={T.cancel} onPress={cancelWait} />}
-        {wait === null && !isWorking && <Button key="launch" label={launchLabel} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />}
+        {wait === null && !isWorking && <Button key="launch" label={launchLabel} onPress={() => (busy ? undefined : Promise.all([update($, afterLevel, () => null), update($, isArmed, () => true)]))} />}
         {wait === null && !isWorking && isLit && <Button key="stay" label={T.stayHere} onPress={() => update($, calmId, () => s.id)} />}
         {hasDetails && <Button key="details" label={detailsLabel} onPress={toggle} />}
       </Box>

@@ -1984,8 +1984,10 @@ test('after-reset is offered only near a limit', async ($, on) => {
   wire(on, [], nearLimit())
   const ui = await mountBand($)
   await ui.press({ key: 'launch' })
-  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'after-opus', 'after-sonnet', 'cancel'])
-  expect(await ui.findAll({ type: 'Button', text: T.afterReset(when(new Date(AT).toISOString(), NOW)) })).toHaveLength(3) // plain, opus, sonnet
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
+  await ui.press({ key: 'after' })
+  expect(await buttons(ui)).toEqual(['model', 'model-opus', 'model-sonnet', 'cancel']) // one time: straight to the model
+  expect(await texts(ui)).toContain(T.afterReset(when(new Date(AT).toISOString(), NOW)))
 })
 
 for (const [name, limit] of [
@@ -2003,12 +2005,14 @@ test('after-reset needs a draft and waits', async ($, on) => {
   const { m, state, ui } = await delayed($, on, '')
   await ui.press({ key: 'launch' })
   await ui.press({ key: 'after' })
+  await ui.press({ key: 'model' })
   expect(m.toasts).toEqual([T.toast(T.draftEmpty)])
   expect(m.store.has('delayed:id')).toBe(false)
 
   state.text = 'продолжаем'
   await ui.press({ key: 'launch' })
   await ui.press({ key: 'after' })
+  await ui.press({ key: 'model' })
   expect(m.store.get('delayed:id')).toEqual({ at: AT })
   expect(await texts(ui)).toContain(waitLabel)
   expect(await buttons(ui)).toEqual(['cancel-delay', 'details'])
@@ -2035,16 +2039,52 @@ const withModel = (model: string, store = new Map<string, unknown>([['delayed:id
 test('After reset with a model: the wait keeps it, the plain button keeps none', async ($, on) => {
   const { m, ui } = await delayed($, on)
   await ui.press({ key: 'launch' })
-  await ui.press({ key: 'after-sonnet' })
+  await ui.press({ key: 'after' })
+  await ui.press({ key: 'model-sonnet' })
   expect(m.store.get('delayed:id')).toEqual({ at: AT, model: 'sonnet' })
   await ui.press({ key: 'cancel-delay' })
   await ui.press({ key: 'launch' })
-  await ui.press({ key: 'after-opus' })
+  await ui.press({ key: 'after' })
+  await ui.press({ key: 'model-opus' })
   expect(m.store.get('delayed:id')).toEqual({ at: AT, model: 'opus' })
   await ui.press({ key: 'cancel-delay' })
   await ui.press({ key: 'launch' })
   await ui.press({ key: 'after' })
+  await ui.press({ key: 'model' })
   expect(m.store.get('delayed:id')).toEqual({ at: AT })
+})
+
+const two = (five: number, week: number) => () => ({ value: { ...usage, rateLimits: [{ kind: 'five_hour', percentUsed: five, resetsAt: new Date(NOW + 3_600_000).toISOString() }, { kind: 'seven_day', percentUsed: week, resetsAt: new Date(NOW + 3 * 86_400_000).toISOString() }] } })
+const MODELS = ['model', 'model-opus', 'model-sonnet', 'cancel']
+
+test('after-reset asks the time when the week has room', async ($, on) => {
+  const { m, ui } = await delayed($, on, 'продолжаем', new Map(), two(85, 91))
+  await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
+  await ui.press({ key: 'after' })
+  expect(await buttons(ui)).toEqual(['at-1', 'at-2', 'cancel'])
+  await ui.press({ key: 'at-2' })
+  expect(await buttons(ui)).toEqual(MODELS)
+  await ui.press({ key: 'model-sonnet' })
+  expect(m.store.get('delayed:id')).toEqual({ at: NOW + 3 * 86_400_000 + 300_000, model: 'sonnet' })
+})
+
+test('after-reset skips the time when the week is used up', async ($, on) => {
+  const { m, ui } = await delayed($, on, 'продолжаем', new Map(), two(100, 100))
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after' })
+  expect(await buttons(ui)).toEqual(MODELS)
+  await ui.press({ key: 'model' })
+  expect(m.store.get('delayed:id')).toEqual({ at: NOW + 3 * 86_400_000 + 300_000 })
+})
+
+test('cancel on the model level returns to a plain band', async ($, on) => {
+  const { ui } = await delayed($, on)
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after' })
+  await ui.press({ key: 'cancel' })
+  await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
 })
 
 test('a wait with a model: /model after the handoff, before /clear and the send, which then goes out', async ($, on) => {
@@ -2200,6 +2240,7 @@ test('After reset and its Cancel act on the chat that is open now, with the time
   await ui.press({ key: 'launch' })
   ids.now = 'other'
   await ui.press({ key: 'after' })
+  await ui.press({ key: 'model' })
   expect(m.store.get('delayed:other')).toEqual({ at: AT })
   expect(m.store.has('delayed:id')).toBe(false)
   await ui.press({ key: 'cancel-delay' })

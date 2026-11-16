@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { baseTrouble, columns, delayAt, fitTokens, lineTokens, money } from '../hooks/band'
+import { baseTrouble, columns, delayTimes, fitTokens, lineTokens, money } from '../hooks/band'
 import { setLanguage, T } from '../hooks/text'
 
 setLanguage('ru')
@@ -111,15 +111,24 @@ test('line: dearer worker is an error and has no "saved" prefix', () => {
   expect(saved.text).toContain('0.40')
   expect(saved.text).not.toContain('сэкономлено')
 })
-test('delayAt: the latest reset at 90% or more, plus 5 minutes', () => {
+test('delayTimes: reset times to offer, each plus 5 minutes', () => {
   const at = (ms: number) => new Date(ms).toISOString()
+  const h = 3_600_000
   const day = 86_400_000
-  expect(delayAt([{ kind: 'five_hour', percentUsed: 100, resetsAt: at(now + 3_600_000) }, { kind: 'seven_day', percentUsed: 95, resetsAt: at(now + 3 * day) }], now)).toBe(now + 3 * day + 300_000)
-  expect(delayAt([{ kind: 'five_hour', percentUsed: 89, resetsAt: at(now + 3_600_000) }], now)).toBeNull()
-  expect(delayAt([{ kind: 'five_hour', percentUsed: 100 }], now)).toBeNull()
-  expect(delayAt([{ kind: 'five_hour', percentUsed: 100, resetsAt: 'soon' }], now)).toBeNull()
-  expect(delayAt([{ kind: 'five_hour', percentUsed: 100, resetsAt: at(now - 3_600_000) }], now)).toBeNull()
-  expect(delayAt([], now)).toBeNull()
+  const w = (kind: string, percentUsed: number, off: number) => ({ kind, percentUsed, resetsAt: at(now + off) })
+  const f = 300_000
+  expect(delayTimes([w('five_hour', 85, 3 * h), w('seven_day', 91, 5 * day)], now)).toEqual([now + 3 * h + f, now + 5 * day + f])
+  expect(delayTimes([w('five_hour', 100, h), w('seven_day', 95, 3 * day)], now)).toEqual([now + h + f, now + 3 * day + f])
+  expect(delayTimes([w('five_hour', 100, h), w('seven_day', 100, 3 * day)], now)).toEqual([now + 3 * day + f])
+  expect(delayTimes([w('five_hour', 50, h), w('seven_day', 100, 3 * day)], now)).toEqual([now + 3 * day + f])
+  expect(delayTimes([w('five_hour', 92, h), w('seven_day', 40, 3 * day)], now)).toEqual([now + h + f])
+  expect(delayTimes([w('spend_limit', 120, 2 * day), w('five_hour', 50, h)], now)).toEqual([now + 2 * day + f])
+  expect(delayTimes([w('five_hour', 95, h), w('seven_day', 95, h)], now)).toEqual([now + h + f])
+  expect(delayTimes([w('five_hour', 89, h)], now)).toEqual([])
+  expect(delayTimes([{ kind: 'five_hour', percentUsed: 100 }], now)).toEqual([])
+  expect(delayTimes([{ kind: 'five_hour', percentUsed: 100, resetsAt: 'soon' }], now)).toEqual([])
+  expect(delayTimes([w('five_hour', 100, -h)], now)).toEqual([])
+  expect(delayTimes([], now)).toEqual([])
 })
 
 test('line: lean agents alone show the saving; none, none', () => {

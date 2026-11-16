@@ -50,7 +50,8 @@ export const uk: Partial<Texts> = {
   atFilesHint: '@файли та зображення з чернетки не передаються',
   busy: 'Запускаю…',
   afterReset: (time: string) => `Після скидання (${time})`,
-  afterResetModel: (model: string) => `на ${model}`,
+  afterResetMenu: 'Після скидання…',
+  currentModel: 'Поточна модель',
   waitingAt: (time: string) => `⏰ працівник: ${time}`,
 
   // new worker launch: every failure says what was kept and where

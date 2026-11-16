@@ -50,7 +50,8 @@ export const ru: Partial<Texts> = {
   atFilesHint: '@файлы и картинки из черновика не передаются',
   busy: 'Запускаю…',
   afterReset: (time: string) => `После сброса (${time})`,
-  afterResetModel: (model: string) => `на ${model}`,
+  afterResetMenu: 'После сброса…',
+  currentModel: 'Текущая модель',
   waitingAt: (time: string) => `⏰ работник в ${time}`,
 
   // new worker launch: every failure says what was kept and where

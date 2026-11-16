@@ -124,12 +124,14 @@ export const columns = (s: Snap, info: Info | null, showLimits: boolean): Col[] 
   return [chat, lastCol, workerCol, ...limitsCol, baseCol]
 }
 
-// The latest reset among the limits at 90% or more, plus 5 minutes (so the worker does not hit the next limit); null when there is none or it has passed.
-export const delayAt = (limits: Snap['limits'], now: number) => {
-  const resets = limits.flatMap(l => (l.percentUsed >= 90 && l.resetsAt ? [Date.parse(l.resetsAt)] : [])).filter(Number.isFinite)
-  if (!resets.length) return null
-  const at = Math.max(...resets) + 300_000
-  return at > now ? at : null
+// Start times to offer: an exhausted window cannot be launched into before its reset, so the floor is the latest exhausted reset; then the 90%+ resets from the floor, plus the earliest reset (the 5-hour one while the week has room). Each + 5 minutes so the worker does not hit the next limit.
+export const delayTimes = (limits: Snap['limits'], now: number) => {
+  const live = limits.flatMap(l => (l.resetsAt && Date.parse(l.resetsAt) > now ? [{ at: Date.parse(l.resetsAt), p: l.percentUsed }] : []))
+  if (!live.some(l => l.p >= 90)) return []
+  const floor = Math.max(now, ...live.filter(l => l.p >= 100).map(l => l.at))
+  const ok = live.filter(l => l.at >= floor)
+  const times = [...ok.filter(l => l.p >= 90).map(l => l.at), Math.min(...ok.map(l => l.at))]
+  return [...new Set(times)].sort((a, b) => a - b).map(t => t + 300_000)
 }
 
 // A thin line the desktop draws above our band so it does not merge with the band drawn above it. It cannot read the app's theme, so it follows the system's.

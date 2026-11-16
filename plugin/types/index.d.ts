@@ -30,6 +30,8 @@ declare module 'claude-code' {
       hiddenId: string
       // the band is showing the model picker instead of its row
       isArmed: boolean
+      // After reset menu level: null = first menu, 'time' = pick the time, a number = pick the model for that time
+      afterLevel: null | 'time' | number
       // a new-worker launch is running: the band shows T.busy and ignores presses
       isBusy: boolean
       info: Info | null

@@ -49,7 +49,8 @@ export const en = {
   atFilesHint: '@files and images in the draft are not passed on',
   busy: 'Starting…',
   afterReset: (time: string) => `After reset (${time})`,
-  afterResetModel: (model: string) => `on ${model}`,
+  afterResetMenu: 'After reset…',
+  currentModel: 'Current model',
   waitingAt: (time: string) => `⏰ worker at ${time}`,
 
   // new worker launch: every failure says what was kept and where
