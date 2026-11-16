@@ -596,6 +596,8 @@ def main(argv):
     try:
         a = _parser().parse_args(argv)
         texts.lang = a.lang
+        if a.db is not None:
+            a.db = os.path.abspath(a.db)  # a bare name has no folder: the settings and locks lie beside the index
         if a.db is None:
             # job is imported (it costs time) only when the old folder or --follow-job asks for it; the flag finds an old task that outlived the move
             minutes = (os.path.isdir(crypto.OLD_HOME_DIR) or a.follow_job) and _job_step(home_notes, 'home_old_task_failed', _old_task_off)

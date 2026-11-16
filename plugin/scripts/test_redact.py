@@ -6,6 +6,14 @@ from redact import redact
 H = '[скрыто]'
 
 class RedactTest(unittest.TestCase):
+    def test_curl_and_docker_linear(self):
+        for raw in ('curl x ' * 6000, 'docker login x ' * 3000):
+            t0 = time.time()
+            redact(raw)
+            self.assertLess(time.time() - t0, 1, raw[:12])
+        self.assertEqual(redact('curl -u user:secret https://x'), 'curl -u user:' + H + ' https://x')
+        self.assertNotIn('secret', redact('docker login -p secret'))
+
     def test_hidden(self):
         for raw in ['sk-ant-api03-' + 'a' * 40, 'sk-or-v1-' + 'b' * 40, 'ghp_' + 'C' * 36,
                     'github_pat_' + 'd' * 40, 'AKIA' + 'E' * 16, 'xoxb-1234567890-abcdefghij',

@@ -195,6 +195,28 @@ class TaskTest(unittest.TestCase):
         self.assertIn('<Interval>PT45M</Interval>', s.tasks['Alethite'])  # the interval it had
         self.assertIn('"%s" maintain' % escape(job.CG), s.tasks['Alethite'])
 
+    def test_schtasks_oem_decode(self):  # schtasks prints the OEM code page: a non-ASCII path must read right, or follow makes the task again at every call
+        for name in ('Дмитрий', 'Müller'):
+            try:
+                name.encode('oem')
+                break
+            except (UnicodeEncodeError, LookupError):
+                name = None
+        if not name:
+            self.skipTest('no OEM code page here')
+        script = 'C:\\Users\\%s\\plugin\\scripts\\cg.py' % name
+        xml = Scheduler.xml(30, script)
+        calls = []
+
+        def run(args, **kw):
+            calls.append(args[2])
+            return SimpleNamespace(returncode=0, stdout=xml.encode('oem'), stderr=b'')
+
+        with mock.patch.object(job, 'CG', script):
+            self.assertEqual(job.target(run, lambda: True), script)
+            self.assertEqual(job.follow(self.dir, python='C:\\Py\\python.exe', run=run, supported=lambda: True), [])
+        self.assertNotIn('/Create', calls)
+
     def test_follow_leaves_task_with_same_target(self):
         for script in (job.CG, job.CG.upper()):  # Windows paths differ in case only
             s = Scheduler({'Alethite': (45, script)})

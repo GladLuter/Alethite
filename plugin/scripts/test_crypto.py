@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import pathlib
 import re
 import sqlite3
 import subprocess
@@ -167,6 +168,12 @@ class HomeTest(unittest.TestCase):
         self.assertEqual(crypto.moved(self.old.upper()), self.new)  # Windows paths do not care for case
         for same in (self.old + 'x', join(self.old + 'x', 'a'), self.new, 'D:\\elsewhere', 'relative\\x'):  # a sibling that only begins alike is no inside
             self.assertEqual(crypto.moved(same), same)
+
+    def test_moved_without_is_relative_to(self):  # Python 3.8 has no Path.is_relative_to
+        join = os.path.join
+        with mock.patch.object(pathlib.Path, 'is_relative_to', side_effect=AssertionError('3.9 only'), create=True):
+            self.assertEqual(crypto.moved(join(self.old, 'far')), join(self.new, 'far'))
+            self.assertEqual(crypto.moved('D:\\elsewhere'), 'D:\\elsewhere')
 
     def test_moved_keeps_path_when_old_exists(self):
         os.makedirs(self.old)

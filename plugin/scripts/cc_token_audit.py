@@ -356,7 +356,7 @@ def analyze(projects, since=None, until=None, visit=None, saved=None):
     t0 = time.time()
     root = lp(projects)
     if not os.path.isdir(root):
-        raise SystemExit('projects dir not found: ' + str(projects))
+        raise FileNotFoundError('projects dir not found: ' + str(projects))
     kept = {_rel_path(root, s): s for s in saved or ()}
     files = sorted([os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs if f.endswith('.jsonl')] + list(kept))
     A = {'calls': 0, 'cost': 0.0, 'dup_cost': 0.0, 'first': '', 'last': '', 'rows': [], 'cat': defaultdict(lambda: [0.0, 0.0]),

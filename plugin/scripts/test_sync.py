@@ -404,6 +404,22 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(last['errors'], 1)
         self.assertFalse(os.path.exists(os.path.join(self.root, 'nas-off')))  # an absent share is not made on the local disk
 
+    def test_unlistable_folder_is_not_a_peer(self):  # a folder of something else that we may not list: no computer, no error
+        bad = os.path.join(self.share, 'private')
+        os.makedirs(bad)
+        self.ready(self.a)
+        real = os.listdir
+
+        def listdir(p='.'):
+            if os.path.normcase(os.fspath(p)) == os.path.normcase(bad):
+                raise PermissionError(13, 'Access is denied', bad)
+            return real(p)
+
+        with mock.patch.object(os, 'listdir', listdir):
+            r = self.a.sync()
+        self.assertEqual((r['errors'], r['peers']), ([], {}))
+        self.assertEqual(self.a.q("SELECT count(*) FROM peers WHERE machine = 'private'"), 0)
+
     def test_a_folder_without_batches_is_no_computer(self):
         os.makedirs(os.path.join(self.share, 'notes'))
         self.ready(self.a)

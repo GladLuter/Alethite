@@ -43,8 +43,8 @@ _RULES = [(re.compile(p), r) for p, r in [
     # thousands of mysql stays linear.
     (r'((?<![^\W_])(?i:mysql)(?:(?!(?<![^\W_])(?i:mysql))[^\n|;&])*?[ \t]-p(?=\S)["\']?)' + _ANY, r'\1' + H),
     # other commands that take a password as an argument
-    (r'(?i)(\bcurl\b[^\n|;&]*?\s(?:-u|--user)[ =]+[^\s:]+:)\S+', r'\1' + H),
-    (r'(?i)(\b(?:sshpass|docker\s+login)\b[^\n|;&]*?\s-p\s*)\S+', r'\1' + H),
+    (r'(?i)(\bcurl\b[^\n|;&]{0,1000}?\s(?:-u|--user)[ =]+[^\s:]+:)\S+', r'\1' + H),
+    (r'(?i)(\b(?:sshpass|docker\s+login)\b[^\n|;&]{0,1000}?\s-p\s*)\S+', r'\1' + H),
     (r'(?i)(\bnet\s+use\s+(?:\S+\s+)?\\\\\S+\s+)(?!/)\S+', r'\1' + H),
 ]]
 

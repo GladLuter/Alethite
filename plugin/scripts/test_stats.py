@@ -181,6 +181,12 @@ class StatsTest(unittest.TestCase):
         self.assertIn(t('stats_lean_dearer', total=2, lean=1, share='50%', usd='$0.30', ref='60 000', since='2026-10-05'), out)
         self.assertNotIn('$-', out)
 
+    def test_analyze_missing_folder_is_json_error(self):
+        self.projects = os.path.join(self.projects, 'nope')
+        code, out = self.run_cg('--since', '2026-10-01', '--host', 'h', '--today', '2026-10-13', '--limits', '[]', '--rule-chars', '0')
+        self.assertEqual((code, list(out)), (1, ['error']))
+        self.assertIn('FileNotFoundError', out['error'])
+
     def test_lean_stats_reads_agent_files_through_the_cache(self):
         self.agent('agent-g', 'general-purpose', [acall('g1', '2026-10-05T10:00:02.000Z', c5=50000, cr=10000)])
         self.agent('agent-c', 'alethite:coder', [acall('c1', '2026-10-05T10:00:02.000Z', c1=8000, cr=2000)])

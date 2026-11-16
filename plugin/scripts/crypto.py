@@ -69,10 +69,10 @@ def move_home(old=None, new=None, wait=True):
 
 def moved(path):
     """A path stored under the old name that lies in the old mod folder: with that folder gone, the same place in the new one."""
-    p = pathlib.Path(path)
-    if os.path.exists(OLD_HOME_DIR) or not p.is_relative_to(OLD_HOME_DIR):
+    p, old = os.path.abspath(path), norm(OLD_HOME_DIR)
+    if os.path.exists(OLD_HOME_DIR) or not (norm(p) == old or norm(p).startswith(old + os.sep)):
         return path
-    return str(pathlib.Path(HOME_DIR, p.relative_to(OLD_HOME_DIR)))
+    return str(pathlib.Path(HOME_DIR, p[len(old):].lstrip(os.sep)))
 
 
 def settings_path(db):

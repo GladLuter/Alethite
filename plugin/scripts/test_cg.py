@@ -79,6 +79,15 @@ class CgTest(unittest.TestCase):
         p = subprocess.run([sys.executable, CG, '--db', db or self.db, '--projects', self.projects, *args], capture_output=True, env=env)
         return p.returncode, json.loads(p.stdout.decode('utf-8'))
 
+    def test_relative_db(self):  # --db index.db: the index and its settings file both sit in the current folder
+        cwd = os.getcwd()
+        self.addCleanup(os.chdir, cwd)
+        os.chdir(self.tmp)
+        env = {k: v for k, v in os.environ.items() if k not in ('PYTHONIOENCODING', 'PYTHONUTF8')}
+        p = subprocess.run([sys.executable, CG, '--db', 'index.db', '--projects', self.projects, 'status'], capture_output=True, env=env)
+        out = json.loads(p.stdout.decode('utf-8'))
+        self.assertEqual((p.returncode, 'error' in out), (0, False))
+
     def agent_file(self, aid, calls, meta=True):
         # calls: (message id, time, 5m write, 1h write, read)
         def line(mid, ts, c5, c1, cr):

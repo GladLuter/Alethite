@@ -427,6 +427,8 @@ def _pull(conn, machine_dir, peer, own, key, model, digest, deadline, now, repor
     try:
         gen = gen or generation(machine_dir)
     except OSError as e:  # a share that hiccups: nothing is reset, the next sync tries again
+        if not conn.execute('SELECT 1 FROM peers WHERE machine = ?', (peer,)).fetchone():
+            return  # a folder we cannot list and never took in is no computer to show
         return _refuse(conn, peer, t('generation_unreadable', machine=peer, e='%s: %s' % (type(e).__name__, e)), report)
     names = _batches(gen.path, crypto.EXT[gen.cipher])
     if not names and not conn.execute('SELECT 1 FROM peers WHERE machine = ?', (peer,)).fetchone():
