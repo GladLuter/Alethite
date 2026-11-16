@@ -557,6 +557,19 @@ class MemdbTest(unittest.TestCase):
         self.assertEqual(memdb.forget(self.conn, 'S', pos), 0)
         self.assertFalse(self.conn.in_transaction)
 
+    def test_forget_takes_every_copy(self):  # a resumed session copies its history into a new transcript: one text under several convs
+        for conv in ('S1', 'S2', 'S3'):
+            self.write('P/%s.jsonl' % conv, [owner_line('секрет 42'), claude_line('ответ')])
+        self.update()
+        h = memdb.text_hash('секрет 42')
+        memdb.forget_key(self.conn, 'S3', 'owner', h, 0)  # one copy forgotten earlier (0.9.1 forgot one conv only)
+        pos = self.conn.execute("SELECT pos FROM chunks WHERE conv = 'S1' AND kind = 'owner'").fetchone()[0]
+        self.assertEqual(memdb.forget(self.conn, 'S1', pos), 2)
+        self.assertEqual(search(self.conn, 'секрет'), [])
+        self.assertEqual([self.kinds_of(c) for c in ('S1', 'S2', 'S3')], [['claude']] * 3)  # the other class at that pos stays
+        self.assertEqual(sorted(json.loads(l)['key'][0] for (l,) in self.conn.execute('SELECT line FROM outbox')), ['S1', 'S2', 'S3'])
+        self.assertFalse(self.conn.in_transaction)
+
     def test_stage_1_index_gets_keys_and_home_projects_once(self):
         path = os.path.join(os.path.dirname(self.db), 'old.db')
         old = sqlite3.connect(path)

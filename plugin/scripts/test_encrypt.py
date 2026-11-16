@@ -421,7 +421,7 @@ class EncryptTest(unittest.TestCase):
     def test_flag_stays_when_the_cleanup_fails_midway(self):
         a = self.a
         self.assertEqual(a.sync()['errors'], [])
-        with mock.patch.object(encrypt, '_delete', side_effect=OSError('boom')), self.assertRaises(OSError):
+        with mock.patch.object(cgsync, 'delete', side_effect=OSError('boom')), self.assertRaises(OSError):
             self.on(a)
         self.assertEqual(self.flag(a), 'old')
         self.assertTrue(os.path.exists(os.path.join(self.own(a), 'batch-00000001.jsonl.gz')))
@@ -441,7 +441,7 @@ class EncryptTest(unittest.TestCase):
         d = os.path.join(self.root, 'folder')
         os.makedirs(os.path.join(d, 'sub'))
         with mock.patch.object(os.path, 'isjunction', create=True, side_effect=AttributeError):
-            encrypt._delete(d)
+            cgsync.delete(d)
         self.assertFalse(os.path.exists(d))
 
     def test_on_old_share_is_cleaned_without_following_links(self):

@@ -160,24 +160,31 @@ def connect(path=None, home=None):
 
 def forget_key(conn, conv, cls, h, n, push=True):
     """Delete the record of this key with its vectors, if it is here, and keep the key from ever coming back. Inside the caller's transaction.
-    With `push` the forget goes into our next batch, for the other computers."""
-    for (rid,) in conn.execute('SELECT id FROM keys WHERE conv = ? AND cls = ? AND hash = ? AND n = ?', (conv, cls, h, n)).fetchall():
+    With `push` the forget goes into our next batch, for the other computers. A record in our batches already (ours, or read back from our
+    own folder: origin the name sync keeps in meta.machine) sets meta.restart_share: a finished batch never changes, so only a new
+    generation of our folder takes its text out of the share."""
+    for rid, out in conn.execute("SELECT id, pushed = 1 AND (origin IS NULL OR origin = (SELECT value FROM meta WHERE key = 'machine')) "
+                                 'FROM keys WHERE conv = ? AND cls = ? AND hash = ? AND n = ?', (conv, cls, h, n)).fetchall():
         conn.execute('DELETE FROM chunks WHERE rowid = ?', (rid,))
         conn.execute('DELETE FROM vecs WHERE chunk = ?', (rid,))
         conn.execute('DELETE FROM keys WHERE id = ?', (rid,))
+        if out:
+            conn.execute("INSERT OR REPLACE INTO meta VALUES('restart_share', '1')")
     conn.execute('INSERT OR IGNORE INTO forgotten VALUES(?, ?, ?, ?)', (conv, cls, h, n))
     if push:
         conn.execute('INSERT INTO outbox(line) VALUES(?)', (json.dumps({'type': 'forget', 'key': [conv, cls, h, n]}, ensure_ascii=False),))
 
 
 def forget(conn, conv, pos):
-    """The one way to delete from the index (a secret the filter missed): every record at `pos` of `conv`, here and, through our next
-    batch, on the other computers. The number of records forgotten."""
+    """The one way to delete from the index (a secret the filter missed): every record at `pos` of `conv` and every copy of its text in any
+    conv (a resumed session copies its history into a new transcript), here and, through our next batch, on the other computers. The
+    number of records forgotten."""
     conn.execute('BEGIN IMMEDIATE')
     with conn:
-        keys = conn.execute('SELECT k.cls, k.hash, k.n FROM keys k JOIN chunks c ON c.rowid = k.id WHERE k.conv = ? AND c.pos = ?', (conv, pos)).fetchall()
+        keys = conn.execute('SELECT DISTINCT o.conv, o.cls, o.hash, o.n FROM keys k JOIN chunks c ON c.rowid = k.id '
+                            'JOIN keys o ON o.cls = k.cls AND o.hash = k.hash WHERE k.conv = ? AND c.pos = ?', (conv, pos)).fetchall()
         for k in keys:
-            forget_key(conn, conv, *k)
+            forget_key(conn, *k)
     return len(keys)
 
 

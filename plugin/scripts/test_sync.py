@@ -608,7 +608,7 @@ class SyncTest(unittest.TestCase):
         self.exchange()
         pos = self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'")
         self.assertEqual(memdb.forget(self.a.conn, 'SA', pos), 1)
-        self.assertEqual(self.a.sync()['pushed'], 0)
+        self.assertEqual(self.a.sync()['pushed'], 1)  # it was in our batches: a new generation, with the other record of ours again
         r = self.b.sync()
         self.assertEqual(r['forgotten'], 1)
         self.assertEqual(search(self.b.conn, 'тумане'), [])
@@ -637,7 +637,7 @@ class SyncTest(unittest.TestCase):
             self.assertEqual(self.a.index(rebuild=True)['rows'], 1)
         self.a.embed()
         r = self.a.sync()
-        self.assertEqual((r['pushed'], r['vectors']['pushed']), (1, 1))
+        self.assertEqual((r['pushed'], r['vectors']['pushed']), (2, 2))  # the old text was in our batches: a new generation, all of ours again
         r = self.b.sync()
         self.assertEqual((r['pulled'], r['forgotten'], r['vectors']['pulled']), (1, 1, 1))
         self.assertEqual(search(self.b.conn, 'zq'), [])
@@ -780,6 +780,77 @@ class SyncTest(unittest.TestCase):
         open(os.path.join(own, 'batch-00000002.jsonl.gz.tmp'), 'w').close()
         self.start(self.a)
         self.assertEqual(names(), ['batch-00000001.jsonl.gz', 'batch-00000002.jsonl.gz.tmp', 'gen-0001', 'memory'])
+
+    # a finished batch never changes: only a new generation of our folder takes a forgotten text of ours out of the share (audit B2)
+    def test_forget_of_pushed_record_starts_new_generation(self):
+        self.a.say('SS', 'пароль zq-0123456789 тут', 'ок')
+        self.exchange()
+        own = os.path.join(self.share, 'HOMEPC')
+        pos = self.a.q("SELECT pos FROM chunks WHERE text = 'пароль zq-0123456789 тут'")
+        self.assertEqual(memdb.forget(self.a.conn, 'SS', pos), 1)
+        self.assertEqual(memdb.meta(self.a.conn, 'restart_share'), '1')
+        r = self.a.sync()
+        self.assertEqual((r['errors'], r['pushed'], r['vectors']['pushed']), ([], 3, 3))  # the rest of ours goes out again
+        self.assertEqual(os.listdir(own), ['gen-0001'])  # all out: the batches of generation 0, the secret's among them, are gone
+        self.assertIsNone(memdb.meta(self.a.conn, 'restart_share'))
+        lines = self.gen_lines(self.a, 1)
+        self.assertNotIn('zq-0123456789', json.dumps(lines, ensure_ascii=False))
+        self.assertEqual([l['key'][0] for l in lines if l['type'] == 'forget'], ['SS'])  # once, not once more for the restart
+        r = self.b.sync()  # the laptop reads the new generation from its first batch
+        self.assertEqual((r['errors'], r['pulled'], r['forgotten']), ([], 0, 1))
+        self.assertEqual(search(self.b.conn, 'zq'), [])
+        self.assertEqual((self.a.sync()['pushed'], cgsync.generation(own).n), (0, 1))  # once only
+
+    def test_applied_forget_restarts_origin_share(self):
+        self.exchange()
+        pos = self.b.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'")
+        self.assertEqual(memdb.forget(self.b.conn, 'SA', pos), 1)
+        self.assertIsNone(memdb.meta(self.b.conn, 'restart_share'))  # the i3's record is in the i3's batches, not the laptop's
+        self.b.sync()
+        self.assertEqual(self.a.sync()['forgotten'], 1)
+        self.assertEqual(memdb.meta(self.a.conn, 'restart_share'), '1')  # taken in after the i3's push: its next sync starts the generation
+        r = self.a.sync()
+        self.assertEqual((r['errors'], r['pushed']), ([], 1))
+        self.assertEqual(os.listdir(os.path.join(self.share, 'HOMEPC')), ['gen-0001'])
+        self.assertNotIn('тумане', json.dumps(self.gen_lines(self.a, 1), ensure_ascii=False))
+        self.assertEqual(cgsync.generation(os.path.join(self.share, 'NOTEBOOK')).n, 0)
+
+    def test_old_generation_stays_until_the_new_one_is_all_out(self):
+        self.ready(self.a)
+        self.a.sync()
+        own = os.path.join(self.share, 'HOMEPC')
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        with mock.patch.object(cgsync, '_write', side_effect=OSError('the share went away')):  # a push that fails
+            self.assertTrue(self.a.sync()['errors'])
+        ticks = iter(range(100))
+        self.assertEqual(self.a.sync(max_seconds=1, now=lambda: next(ticks))['pushed'], 0)  # a push the time cap cuts short
+        self.assertEqual((sorted(os.listdir(own)), memdb.meta(self.a.conn, 'restart_share')), (['batch-00000001.jsonl.gz', 'gen-0001'], 'old'))
+        self.assertEqual(self.a.sync()['errors'], [])
+        self.assertEqual((os.listdir(own), memdb.meta(self.a.conn, 'restart_share')), (['gen-0001'], None))
+
+    def test_forget_of_a_record_read_back_from_our_folder_restarts_the_share(self):
+        self.ready(self.a)
+        self.a.sync()
+        self.a.close()
+        os.remove(self.a.db)
+        self.a.open()
+        self.a.sync()  # a restored index: the records come back from our own folder with our name as origin
+        self.assertEqual(memdb.meta(self.a.conn, 'machine'), 'HOMEPC')
+        self.assertEqual(self.a.q("SELECT count(*) FROM keys WHERE origin = 'HOMEPC' AND pushed = 1"), 2)
+        memdb.forget(self.a.conn, 'SA', self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'"))
+        self.assertEqual(memdb.meta(self.a.conn, 'restart_share'), '1')
+        self.assertEqual(self.a.sync()['errors'], [])
+        self.assertEqual(os.listdir(os.path.join(self.share, 'HOMEPC')), ['gen-0001'])
+        self.assertNotIn('тумане', json.dumps(self.gen_lines(self.a, 1), ensure_ascii=False))
+
+    def test_forget_of_unpushed_record_keeps_generation(self):
+        self.ready(self.a)
+        pos = self.a.q("SELECT pos FROM chunks WHERE text = 'ёжик в тумане на i3'")
+        memdb.forget(self.a.conn, 'SA', pos)
+        self.assertIsNone(memdb.meta(self.a.conn, 'restart_share'))
+        r = self.a.sync()
+        self.assertEqual((r['errors'], r['pushed']), ([], 1))
+        self.assertEqual((cgsync.generation(os.path.join(self.share, 'HOMEPC')).n, self.a.batches()), (0, [1]))
 
     def test_a_start_that_fails_leaves_no_generation_and_changes_nothing(self):
         self.exchange()
