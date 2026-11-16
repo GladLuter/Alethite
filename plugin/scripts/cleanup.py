@@ -21,12 +21,14 @@ def snapshot(conn, projects, path):
     """Write (or rewrite) the row of the main transcript `path` (absolute) with the chains of every .jsonl of its folder (nested workflow agents too)."""
     root = lp(projects)
     conv = os.path.basename(path)[:-6]
-    chains = []
+    chains, agents = [], {}
     for p in (q for q in _files(path) if q.endswith('.jsonl')):  # the same list the gate checks, the main transcript first
         mem, ours = [], set()
         ev, ch = cc_token_audit.read_chain(p, Counter(), lambda q, o: mem.extend(stats._mem_event(q, o, ours)))
         chains.append({'rel': os.path.relpath(p, root).replace(os.sep, '/'), 'mtime': os.path.getmtime(p), 'ev': ev, 'ch': dict(ch), 'mem': mem})
-    row = conn.execute('SELECT chains, read_new FROM removed WHERE conv = ?', (conv,)).fetchone()
+        if p != lp(path) and (a := savings.agent_start(p)):  # a subagent's start: the lean-agent savings outlive the file
+            agents[chains[-1]['rel']] = a
+    row = conn.execute('SELECT chains, read_new, agents FROM removed WHERE conv = ?', (conv,)).fetchone()
     read_new = savings.read_new(path)
     if row:
         fresh = set().union(*map(_ids, chains))
@@ -36,9 +38,13 @@ def snapshot(conn, projects, path):
             elif not _ids(c) <= fresh:  # the transcript came back holding only new lines: the old chain stays under a name no file has
                 chains.append(dict(c, rel='%s#%d' % (c['rel'], c['mtime'])))
         read_new = read_new or json.loads(row[1] or 'null')
-    conn.execute('INSERT OR REPLACE INTO removed VALUES(?,?,?,?,?,?)',
+        old = _load(row[2] or 'null')
+        for rel, a in (old.items() if isinstance(old, dict) else ()):
+            if not os.path.exists(lp(os.path.join(projects, rel))):  # the same half-failed pass: a file gone keeps its start
+                agents.setdefault(rel, a)
+    conn.execute('INSERT OR REPLACE INTO removed(conv, path, at, last_usage, read_new, chains, agents) VALUES(?,?,?,?,?,?,?)',
                  (conv, chains[0]['rel'], datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'),
-                  json.dumps(last_usage(path)), json.dumps(read_new), json.dumps(chains)))
+                  json.dumps(last_usage(path)), json.dumps(read_new), json.dumps(chains), json.dumps(agents)))
     conn.commit()
 
 
@@ -54,7 +60,12 @@ def saved_chains(conn):
 
 
 def gone(conn):
-    return {conv: {'last_usage': _load(u), 'read_new': _load(n)} for conv, u, n in conn.execute('SELECT conv, last_usage, read_new FROM removed')}
+    """{conv: {last_usage, read_new, agents}} of the removed chats; a NULL or damaged agents column reads as none."""
+    out = {}
+    for conv, u, n, a in conn.execute('SELECT conv, last_usage, read_new, agents FROM removed'):
+        a = _load(a or 'null')
+        out[conv] = {'last_usage': _load(u), 'read_new': _load(n), 'agents': list(a.values()) if isinstance(a, dict) else []}
+    return out
 
 
 def _old(path):

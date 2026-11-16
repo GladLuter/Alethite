@@ -12,8 +12,8 @@ export type Snap = {
 // What `cg.py savings` answers; usd is what was saved (negative: it cost more). project is null when the index could not list the chats.
 export type Savings = {
   last: { usd: number; old_tokens: number; new_tokens: number } | null
-  worker: { usd: number; links: number; calls: number }
-  project: { usd: number; links: number } | null
+  worker: { usd: number; links: number; calls: number; lean: { usd: number; agents: number } }
+  project: { usd: number; links: number; lean: { usd: number; agents: number } } | null
 }
 
 // The band's other source: `cg.py status` as it came, and the savings; null where the answer did not come.

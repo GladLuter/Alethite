@@ -28,13 +28,17 @@ I audited my own Claude Code transcripts (May to October 2026, at API prices) to
 
 The money goes on coming back to a big idle chat. Alethite shows you the price before you pay it, and keeps a memory of your past chats so a fresh one starts informed.
 
+After four weeks with Alethite (October 19 to November 15, same computer, API prices) each message I sent cost about half as much, subagents included. The first message after a long pause went from 32% of all spend to 3%. This is a before-and-after count on one person's work, not a controlled test.
+
+The same count showed where the money goes now. Subagents grew to 44% of all spend, and nearly half of their cost is the start every agent pays before it does any work. A general-purpose agent starts with about 64k tokens of tool descriptions, skill lists and instructions. Alethite now ships lean agent types that start with 5-16k.
+
 ---
 
 ## ✨ What you get
 
 | Feature | What it does | Command |
 |---|---|---|
-| 🛡️ **Cache guard** | The status line shows the context size and the minutes left in the cache. One row above the prompt is always there: chat size, cache, the price of a send here and how much the handoffs saved. The Details button opens it into columns. | `/al-band` |
+| 🛡️ **Cache guard** | The status line shows the context size and the minutes left in the cache. One row above the prompt is always there: chat size, cache, the price of a send here and how much the handoffs and the lean agents saved. The Details button opens it into columns. | `/al-band` |
 | 🆕 **New worker** | A button that starts a clean chat with a handoff of the old one (no model calls) and the message you already typed. The After reset button does the same once the limit resets. It shows up after you press New worker, when a limit is 90% used or more. | buttons in the band |
 | 📝 **Short memory** | One short rule for Claude: write decisions down at once, save an understood error as a lesson, check memory before proposing. A toast shows each saved fact. | |
 | 🔎 **Long memory** | Every past conversation of every project, subagents included, in a local SQLite index with vectors from a local Ollama model. Claude searches it with `recall`, by words and by meaning. Secrets are hidden before indexing. Nothing that got into the index is ever lost, and tool errors are indexed too. | `/al-index` |
@@ -148,6 +152,10 @@ Full walkthrough: [INSTALL.md](INSTALL.md).
 </details>
 
 ---
+
+## 🪶 Lean agent types
+
+Alethite ships five agent types (`scout`, `researcher`, `reviewer`, `coder`, `resident`) that start with only the tools they need. They start with 5-16k tokens, against about 64k for the built-in `general-purpose` on the author's computer. The main chat is told to pick them. Types, tools and details are in [INSTALL.md](INSTALL.md#lean-agent-types).
 
 ## 📋 Requirements
 

@@ -31,6 +31,7 @@ export const uk: Partial<Texts> = {
   spent: (usd: string) => `витрачено ${usd}`,
   coldPrice: (cost: string) => `холодно ${cost}`,
   workerSub: (links: number, calls: number) => `передач: ${links} · викликів: ${calls}`,
+  leanSub: (usd: string, n: number) => `з них легкі агенти ${usd} (${n})`,
   projectSub: (usd: string, links: number) => `проєкт: ${usd} (${links})`,
   resets: (when: string) => `скидання ${when}`,
   baseConvs: (n: number) => `розмов: ${n}`,
@@ -162,6 +163,10 @@ export const uk: Partial<Texts> = {
   summaryTitle: '# Зведення замірів',
   summaryHint: "Зібране командою /al-stats з нотаток за комп'ютерами; вручну не правити.",
   summaryColumns: ['дата', "комп'ютер", '$ на повідомлення власника', 'перезаписи кешу', 'з них після паузи ≥ 60 хв', 'медіанний контекст', 'повідомлень власника', 'результати recall'],
+
+  // lean agents: the rule the model reads in every prompt, to pick the cheap subagent types
+  leanRule:
+    "Субагенти (Alethite). Субагентові, якому не потрібні браузер, Obsidian, інші MCP-інструменти й навички, давай легкий тип: alethite:coder, alethite:reviewer, alethite:scout або alethite:researcher. Їхній старт у 4–13 разів менший. general-purpose — лише коли це потрібно. У скриптах воркфлоу те саме для agent(prompt, { agentType }). У легкого агента немає інструмента Skill: якщо потрібна навичка, дай у промпті шлях до її SKILL.md і скажи прочитати та виконати. alethite:resident дорогий (годинний кеш, кожен запис у 1,6 раза дорожчий за п'ятихвилинний): лише коли одна велика картина проєкту потрібна кільком завданням із паузами від 5 до 60 хвилин, продовжуй його через SendMessage, за годину запусти нового. Готового агента продовжуй через SendMessage, лише якщо він закінчив менш як 5 хвилин тому і наступному завданню потрібне те, що він прочитав. Інакше запусти нового легкого: захолонулий агент переписує весь свій контекст (медіана близько 100 тис. токенів).",
 
   // short memory: the rule the model reads in every prompt, and the owner's note that a fact was saved
   memoryRule:

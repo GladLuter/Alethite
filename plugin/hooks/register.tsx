@@ -297,7 +297,7 @@ const runStats = async ($: EngineInterface, python: string, days: number, compre
   const today = calendarDay(now)
   const since = new Date(Date.parse(today) - days * 86_400_000).toISOString().slice(0, 10)
   const limits = usage.rateLimits.map(({ kind, percentUsed }) => ({ kind, percentUsed }))
-  const args = ['stats', '--since', since, '--host', host, '--today', today, '--limits', JSON.stringify(limits), '--rule-chars', String(T.memoryRule.length)]
+  const args = ['stats', '--since', since, '--host', host, '--today', today, '--limits', JSON.stringify(limits), '--rule-chars', String(T.memoryRule.length + T.leanRule.length)]
   args.push('--memory-tokens', String(autoMemTokens(files)), '--compression', compression) // what the memory takes of every request (stage 3)
   const { note, errors } = (await runCg($, python, args, 600_000)) as { note: string; errors: IndexError[] }
   await indexErrors($, 'al-stats', errors, true) // an unreadable transcript lowers the figures; the note is written all the same
@@ -901,7 +901,7 @@ export const register: Register = (on, options) => {
   })
 
   // last and on the session side: every shared section must precede it, and the text never varies, so the prompt cache is not spent
-  on('prompt.compose', async (_, e, next) => ({ sections: [...(await next(e)).sections, { id: 'alethite:memory-rule', text: T.memoryRule, scope: 'session' }] }))
+  on('prompt.compose', async (_, e, next) => ({ sections: [...(await next(e)).sections, { id: 'alethite:lean-agents', text: T.leanRule, scope: 'session' }, { id: 'alethite:memory-rule', text: T.memoryRule, scope: 'session' }] }))
 
   // The worker's or a subagent's write into the auto-memory folder; the owner's Write/Edit result always comes back as it was.
   on('tool.call', { tool: ['Write', 'Edit'] }, async ($, e, next) => {

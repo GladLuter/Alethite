@@ -204,7 +204,7 @@ The plugin compresses what it puts into the model's context itself: the results 
   ```powershell
   python C:\_git\Alethite\plugin\scripts\cg.py compress --level ultra --file note.txt
   ```
-- **How much memory is in the context:** `/al-stats` writes a "Memory in context" section into its note: the memory rule, `MEMORY.md`, the results of `recall` and their cost, the handoffs. `/al-health` shows the compression level and the size of `MEMORY.md`.
+- **How much memory is in the context:** `/al-stats` writes a "Memory in context" section into its note: the memory rule, `MEMORY.md`, the results of `recall` and their cost, the handoffs. The same note has a line on the subagents of the period (this is where you see the lean share): how many were lean (`alethite:*`) and what they saved. The band and Details count this saving too. `/al-health` shows the compression level and the size of `MEMORY.md`.
 - If Claude understands the compressed excerpts worse, set `full` or `lite`.
 
 ### Encryption
@@ -307,6 +307,24 @@ Off by default. `/al-cleanup on` turns it on, `/al-cleanup off` turns it off, `/
 - When on, the background job deletes from disk the transcript of an old chat after a New worker handoff, once everything from it is in the index (and in the shared folder, if sync is on) and the chat has not been touched for 60 minutes. Its statistics stay in the index. The current chat is never deleted.
 - Deletion is permanent. An old chat reopened with `claude --resume` and left idle for an hour is deleted too. Its text stays in the long memory.
 - `/al-health` shows the state and how many chats were deleted.
+
+### Lean agent types
+
+Alethite ships five agent types. Each starts with only the tools it needs, so a helper costs far less than the built-in `general-purpose` (about 64k tokens at start on the author's computer, where it depends on the MCP servers and skills installed). The main chat is told to pick them. Start is the measured size of the first call.
+
+| Type | Tools | Model | CLAUDE.md | Start |
+|---|---|---|---|---|
+| `scout` | Read, Grep, Glob | haiku | no | 4.8k |
+| `researcher` | Read, Grep, Glob, WebSearch, WebFetch | sonnet | yes | 11.3k |
+| `reviewer` | Read, Grep, Glob, Bash, PowerShell | sonnet | yes | 15.6k |
+| `coder` | Read, Edit, Write, Bash, PowerShell, Grep, Glob | sonnet | yes | 16.2k |
+| `resident` (expensive) | Read, Grep, Glob, Bash, PowerShell | sonnet | yes | 15.6k |
+
+The table was tested on Windows. The types with `PowerShell` in their tools were not tried elsewhere.
+
+A lean agent has no Skill tool. When it needs a skill, give the path of that skill's `SKILL.md` in its prompt and tell it to read and follow it.
+
+Use `alethite:<name>`, for example `alethite:scout`. `resident` is expensive: it keeps a one-hour cache (a cache write costs 1.6 times more than the 5-minute one). Take it only when several tasks share one big picture of the project and pause for 5 to 60 minutes between them, and continue it with SendMessage. After an hour start a new one. Otherwise take `reviewer`. In a workflow, `agent()` takes the type in its `agentType` option. The new types show up after `/reload-plugins` or in a new chat, because Claude Code reads the agent list only at session start and on reload.
 
 ## Only if you used an older build
 

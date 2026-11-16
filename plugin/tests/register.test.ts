@@ -595,7 +595,7 @@ test('prompt: the memory rule is the last section, on the session side, the same
   const engine = [{ id: 'intro', text: 'a', scope: 'shared' as const }, { id: 'env', text: 'b', scope: 'session' as const }]
   on('prompt.compose', () => ({ sections: engine }))
   const first = (await ($ as any).prompt.compose(facts)).sections
-  expect(first).toEqual([...engine, { id: 'alethite:memory-rule', text: T.memoryRule, scope: 'session' }])
+  expect(first).toEqual([...engine, { id: 'alethite:lean-agents', text: T.leanRule, scope: 'session' }, { id: 'alethite:memory-rule', text: T.memoryRule, scope: 'session' }])
   expect((await ($ as any).prompt.compose(facts)).sections).toEqual(first)
 })
 
@@ -686,7 +686,7 @@ test('/al-stats: cg.py gets the period, the computer, the limits and the size of
   expect(today()).toMatch(/^\d{4}-\d\d-\d\d$/)
   expect(Date.parse(today()) - Date.parse(flag(argv, '--since'))).toBe(7 * 86_400_000) // the default is a week
   expect(argv).not.toContain('--until')
-  expect([flag(argv, '--host'), flag(argv, '--limits'), flag(argv, '--rule-chars'), timeoutMs]).toEqual(['PC-1', JSON.stringify(usage.rateLimits), String(T.memoryRule.length), 600_000])
+  expect([flag(argv, '--host'), flag(argv, '--limits'), flag(argv, '--rule-chars'), timeoutMs]).toEqual(['PC-1', JSON.stringify(usage.rateLimits), String(T.memoryRule.length + T.leanRule.length), 600_000])
   expect(text).toContain('| метрика | база | сейчас |')
   expect(text).not.toContain('host: PC-1') // the frontmatter is for the vault, not for the reply
 })
@@ -847,7 +847,7 @@ test('language ru: the mod speaks Russian to the owner and to the model, and so 
   for (const lang of m.langs) expect(lang).toEqual(['--lang', 'ru'])
   expect((await ($ as any).command.run({ command: 'al-band', args: '' })).text).toBe(ru.cgBandOn)
   expect(m.specs.map(s => s.description)).toEqual([ru.recallDescription, ru.recallMoreDescription, ru.lessonSaveDescription])
-  expect((await ($ as any).prompt.compose(facts)).sections).toEqual([{ id: 'alethite:memory-rule', text: ru.memoryRule, scope: 'session' }])
+  expect((await ($ as any).prompt.compose(facts)).sections).toEqual([{ id: 'alethite:lean-agents', text: ru.leanRule, scope: 'session' }, { id: 'alethite:memory-rule', text: ru.memoryRule, scope: 'session' }])
 })
 
 test('language uk: Ukrainian to the owner and to the model, and to cg.py', { options: { language: 'uk' } }, async ($, on) => {
@@ -1796,7 +1796,7 @@ test('home_notes: a note beside an error answer is told as well', async ($, on) 
   expect(m.toasts).toEqual([T.toast('a note beside an error'), T.toast(T.failed('al-index', 'boom'))])
 })
 
-const savingsJson = ran(JSON.stringify({ last: null, worker: { usd: 0, links: 0, calls: 0 }, project: null }))
+const savingsJson = ran(JSON.stringify({ last: null, worker: { usd: 0, links: 0, calls: 0, lean: { usd: 0, agents: 0 } }, project: null }))
 
 test('band data: status and savings are asked at the start and after /al-sync', { options: { syncDir: SHARE } }, async ($, on) => {
   const m = await started($, on, a => (a[0] === 'savings' ? savingsJson : a[0] === 'sync' ? synced() : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')))
@@ -1838,7 +1838,7 @@ test('band data: both calls failing at once note only the first error', async ($
   expect(m.store.get('lastError')).toEqual(first)
 })
 
-const worker = { last: null, worker: { usd: 18.7, links: 7, calls: 400 }, project: null }
+const worker = { last: null, worker: { usd: 18.7, links: 7, calls: 400, lean: { usd: 0, agents: 0 } }, project: null }
 const bandData = async ($: any, on: any, savings: unknown, status: object = { convs: 12, size_mb: 1.5 }, statusAnswer: unknown = ran(JSON.stringify(status))) => {
   const m = await started($, on, a => (a[0] === 'savings' ? savings : a[0] === 'status' ? statusAnswer : a[0] === 'embed' ? embedded() : a[0] === 'index' ? indexed() : ran('{}')))
   await m.clock.advance(3_000)
@@ -1908,7 +1908,7 @@ test('an index that cannot be used: the Base column says ? and the alarm is on',
 })
 
 test('savings that cost more are drawn as an error', async ($, on) => {
-  await bandData($, on, ran(JSON.stringify({ ...worker, worker: { usd: -2, links: 3, calls: 9 } })))
+  await bandData($, on, ran(JSON.stringify({ ...worker, worker: { usd: -2, links: 3, calls: 9, lean: { usd: 0, agents: 0 } } })))
   const dear = (await (await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 140 } } as never)).findAll({ type: 'Text' })).filter((t: { props: { color?: string } }) => t.props.color === 'error')
   expect(dear.map((t: { text: string }) => t.text).join()).toContain(T.dearer('$2.00'))
 })
@@ -2135,7 +2135,7 @@ test('the first reply of a new chat refreshes the savings, not the launch before
   box(on, 'продолжаем', log, new Promise<void>(r => (release = r)))
   const answer = (a: string[]) =>
     a[0] === 'handoff' ? ran(JSON.stringify({ text: 'h', path: 'C:/h/id.md' }))
-    : a[0] === 'savings' ? ran(JSON.stringify(a[2] === 'new' ? worker : { last: null, worker: { usd: 0, links: 0, calls: 0 }, project: null }))
+    : a[0] === 'savings' ? ran(JSON.stringify(a[2] === 'new' ? worker : { last: null, worker: { usd: 0, links: 0, calls: 0, lean: { usd: 0, agents: 0 } }, project: null }))
     : ran('{}')
   const m = await started($, on, answer)
   await m.clock.advance(3_000)

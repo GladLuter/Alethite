@@ -370,13 +370,40 @@ class MergeTest(unittest.TestCase):
         self.two()
         c = self.index(self.src)
         d = self.index(self.db)
-        d.execute("INSERT INTO removed VALUES('S8', 'P/S8.jsonl', '2026-11-10T10:00:00+00:00', 'null', 'null', '[1]')")
+        d.execute("INSERT INTO removed(conv, path, at, last_usage, read_new, chains) VALUES('S8', 'P/S8.jsonl', '2026-11-10T10:00:00+00:00', 'null', 'null', '[1]')")
         d.commit()
-        c.execute("INSERT INTO removed VALUES('S8', 'P/S8.jsonl', '2026-11-11T10:00:00+00:00', 'null', 'null', '[2]')")  # the newer snapshot
-        c.execute("INSERT INTO removed VALUES('S9', 'P/S9.jsonl', '2026-11-11T10:00:00+00:00', 'null', 'null', '[]')")
+        c.execute("INSERT INTO removed(conv, path, at, last_usage, read_new, chains) VALUES('S8', 'P/S8.jsonl', '2026-11-11T10:00:00+00:00', 'null', 'null', '[2]')")  # the newer snapshot
+        c.execute("INSERT INTO removed(conv, path, at, last_usage, read_new, chains) VALUES('S9', 'P/S9.jsonl', '2026-11-11T10:00:00+00:00', 'null', 'null', '[]')")
         c.commit()
         self.merge()
         self.assertEqual(self.index(self.db).execute('SELECT conv, chains FROM removed ORDER BY conv').fetchall(), [('S8', '[2]'), ('S9', '[]')])
+        self.free()
+
+    def test_a_temporary_index_without_the_agents_column_merges(self):
+        self.two()
+        c = self.index(self.src)
+        c.execute('DROP TABLE removed')  # made by 0.7.x: the table without `agents`
+        c.execute('CREATE TABLE removed(conv TEXT PRIMARY KEY, path TEXT NOT NULL, at TEXT NOT NULL, last_usage TEXT, read_new TEXT, chains TEXT NOT NULL)')
+        c.execute("INSERT INTO removed VALUES('S7', 'P/S7.jsonl', '2026-11-11T10:00:00+00:00', 'null', 'null', '[]')")
+        c.commit()
+        self.merge()
+        d = self.index(self.db)
+        self.assertIsNone(memdb.meta(d, 'merge_error'))
+        self.assertEqual(d.execute('SELECT conv, agents FROM removed').fetchall(), [('S7', None)])
+        self.free()
+
+    def test_a_temporary_index_without_agents_keeps_the_agents_main_holds(self):
+        self.two()
+        d = self.index(self.db)
+        d.execute("INSERT INTO removed(conv, path, at, last_usage, read_new, chains, agents) VALUES('S7', 'P/S7.jsonl', '2026-11-10T10:00:00+00:00', 'null', 'null', '[]', '{\"r\": 1}')")
+        d.commit()
+        c = self.index(self.src)
+        c.execute('DROP TABLE removed')
+        c.execute('CREATE TABLE removed(conv TEXT PRIMARY KEY, path TEXT NOT NULL, at TEXT NOT NULL, last_usage TEXT, read_new TEXT, chains TEXT NOT NULL)')
+        c.execute("INSERT INTO removed VALUES('S7', 'P/S7.jsonl', '2026-11-11T10:00:00+00:00', 'null', 'null', '[]')")
+        c.commit()
+        self.merge()
+        self.assertEqual(self.index(self.db).execute('SELECT at, agents FROM removed').fetchall(), [('2026-11-11T10:00:00+00:00', '{"r": 1}')])
         self.free()
 
     def test_a_temporary_index_without_the_removed_table_merges(self):

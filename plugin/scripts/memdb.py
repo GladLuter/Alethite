@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS peers(machine TEXT PRIMARY KEY, last_batch INTEGER NO
 CREATE TABLE IF NOT EXISTS mem_files(project TEXT, name TEXT, source TEXT NOT NULL, src_name TEXT NOT NULL, hash TEXT NOT NULL,
   PRIMARY KEY(project, name));
 -- a chat removed from the disk (cleanup.py): the numbers of it the stats and the handoff savings still need; path relative to projects, JSON in the text fields
-CREATE TABLE IF NOT EXISTS removed(conv TEXT PRIMARY KEY, path TEXT NOT NULL, at TEXT NOT NULL, last_usage TEXT, read_new TEXT, chains TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS removed(conv TEXT PRIMARY KEY, path TEXT NOT NULL, at TEXT NOT NULL, last_usage TEXT, read_new TEXT, chains TEXT NOT NULL,
+  agents TEXT);  -- agents: JSON {rel: start record} of the lean-agent savings (an index from before 0.8.0 gets the column in connect)
 """
 # a table with a `conv` column and the parameter :p, json.dumps of None (every project) or of a list of project keys (a project and its
 # aliases); a subagent belongs to its parent's project
@@ -97,6 +98,15 @@ def _gen_column(conn):
                 conn.execute('ALTER TABLE peers ADD COLUMN gen INTEGER NOT NULL DEFAULT 0')
 
 
+def _agents_column(conn):
+    """0.8.0, once: removed.agents on an index made before it."""
+    if 'agents' not in [r[1] for r in conn.execute('PRAGMA table_info(removed)')]:
+        conn.execute('BEGIN IMMEDIATE')
+        with conn:
+            if 'agents' not in [r[1] for r in conn.execute('PRAGMA table_info(removed)')]:  # another process got here first
+                conn.execute('ALTER TABLE removed ADD COLUMN agents TEXT')
+
+
 def db_errors():
     """What a locked or busy index raises: sqlcipher3 has classes of its own, and is loaded only once an encrypted index was opened."""
     lib = sys.modules.get('sqlcipher3')
@@ -151,6 +161,7 @@ def connect(path=None, home=None):
     conn = _open(path)
     conn.executescript(_SCHEMA)
     _gen_column(conn)
+    _agents_column(conn)
     if meta(conn, 'schema') != '2':
         _migrate(conn, home)
     return conn

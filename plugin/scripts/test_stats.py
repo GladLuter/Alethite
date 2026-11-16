@@ -9,9 +9,11 @@ import unittest
 from unittest import mock
 import cc_token_audit
 import cg
+import savings
 from memdb import connect
 from stats import metrics, note_markdown
 from test_texts import use_lang
+from texts import t
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
 IN_1M = {'input_tokens': 1_000_000, 'output_tokens': 0, 'cache_read_input_tokens': 0, 'cache_creation_input_tokens': 0}  # sonnet-5: $2.00
@@ -25,6 +27,17 @@ def owner_line(text, ts):
 def call(mid, ts, usage):
     m = {'id': mid, 'model': 'claude-sonnet-5', 'role': 'assistant', 'usage': usage, 'content': [{'type': 'text', 'text': 'ответ'}]}
     return dict(type='assistant', timestamp=ts, cwd='C:\\a', message=m)
+
+
+def acall(mid, ts, **u):
+    c5, c1 = u.get('c5', 0), u.get('c1', 0)
+    usage = dict(IN_1M, input_tokens=0, cache_creation_input_tokens=c5 + c1, cache_read_input_tokens=u.get('cr', 0),
+                 cache_creation={'ephemeral_5m_input_tokens': c5, 'ephemeral_1h_input_tokens': c1})
+    return call(mid, ts, usage)
+
+
+CODER = {'type': 'alethite:coder', 'ts': '2026-10-05T10:00:02.000Z', 'model': 'claude-sonnet-5-5', 'usage': [0, 0, 8000, 2000], 'calls': 2, 'workflow': False,
+         'resumes': [], 'cw1h_total': 8000}
 
 
 class StatsTest(unittest.TestCase):
@@ -136,6 +149,56 @@ class StatsTest(unittest.TestCase):
         m = metrics(self.projects, self.conn, '2026-10-01')
         self.assertEqual((m['handoffs'], m['handoff_tokens']), (2, round((len(old) + len(new)) / 3.5)))
 
+    def agent(self, name, typ, objs):
+        self.write('P/S/subagents/%s.jsonl' % name, objs)
+        with open(os.path.join(self.projects, 'P', 'S', 'subagents', name + '.meta.json'), 'w') as f:
+            json.dump({'agentType': typ}, f)
+
+    def test_metrics_count_lean_agents(self):
+        T = '2026-10-05T10:00:02.000Z'
+        m = metrics(self.projects, self.conn, '2026-10-01')
+        self.assertEqual((m['subagents'], m['lean_agents'], m['lean_usd']), (0, 0, 0))
+        self.assertIn(t('stats_lean_none'), note_markdown(m, 'PC-1', '2026-11-13', [], 0))
+        self.agent('agent-g', 'general-purpose', [acall('g1', T, c5=50000, cr=10000)])
+        self.agent('agent-c', 'alethite:coder', [acall('c1', T, c1=8000, cr=2000), acall('c2', T, cr=3000)])
+        self.agent('agent-s', 'alethite:scout', [acall('s1', '2026-09-05T10:00:00.000Z', c1=8000, cr=2000)])  # before the period
+        m = metrics(self.projects, self.conn, '2026-10-01')
+        self.assertEqual((m['subagents'], m['lean_agents']), (2, 1))
+        self.assertGreater(m['lean_usd'], 0)
+        self.assertEqual((m['lean_ref_tokens'], m['lean_ref_since']), (60000, '2026-10-05'))
+        self.assertIn(t('stats_lean', total=2, lean=1, share='50%', usd='$%.2f' % m['lean_usd'], ref='60 000', since='2026-10-05'),
+                      note_markdown(m, 'PC-1', '2026-11-13', [], 0))
+        self.assertEqual(metrics(self.projects, self.conn, '2026-10-01', '2026-10-05')['subagents'], 0)  # until excludes the day
+        self.assertEqual(metrics(self.projects, self.conn, '2026-10-01', gone={'X': {'agents': [CODER]}})['lean_agents'], 2)  # a removed chat still counts
+        self.assertEqual(metrics(self.projects, self.conn, '2026-10-01', gone={'S': {'agents': [CODER]}})['lean_agents'], 1)  # on the disk too: the files count, once
+        m = metrics(self.projects, self.conn, '2026-10-01', now=1_790_000_000)
+        self.assertIn('subagents: 2', note_markdown(m, 'PC-1', '2026-11-13', [], 0))  # the frontmatter holds every metric
+
+    def test_negative_lean_sum_reads_dearer_not_dollar_minus(self):
+        m = metrics(self.projects, self.conn, '2026-10-01')
+        m.update(subagents=2, lean_agents=1, lean_usd=-0.3, lean_ref_tokens=60000, lean_ref_since='2026-10-05')
+        out = note_markdown(m, 'PC-1', '2026-11-13', [], 0)
+        self.assertIn(t('stats_lean_dearer', total=2, lean=1, share='50%', usd='$0.30', ref='60 000', since='2026-10-05'), out)
+        self.assertNotIn('$-', out)
+
+    def test_lean_stats_reads_agent_files_through_the_cache(self):
+        self.agent('agent-g', 'general-purpose', [acall('g1', '2026-10-05T10:00:02.000Z', c5=50000, cr=10000)])
+        self.agent('agent-c', 'alethite:coder', [acall('c1', '2026-10-05T10:00:02.000Z', c1=8000, cr=2000)])
+        cache = os.path.join(os.path.dirname(self.db), 'savings-cache.json')
+        first = savings.lean_stats(self.projects, '2026-10-01', None, None, 1_790_000_000, cache)  # the audit reads these files on its own: lean_stats alone
+        real_open, opened = open, []
+
+        def count(path, *a, **k):
+            if 'subagents' in str(path) and str(path).endswith('.jsonl'):
+                opened.append(str(path))
+            return real_open(path, *a, **k)
+
+        with mock.patch('builtins.open', count):
+            second = savings.lean_stats(self.projects, '2026-10-01', None, None, 1_790_000_000, cache)
+        self.assertEqual(opened, [])
+        self.assertEqual((first['agents'], first['lean']), (2, 1))
+        self.assertEqual(second, first)
+
     def test_metrics_reads_each_transcript_once(self):
         real_open, opened = open, []
 
@@ -180,6 +243,15 @@ class StatsTest(unittest.TestCase):
                                      '--limits', '[]', '--rule-chars', '0'])
         with mock.patch('cg.memdb.connect', return_value=self.conn):  # the test closes it; cg.py leaves that to the process exit
             return a.fn(a)
+
+    def test_cli_passes_the_removed_chats_and_survives_their_failure(self):
+        a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'stats', '--since', '2026-10-01', '--host', 'h', '--today', '2026-10-13',
+                                     '--limits', '[]', '--rule-chars', '0'])
+        for gone, effect in (({'X': {'agents': [CODER]}}, None), (None, ValueError('damaged'))):
+            with mock.patch('cg.memdb.connect', return_value=self.conn), mock.patch('cleanup.gone', return_value=gone, side_effect=effect), \
+                    mock.patch('stats.metrics', wraps=metrics) as spy:
+                a.fn(a)
+            self.assertEqual(spy.call_args.args[7], gone)
 
     def test_unreadable_transcript_is_reported_with_the_figures(self):
         real_open = open
