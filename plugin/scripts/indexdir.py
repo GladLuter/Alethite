@@ -148,6 +148,7 @@ def _absorb(conn):
             conn.executemany('INSERT INTO main.vecs VALUES(?, ?, ?, ?)', [(rid, part, conv, vec) for part, vec in parts])
         return bool(parts)
 
+    conn.execute('CREATE INDEX IF NOT EXISTS main.forgotten_text ON forgotten(cls, hash)')  # the _NEW query needs it; an index from before 0.9.2 lacks it
     forgets = records = vectors = 0
     for k in conn.execute(_UNFORGOTTEN).fetchall():
         memdb.forget_key(conn, *k, push=False)  # the line for the other computers comes with the outbox, below

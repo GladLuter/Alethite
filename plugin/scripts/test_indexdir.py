@@ -631,6 +631,12 @@ class AbsorbTest(unittest.TestCase):
             if name:
                 conn.execute("INSERT INTO meta VALUES('embed_model', ?)", (name,))
 
+    def test_absorb_creates_the_forgotten_index_an_older_index_lacks(self):
+        self.a.execute('DROP INDEX forgotten_text')
+        self.a.commit()
+        self.absorb()
+        self.assertIsNotNone(self.a.execute("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'forgotten_text'").fetchone())
+
     def test_new_records_come_with_their_marks_and_vectors_and_a_second_run_adds_nothing(self):
         self.model('m1', 'm1')
         put(self.a, 'S', 'shared', vec=REAL)

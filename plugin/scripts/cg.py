@@ -634,6 +634,7 @@ def main(argv):
         elif a.where and a.where.configured and a.cmd not in SHORT:
             # forgets made on C: while the settings were unreadable; never on the per-prompt path, and a busy index takes them on the next run
             with contextlib.suppress(Exception):
+                # shortcut: may re-send forget lines the other computer already has (a new or older folder index, or a home index synced while settings were broken); it ignores a forget it has, upgrade if duplicate lines ever cost a real amount
                 indexdir.apply_forgets(a.db, push=True)  # that home index is never merged: its outbox line would stay there
         try:
             out, code = a.fn(a), 0
