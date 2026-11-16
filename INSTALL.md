@@ -308,6 +308,20 @@ Off by default. `/al-cleanup on` turns it on, `/al-cleanup off` turns it off, `/
 - Deletion is permanent. An old chat reopened with `claude --resume` and left idle for an hour is deleted too. Its text stays in the long memory.
 - `/al-health` shows the state and how many chats were deleted.
 
+### Lean agent types
+
+Alethite ships five agent types. Each starts with only the tools it needs, so a helper costs far less than the built-in `general-purpose` (about 64k tokens at start). The main chat is told to pick them. Start is the measured size of the first call.
+
+| Type | Tools | Model | CLAUDE.md | Start |
+|---|---|---|---|---|
+| `scout` | Read, Grep, Glob | haiku | no | 4.8k |
+| `researcher` | Read, Grep, Glob, WebSearch, WebFetch | sonnet | yes | 11.3k |
+| `reviewer` | Read, Grep, Glob, Bash, PowerShell | sonnet | yes | 15.6k |
+| `coder` | Read, Edit, Write, Bash, PowerShell, Grep, Glob | sonnet | yes | 16.2k |
+| `resident` (expensive) | Read, Grep, Glob, Bash, PowerShell | sonnet | yes | 15.6k |
+
+Use `alethite:<name>`, for example `alethite:scout`. `resident` is expensive: it keeps a one-hour cache (a cache write costs 1.6 times more). Take it only when several tasks share one big picture of the project and pause for more than 5 minutes between them, and continue it with SendMessage. Otherwise take `reviewer`. In a workflow, `agent()` takes the type in its `agentType` option. The new types show up after `/reload-plugins` or in a new chat, because Claude Code reads the agent list only at session start and on reload.
+
 ## Only if you used an older build
 
 New users: ignore this section.
