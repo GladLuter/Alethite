@@ -2320,6 +2320,7 @@ const bash = ($: any, over: object) => $.tool.call({ tool: 'Bash', command: 'sle
 test('background guard: a lean agent that asks for run_in_background is refused, in the foreground it passes, PowerShell the same', async ($, on) => {
   await bgRig($, on, 'alethite:coder')
   expect(await bash($, { agentId: AG, run_in_background: true })).toEqual({ deny: T.bgDenied })
+  expect(await bash($, { agentId: AG, run_in_background: 'true' as never })).toEqual({ deny: T.bgDenied })
   expect(await bash($, { agentId: AG, run_in_background: false })).toEqual({ result: 'ran' })
   expect(await bash($, { agentId: AG })).toEqual({ result: 'ran' })
   expect(await $.tool.call({ tool: 'PowerShell', command: 'x', agentId: AG, run_in_background: true })).toEqual({ deny: T.bgDenied })
@@ -2422,6 +2423,29 @@ for (const reply of ['{"ponytail":true,"edits":4}', '{"ponytail":false,"edits":9
     await typed($, 'a')
     expect(contexts).toEqual([[]])
   })
+
+test('review hint: lessons off, a command and a meta prompt leave it for the next real prompt', { options: { lessons: false } }, async ($, on) => {
+  const contexts = submits(on)
+  const m = await hintRig($, on, '{"ponytail":true,"edits":6}')
+  await mountBand($)
+  await typed($, '/cmd', { command: 'cmd' })
+  await typed($, 'meta', { isMeta: true })
+  await typed($, 'real')
+  await typed($, 'next')
+  expect(contexts).toEqual([[], [], [hintText(6)], []])
+  expect(ofCg(m, 'review-hint')).toHaveLength(1)
+})
+
+test('review hint: a dropped prompt gives the hint back to the next one', async ($, on) => {
+  const contexts: string[][] = []
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => (contexts.push([...(e.context ?? [])]), e.text === 'drop' ? { drop: 'no' } : { text: e.text }))
+  await hintRig($, on, '{"ponytail":true,"edits":6}')
+  await mountBand($)
+  await typed($, 'drop')
+  await typed($, 'again')
+  await typed($, 'last')
+  expect(contexts).toEqual([[hintText(6)], [hintText(6)], []])
+})
 
 test('review hint: cg.py fails: the prompt goes through without it', async ($, on) => {
   const contexts = submits(on)

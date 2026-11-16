@@ -52,6 +52,8 @@ test('shouldStop: only a found, idle, not yet stopped agent older than its limit
 
 test('shouldDenyBackground: only an alethite:* type with run_in_background true', () => {
   expect(shouldDenyBackground('alethite:coder', true)).toBe(true)
+  expect(shouldDenyBackground('alethite:coder', 'true')).toBe(true)
+  expect(shouldDenyBackground('alethite:coder', 'false')).toBe(false)
   expect(shouldDenyBackground('alethite:coder', false)).toBe(false)
   expect(shouldDenyBackground('alethite:coder', undefined)).toBe(false)
   expect(shouldDenyBackground('general-purpose', true)).toBe(false)

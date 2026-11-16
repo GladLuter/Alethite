@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Review, Savings, Snap } from '../types'
-import { columns, delayAt, money, REVIEW_EDITS, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
+import { columns, delayAt, money, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
 import { isStale, shouldDenyBackground, shouldStop, size, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
@@ -466,6 +466,7 @@ export const register: Register = (on, options) => {
   const rulesAt = new Map<string, number | null>() // the context size at the last reminder of the rules for all projects, by chat (null: it was unknown)
   const setOf = (m: Map<string, Set<number>>, id: string) => m.get(id) ?? m.set(id, new Set()).get(id)!
   let readyIn = '' // the chat whose New worker button was ready at the last draw ('' when none)
+  const REVIEW_EDITS = 5 // unreviewed code edits from which the main chat is told to offer /ponytail-review
   const reviewDue = new Map<string, number>() // by chat: the edits count of a review hint the main chat has not been told yet
   const reviewSaid = new Set<string>() // chats told since their count was last under the limit; in memory only, a reload may say it once more
   let isPonytailOff = false // the last hint said ponytail is not installed: stop asking
@@ -854,6 +855,13 @@ export const register: Register = (on, options) => {
     if (isOwners && !e.isMeta) await recheck($, python)
     // the review hint rides the owner's next message once; a failure here costs nothing but the hint
     const blocks: string[] = []
+    let hint: [id: string, edits: number] | undefined
+    // a dropped prompt never reached the model: the hint comes back for the next one
+    const pass = async () => {
+      const r = await next(blocks.length ? { ...e, context: [...(e.context ?? []), ...blocks] } : e)
+      if (hint && r.drop !== undefined) (reviewDue.set(hint[0], hint[1]), reviewSaid.delete(hint[0]))
+      return r
+    }
     if (isOwners && !e.isMeta && e.command === undefined) {
       try {
         const id = await $.session.id()
@@ -861,11 +869,12 @@ export const register: Register = (on, options) => {
         if (edits !== undefined) {
           reviewDue.delete(id)
           reviewSaid.add(id)
+          hint = [id, edits]
           blocks.push([START, T.reviewHint(edits), END].join('\n'))
         }
       } catch {}
     }
-    if (!isLessonsOn || e.command !== undefined || e.isMeta || !isOwners) return next(blocks.length ? { ...e, context: [...(e.context ?? []), ...blocks] } : e)
+    if (!isLessonsOn || e.command !== undefined || e.isMeta || !isOwners) return pass()
     // the rules for all projects come first and need no Python and no minimum length; a failure in one part must not stop the other
     try {
       const id = await $.session.id()
@@ -904,7 +913,7 @@ export const register: Register = (on, options) => {
         isLessonsNoted = true
       }
     }
-    return next(blocks.length ? { ...e, context: [...(e.context ?? []), ...blocks] } : e)
+    return pass()
   })
 
   // A lean agent asking for a background command is refused with the way to run it in the foreground; the main chat, other types, unknown
@@ -1051,9 +1060,9 @@ export const register: Register = (on, options) => {
       readyIn = readyId
       if (readyId && !isPonytailOff)
         void guarded($, 'review', async () => {
-          const r = (await runCg($, python, ['review-hint', '--session', await $.session.id()], 8_000)) as unknown as Review
-          isPonytailOff = r.ponytail === false
           const id = await $.session.id()
+          const r = (await runCg($, python, ['review-hint', '--session', id], 8_000)) as unknown as Review
+          isPonytailOff = r.ponytail === false
           if (r.ponytail && r.edits >= REVIEW_EDITS) {
             if (!reviewSaid.has(id)) reviewDue.set(id, r.edits)
           } else {

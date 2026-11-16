@@ -7,7 +7,6 @@ export type Tone = 'error' | 'warning'
 export type Token = { key: 'size' | 'cache' | 'send' | 'saved' | 'base'; text: string; tone?: Tone }
 export type Col = { key: string; label: string; value: string; sub: string[]; subTone?: Record<number, Tone>; tone?: Tone }
 
-export const REVIEW_EDITS = 5 // unreviewed code edits from which the main chat is told to offer /ponytail-review
 export const SHIELD = '🛡' // the title shortened to this when the row is tight
 const usd = (n: number) => `$${n.toFixed(2)}`
 const asRec = (v: unknown) => (v && typeof v === 'object' ? (v as Record<string, any>) : undefined)

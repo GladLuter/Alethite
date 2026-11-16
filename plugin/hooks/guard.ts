@@ -40,7 +40,7 @@ export const isStale = (s: Snap, minTokens: number, idleMinutes: number) =>
   s.at !== null && (s.tokens ?? 0) > minTokens && s.now - s.at > idleMinutes * 60_000
 
 // A lean agent runs its commands in the foreground: one it left in the background would wake it again on a cold cache.
-export const shouldDenyBackground = (type: string | undefined, background: unknown) => type?.startsWith('alethite:') === true && background === true
+export const shouldDenyBackground = (type: string | undefined, background: unknown) => type?.startsWith('alethite:') === true && (background === true || background === 'true')
 
 // A resume of a cold agent is stopped once: only an agent that is found, not running, not stopped for this end already, and older than its cache lasts.
 export const shouldStop = (a: { found: boolean; age: number | null; limit: number }, running: boolean, stoppedBefore: boolean) =>
