@@ -4,7 +4,7 @@ import type { LaunchIO } from '../hooks/worker'
 import { T } from '../hooks/text'
 
 // A LaunchIO that only writes down what was called; `o` makes one step fail or refuse.
-const fake = (o: { draft?: string; handoffError?: string; clearError?: string; submitError?: string; fillError?: string; drop?: string } = {}) => {
+const fake = (o: { draft?: string; handoffError?: string; clearError?: string; submitError?: string; fillError?: string; drop?: string; modelFails?: boolean } = {}) => {
   const calls: string[] = []
   const toasts: string[] = []
   const sent: string[] = []
@@ -33,6 +33,7 @@ const fake = (o: { draft?: string; handoffError?: string; clearError?: string; s
     },
     emptyBox: async () => void calls.push('emptyBox'),
     toast: text => void (calls.push('toast'), toasts.push(text)),
+    switchModel: async m => (calls.push(`model ${m}`), !o.modelFails),
   }
   return { io, calls, toasts, sent, filled }
 }
@@ -110,4 +111,14 @@ test('fill mode: the same early exits as send (empty draft, failed handoff, fail
   const { io, calls } = fake({ clearError: 'busy' })
   expect(await launch(io, 'fill')).toBe('failed')
   expect(calls).not.toContain('fill')
+})
+
+test('a model is switched before the handoff; one that did not switch stops everything, the draft untouched', async () => {
+  const ok = fake()
+  expect(await launch(ok.io, 'send', 'sonnet')).toBe('sent')
+  expect(ok.calls.slice(0, 4)).toEqual(['draft', 'model sonnet', 'handoff', 'clear'])
+  const bad = fake({ modelFails: true })
+  expect(await launch(bad.io, 'send', 'sonnet')).toBe('failed')
+  expect(bad.calls).toEqual(['draft', 'model sonnet', 'toast'])
+  expect(bad.toasts).toEqual([T.modelSwitchFailed('sonnet')])
 })

@@ -48,12 +48,14 @@ export const en = {
   atFilesHint: '@files and images in the draft are not passed on',
   busy: 'Starting…',
   afterReset: (time: string) => `After reset (${time})`,
+  afterResetModel: (model: string) => `on ${model}`,
   waitingAt: (time: string) => `⏰ worker at ${time}`,
 
   // new worker launch: every failure says what was kept and where
   draftEmpty: 'New worker: the draft is empty, the chat is untouched. Type a message and press again.',
   handoffFailed: (why: string) => `New worker: the handoff was not built (${why}). The chat is untouched.`,
   clearFailed: (why: string, path: string) => `New worker: the chat was not cleared (${why}). The handoff is saved: ${path}`,
+  modelSwitchFailed: (model: string) => `New worker: the model did not switch to ${model}, so nothing was sent. The chat is untouched, the draft is in the box.`,
   pickThenEnter: 'The chat is cleared; the handoff and the draft are in the input box. Pick the model and effort in the app menu at the bottom right and press Enter.',
   notSent: 'the handoff was not sent',
   submitFailed: (why: string, path: string) => `New worker: sending failed (${why}). The handoff and the draft are in the input box: press Enter. The handoff is saved: ${path}`,

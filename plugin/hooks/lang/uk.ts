@@ -49,12 +49,14 @@ export const uk: Partial<Texts> = {
   atFilesHint: '@файли та зображення з чернетки не передаються',
   busy: 'Запускаю…',
   afterReset: (time: string) => `Після скидання (${time})`,
+  afterResetModel: (model: string) => `на ${model}`,
   waitingAt: (time: string) => `⏰ працівник: ${time}`,
 
   // new worker launch: every failure says what was kept and where
   draftEmpty: 'Новий працівник: чернетка порожня, чат не зачеплено. Наберіть повідомлення й натисніть знову.',
   handoffFailed: (why: string) => `Новий працівник: передачу справ не зібрано (${why}). Чат не зачеплено.`,
   clearFailed: (why: string, path: string) => `Новий працівник: чат не очистився (${why}). Передачу збережено: ${path}`,
+  modelSwitchFailed: (model: string) => `Новий працівник: модель не перемкнулась на ${model}, тому нічого не надіслано. Чат не зачеплено, чернетка в полі.`,
   pickThenEnter: 'Чат очищено, передача справ і чернетка в полі вводу. Оберіть модель і зусилля в меню застосунку праворуч унизу й натисніть Enter.',
   notSent: 'передачу не надіслано',
   submitFailed: (why: string, path: string) => `Новий працівник: надіслати не вдалося (${why}). Передача й чернетка в полі вводу: натисніть Enter. Передачу збережено: ${path}`,

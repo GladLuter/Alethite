@@ -15,15 +15,18 @@ const noTurn = () => ran('{"tokens":null,"at":null,"model":null}')
 
 // stands for the engine beneath the plugin; `statuses` collects what the status line was set to, `answerRun` answers cg.py
 const ids = { now: 'id' }
+const chat = { model: 'claude-opus-5-5', switches: true } // what /model does in the mock
 const wire = (on: any, statuses: (string | undefined)[], answerUsage: () => unknown, answerRun: (_: unknown, e: { argv: string[] }) => unknown = noTurn, store = new Map<string, unknown>()) => {
   ids.now = 'id'
+  chat.model = 'claude-opus-5-5'
+  chat.switches = true
   const clock = mock.clock(on, { now: 10_000_000_000 })
   on('store.get', (_: unknown, e: { key: string }) => ({ value: store.get(e.key) }))
   on('store.set', (_: unknown, e: { key: string; value: unknown }) => (store.set(e.key, e.value), { value: undefined }))
   on('store.keys', () => ({ value: [...store.keys()] }))
   on('store.delete', (_: unknown, e: { key: string }) => (store.delete(e.key), { value: undefined }))
   on('session.id', () => ({ value: ids.now }))
-  on('session.model', () => ({ value: 'claude-opus-5-5' }))
+  on('session.model', () => ({ value: chat.model }))
   on('session.usage', answerUsage)
   on('session.version', () => ({ value: { version: '2.1.295' } }))
   on('process.run', answerRun)
@@ -139,7 +142,7 @@ const box = (on: any, draft: string, log: string[], gate: Promise<unknown> = Pro
   on('prompt.read', () => (state.broken ? { deny: 'boom' } : { value: { text: state.text, cursor: 0 } }))
   on('prompt.fill', (_: unknown, e: { text: string }) => (state.refuse ? { isFilled: false, refusal: state.refuse } : ((state.text = e.text), { isFilled: true })))
   on('prompt.submit', async (_: unknown, e: { text: string }) => (log.push(`submit ${e.text}`), await gate, { text: e.text }))
-  on('command.run', (_: unknown, e: { command: string; args: string }) => (log.push(`/${e.command} ${e.args}`.trim()), { text: '' }))
+  on('command.run', (_: unknown, e: { command: string; args: string }) => (log.push(`/${e.command} ${e.args}`.trim()), e.command === 'model' && chat.switches && (chat.model = `claude-${e.args}-5-5`), { text: '' }))
   return state
 }
 const withMemory = { value: { ...usage, context: { ...usage.context, breakdown: { memoryFiles: [{ path: 'C:/mem/memory/MEMORY.md', type: 'AutoMem', tokens: 1 }] } } } }
@@ -1948,8 +1951,8 @@ test('after-reset is offered only near a limit', async ($, on) => {
   wire(on, [], nearLimit())
   const ui = await mountBand($)
   await ui.press({ key: 'launch' })
-  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
-  expect(await ui.findAll({ type: 'Button', text: T.afterReset(when(new Date(AT).toISOString(), NOW)) })).toHaveLength(1)
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'after-opus', 'after-sonnet', 'cancel'])
+  expect(await ui.findAll({ type: 'Button', text: T.afterReset(when(new Date(AT).toISOString(), NOW)) })).toHaveLength(3) // plain, opus, sonnet
 })
 
 for (const [name, limit] of [
@@ -1992,6 +1995,45 @@ test('a wait fires once when due: the key goes before the launch', async ($, on)
   expect(gone).toEqual([true])
   await m.clock.advance(120_000)
   expect(log).toHaveLength(2)
+})
+
+// After reset with a model: /model goes first (the model holds through /clear, probe 2026-11-15), and a model that did not switch stops the send
+const withModel = (model: string, store = new Map<string, unknown>([['delayed:id', { at: SOON, model }]])) => store
+test('After reset with a model: the wait keeps it, the plain button keeps none', async ($, on) => {
+  const { m, ui } = await delayed($, on)
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after-sonnet' })
+  expect(m.store.get('delayed:id')).toEqual({ at: AT, model: 'sonnet' })
+  await ui.press({ key: 'cancel-delay' })
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after-opus' })
+  expect(m.store.get('delayed:id')).toEqual({ at: AT, model: 'opus' })
+  await ui.press({ key: 'cancel-delay' })
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'after' })
+  expect(m.store.get('delayed:id')).toEqual({ at: AT })
+})
+
+test('a wait with a model: /model before the handoff and the send, which then goes out', async ($, on) => {
+  const { m, log } = await delayed($, on, 'продолжаем', withModel('sonnet'))
+  await m.clock.advance(SOON - NOW)
+  expect(log).toEqual(['/model sonnet', '/clear', 'submit h' + String.fromCharCode(10, 10) + 'продолжаем'])
+})
+
+test('a wait with a model that does not switch: nothing is sent, the draft stays in the box, the toast says why', async ($, on) => {
+  const { m, log, state } = await delayed($, on, 'продолжаем', withModel('sonnet'))
+  chat.switches = false
+  await m.clock.advance(SOON - NOW)
+  expect(log).toEqual(['/model sonnet'])
+  expect(state.text).toBe('продолжаем')
+  expect(m.toasts).toContain(T.toast(T.modelSwitchFailed('sonnet')))
+  expect(m.store.has('delayed:id')).toBe(false)
+})
+
+test('a 0.8.0 wait without a model never touches /model', async ($, on) => {
+  const { m, log } = await delayed($, on, 'продолжаем', dueSoon())
+  await m.clock.advance(SOON - NOW)
+  expect(log).toEqual(['/clear', 'submit h' + String.fromCharCode(10, 10) + 'продолжаем'])
 })
 
 test('cancel-delay removes the wait', async ($, on) => {

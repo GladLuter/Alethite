@@ -49,12 +49,14 @@ export const ru: Partial<Texts> = {
   atFilesHint: '@файлы и картинки из черновика не передаются',
   busy: 'Запускаю…',
   afterReset: (time: string) => `После сброса (${time})`,
+  afterResetModel: (model: string) => `на ${model}`,
   waitingAt: (time: string) => `⏰ работник в ${time}`,
 
   // new worker launch: every failure says what was kept and where
   draftEmpty: 'Новый работник: черновик пуст, чат не тронут. Набери сообщение и нажми снова.',
   handoffFailed: (why: string) => `Новый работник: передача не собрана (${why}). Чат не тронут.`,
   clearFailed: (why: string, path: string) => `Новый работник: чат не очистился (${why}). Передача сохранена: ${path}`,
+  modelSwitchFailed: (model: string) => `Новый работник: модель не переключилась на ${model}, поэтому ничего не отправлено. Чат не тронут, черновик в поле.`,
   pickThenEnter: 'Чат очищен, передача дел и черновик в поле ввода. Выберите модель и усилие в меню приложения справа внизу и нажмите Enter.',
   notSent: 'передача не отправлена',
   submitFailed: (why: string, path: string) => `Новый работник: отправка не удалась (${why}). Передача и черновик в поле ввода: нажми Enter. Передача сохранена: ${path}`,

@@ -27,7 +27,7 @@ import type { SyncResult } from './sync'
 import { oldSettingsPath, settingsPath, withFile } from './settings'
 import { language, setLanguage, T } from './text'
 import { launch } from './worker'
-import type { LaunchIO } from './worker'
+import type { LaunchIO, Model } from './worker'
 
 const snap = atom({ plugin: 'alethite', key: 'snap' } as const, null)
 const hiddenId = atom({ plugin: 'alethite', key: 'hiddenId' } as const, '')
@@ -350,6 +350,12 @@ const refreshInfo = async ($: EngineInterface, python: string) => {
 // Whether the model is mid-turn, as the last band render saw it (only the render is told): /clear then is dangerous.
 let isWorking = false
 
+// The model an After reset wait asks for; anything else (an old wait has none) is the current one.
+const modelOf = async ($: EngineInterface, id: string): Promise<Model | undefined> => {
+  const m = ((await $.store.get(`delayed:${id}`)) as { model?: unknown } | undefined)?.model
+  return m === 'opus' || m === 'sonnet' ? m : undefined
+}
+
 // When this chat's wait comes due; a stored value that is not a time the clock can show counts as no wait.
 const waitOf = async ($: EngineInterface, id: string) => {
   const wait = (await $.store.get(`delayed:${id}`)) as { at?: unknown } | undefined
@@ -362,25 +368,25 @@ const waitOf = async ($: EngineInterface, id: string) => {
 let threwAt = 0
 const fireDue = async ($: EngineInterface, python: string, compression: string) => {
   const [id, now] = await Promise.all([$.session.id(), $.clock.now()])
-  const at = await waitOf($, id)
+  const [at, model] = await Promise.all([waitOf($, id), modelOf($, id)])
   let shown: number | null = null
   await update($, delayedAt, v => ((shown = v), at))
   if (at === null || at > now || isWorking || shown !== at) return
   await $.store.delete(`delayed:${id}`)
   await update($, delayedAt, () => null)
   // false = nothing was launched (busy, the busy flag could not be set, or a step before /clear threw): the wait goes back. A throw from startWorker's tail comes after the launch: no put-back.
-  const r = await startWorker($, python, 'send', compression)
+  const r = await startWorker($, python, 'send', compression, model)
   if (r) return
   if (r === null) {
     if (threwAt === at) return // a step before /clear keeps throwing: one put-back per wait, not a toast every tick
     threwAt = at
   }
-  await $.store.set(`delayed:${id}`, { at })
+  await $.store.set(`delayed:${id}`, model ? { at, model } : { at })
   await update($, delayedAt, () => at)
 }
 
 // "Новый работник": binds launch() to the engine through closures made here. One launch at a time.
-const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill', compression: string) => {
+const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill', compression: string, model?: Model) => {
   let wasBusy = false
   try {
     await update($, isBusy, busy => ((wasBusy = busy), true)) // atomic: a second press before the redraw is refused here
@@ -415,8 +421,9 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
         toast($, text)
         told = text
       },
+      switchModel: async m => (await $.command.run({ command: 'model', args: m }), (await $.session.model()).includes(m)),
     }
-    outcome = await launch(io, mode)
+    outcome = await launch(io, mode, model)
     if (outcome === 'ready') toast($, T.pickThenEnter)
     if (outcome === 'failed' || outcome === 'dropped') await noteError($, 'launch', told)
   } catch (err) {
@@ -944,20 +951,21 @@ export const register: Register = (on, options) => {
             <Box gap={1} flexWrap="wrap">
               <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send', compression)} />
               <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill', compression)} />
-              {after !== null && (
-                <Button
-                  key="after"
-                  label={T.afterReset(when(new Date(after).toISOString(), s.now))}
-                  onPress={() =>
-                    guarded($, 'band', async () => {
-                      await update($, isArmed, () => false)
-                      if (!(await $.prompt.read()).text.trim()) return toast($, T.draftEmpty)
-                      await $.store.set(`delayed:${await $.session.id()}`, { at: after }) // the time printed on the button; the chat that is open now (a /clear may have come)
-                      await update($, delayedAt, () => after)
-                    })
-                  }
-                />
-              )}
+              {after !== null &&
+                ([undefined, 'opus', 'sonnet'] as const).map(model => (
+                  <Button
+                    key={model ? `after-${model}` : 'after'}
+                    label={`${T.afterReset(when(new Date(after).toISOString(), s.now))}${model ? ` ${T.afterResetModel(model)}` : ''}`}
+                    onPress={() =>
+                      guarded($, 'band', async () => {
+                        await update($, isArmed, () => false)
+                        if (!(await $.prompt.read()).text.trim()) return toast($, T.draftEmpty)
+                        await $.store.set(`delayed:${await $.session.id()}`, model ? { at: after, model } : { at: after }) // the time printed on the button; the chat that is open now (a /clear may have come)
+                        await update($, delayedAt, () => after)
+                      })
+                    }
+                  />
+                ))}
               <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
             </Box>
             <Text dimColor>{T.atFilesHint}</Text>
