@@ -32,7 +32,7 @@ class ManifestTest(unittest.TestCase):
             with open(os.path.join(ROOT, 'plugin', 'agents', name + '.md'), encoding='utf-8') as f:
                 text = f.read()
             self.assertTrue(text.startswith('---'))
-            head = text.split('---', 2)[1]
+            _, head, body = text.split('---', 2)
             fm = dict(l.split(':', 1) for l in head.strip().splitlines() if not l.startswith(' '))
             fm = {k.strip(): v.strip() for k, v in fm.items()}
             self.assertEqual(fm['name'], name)
@@ -43,7 +43,9 @@ class ManifestTest(unittest.TestCase):
                 self.assertNotIn(bad, fm['tools'])
             self.assertEqual(fm.get('omitClaudeMd'), 'true' if name == 'scout' else None)
             self.assertIn('no MCP tools', fm['description'])
-            self.assertEqual('foreground' in text.split('---', 2)[2], name in ('coder', 'reviewer', 'resident'))
+            self.assertEqual('foreground' in body, name in ('coder', 'reviewer', 'resident'))
+            self.assertIn('terse', body)
+            self.assertIn('verbatim', body)
             self.assertEqual('experimental' in fm, name == 'resident')
             self.assertEqual('cacheTtl: 1h' in head, name == 'resident')
             self.assertNotIn('effort', fm)

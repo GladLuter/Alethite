@@ -20,7 +20,7 @@ from compress import LEVELS, compress
 from transcripts import find_session, last_usage, project_key, project_keys
 
 
-INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
+INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings', 'agent-age', 'review-hint')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
 SHORT = (*INDEX_FREE, 'lessons-match')  # the runs that do not merge, nor open the index again to keep forgets (lessons-match reads it and writes no forget)
 
 
@@ -295,6 +295,19 @@ def _savings(a):
     return savings.savings(a.projects, _session(a.session), convs, os.path.join(os.path.dirname(crypto.settings_path(a.db)), 'savings-cache.json'), gone)
 
 
+def _agent_age(a):
+    import savings
+    return savings.agent_age(a.projects, _session(a.session), a.agent, a.ended, time.time())
+
+
+def _review_hint(a):
+    import review
+    if not review.ponytail(os.path.expanduser('~')):  # nobody to hint for: no transcript is read
+        return {'ponytail': False, 'edits': 0}
+    main, subs = find_session(a.projects, _session(a.session))
+    return {'ponytail': True, 'edits': review.edits([main, *subs] if main else subs)}
+
+
 def _cleanup_on(a):
     return _settings(crypto.settings_path(a.db))[0].get('deleteOldChats') is True
 
@@ -485,6 +498,12 @@ def _parser():
     s = add('savings', _savings)
     s.add_argument('--session', required=True)
     s.add_argument('--cwd', required=True)
+    s = add('agent-age', _agent_age)
+    s.add_argument('--session', required=True)
+    s.add_argument('--agent', required=True)
+    s.add_argument('--ended')  # the mod's own record of when the agent finished (ISO time); its last call without it
+    s = add('review-hint', _review_hint)
+    s.add_argument('--session', required=True)
     s = add('sync', _sync)
     s.add_argument('--sync-dir', required=True)
     s.add_argument('--machine')

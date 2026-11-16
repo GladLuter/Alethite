@@ -19,6 +19,9 @@ export type Savings = {
 // The band's other source: `cg.py status` as it came, and the savings; null where the answer did not come.
 export type Info = { status: Record<string, unknown> | null; savings: Savings | null; isSyncOn: boolean }
 
+// What `cg.py review-hint` answers: ponytail is installed, and the code edits since the last /ponytail-review.
+export type Review = { ponytail: boolean; edits: number }
+
 declare module 'claude-code' {
   interface PluginState {
     alethite: {
@@ -33,6 +36,7 @@ declare module 'claude-code' {
       isDetails: boolean
       calmId: string
       delayedAt: number | null
+      review: Review | null
     }
   }
 }

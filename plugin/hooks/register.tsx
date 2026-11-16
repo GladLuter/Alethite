@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Savings, Snap } from '../types'
-import { columns, delayAt, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
-import { isStale, statusText } from './guard'
+import type { Review, Savings, Snap } from '../types'
+import { columns, delayAt, money, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
+import { isStale, shouldStop, size, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
 import { flush, notePath, summaryNote, summaryPath } from './notes'
@@ -27,7 +27,7 @@ import type { SyncResult } from './sync'
 import { oldSettingsPath, settingsPath, withFile } from './settings'
 import { language, setLanguage, T } from './text'
 import { launch } from './worker'
-import type { LaunchIO } from './worker'
+import type { LaunchIO, Model } from './worker'
 
 const snap = atom({ plugin: 'alethite', key: 'snap' } as const, null)
 const hiddenId = atom({ plugin: 'alethite', key: 'hiddenId' } as const, '')
@@ -37,6 +37,7 @@ const info = atom({ plugin: 'alethite', key: 'info' } as const, null)
 const isDetails = atom({ plugin: 'alethite', key: 'isDetails' } as const, false)
 const calmId = atom({ plugin: 'alethite', key: 'calmId' } as const, '')
 const delayedAt = atom({ plugin: 'alethite', key: 'delayedAt' } as const, null)
+const review = atom({ plugin: 'alethite', key: 'review' } as const, null)
 
 // The helpers below take `$` and so stay in this file: the loader follows `$` only into functions declared here, never across an import.
 
@@ -350,10 +351,12 @@ const refreshInfo = async ($: EngineInterface, python: string) => {
 // Whether the model is mid-turn, as the last band render saw it (only the render is told): /clear then is dangerous.
 let isWorking = false
 
-// When this chat's wait comes due; a stored value that is not a time the clock can show counts as no wait.
+// When this chat's wait comes due and the model it asks for (an old wait has none: the current one); a stored value that is not a time the clock can show counts as no wait.
 const waitOf = async ($: EngineInterface, id: string) => {
-  const wait = (await $.store.get(`delayed:${id}`)) as { at?: unknown } | undefined
-  return typeof wait?.at === 'number' && !Number.isNaN(new Date(wait.at).getTime()) ? wait.at : null
+  const wait = (await $.store.get(`delayed:${id}`)) as { at?: unknown; model?: unknown } | undefined
+  const at = typeof wait?.at === 'number' && !Number.isNaN(new Date(wait.at).getTime()) ? wait.at : null
+  const model: Model | undefined = wait?.model === 'opus' || wait?.model === 'sonnet' ? wait.model : undefined
+  return { at, model }
 }
 
 // The delayed New worker: the wait is a store key of its chat; the 30 s tick starts it once due. The key goes first, so it never fires twice.
@@ -362,25 +365,25 @@ const waitOf = async ($: EngineInterface, id: string) => {
 let threwAt = 0
 const fireDue = async ($: EngineInterface, python: string, compression: string) => {
   const [id, now] = await Promise.all([$.session.id(), $.clock.now()])
-  const at = await waitOf($, id)
+  const { at, model } = await waitOf($, id)
   let shown: number | null = null
   await update($, delayedAt, v => ((shown = v), at))
   if (at === null || at > now || isWorking || shown !== at) return
   await $.store.delete(`delayed:${id}`)
   await update($, delayedAt, () => null)
   // false = nothing was launched (busy, the busy flag could not be set, or a step before /clear threw): the wait goes back. A throw from startWorker's tail comes after the launch: no put-back.
-  const r = await startWorker($, python, 'send', compression)
+  const r = await startWorker($, python, 'send', compression, model)
   if (r) return
   if (r === null) {
     if (threwAt === at) return // a step before /clear keeps throwing: one put-back per wait, not a toast every tick
     threwAt = at
   }
-  await $.store.set(`delayed:${id}`, { at })
+  await $.store.set(`delayed:${id}`, model ? { at, model } : { at })
   await update($, delayedAt, () => at)
 }
 
 // "Новый работник": binds launch() to the engine through closures made here. One launch at a time.
-const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill', compression: string) => {
+const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill', compression: string, model?: Model) => {
   let wasBusy = false
   try {
     await update($, isBusy, busy => ((wasBusy = busy), true)) // atomic: a second press before the redraw is refused here
@@ -415,8 +418,9 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
         toast($, text)
         told = text
       },
+      switchModel: async m => (await $.command.run({ command: 'model', args: m }), (await $.session.model()).includes(m)),
     }
-    outcome = await launch(io, mode)
+    outcome = await launch(io, mode, model)
     if (outcome === 'ready') toast($, T.pickThenEnter)
     if (outcome === 'failed' || outcome === 'dropped') await noteError($, 'launch', told)
   } catch (err) {
@@ -461,6 +465,8 @@ export const register: Register = (on, options) => {
   const stoppedIn = new Map<string, Set<number>>()
   const rulesAt = new Map<string, number | null>() // the context size at the last reminder of the rules for all projects, by chat (null: it was unknown)
   const setOf = (m: Map<string, Set<number>>, id: string) => m.get(id) ?? m.set(id, new Set()).get(id)!
+  let readyIn = '' // the chat whose New worker button was ready at the last draw ('' when none)
+  let isPonytailOff = false // the last hint said ponytail is not installed: stop asking
   let isLessonsNoted = false // a lesson search that fails on every message is kept for /al-health once, not on each
 
   on('session.start', async ($, e, next) => {
@@ -510,7 +516,7 @@ export const register: Register = (on, options) => {
     await guarded($, 'session.start', async () => {
       const isOpen = (await $.store.get('details')) === true
       await update($, isDetails, () => isOpen)
-      const at = await waitOf($, await $.session.id()) // a wait outlives a restart
+      const { at } = await waitOf($, await $.session.id()) // a wait outlives a restart
       await update($, delayedAt, () => at)
     })
 
@@ -575,7 +581,31 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // The subagents the engine says are running, when each last finished, and the (agent, end) pairs a resume was stopped for: in memory only,
+  // after a reload the worst case is one more stop. A name given to Agent({ name }) is linked to the agent's id at its spawn.
+  const running = new Set<string>()
+  const ended = new Map<string, number>()
+  const stoppedAgent = new Set<string>()
+  const agentNames = new Map<string, string>()
+
+  on('agent.spawn', async (_, e, next) => {
+    const r = await next(e)
+    if (e.name !== undefined && r.agentId !== undefined) agentNames.set(e.name, r.agentId)
+    return r
+  })
+
+  on('turn.start', async (_, e, next) => {
+    if (e.agentId !== undefined) running.add(e.agentId)
+    return next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
+    if (e.agentId !== undefined) {
+      running.delete(e.agentId)
+      try {
+        ended.set(e.agentId, await $.clock.now())
+      } catch {}
+    }
     // a subagent's turn or one that cost nothing (interrupted, API error) does not move the cache clock
     if (e.agentId === undefined && e.usage !== undefined) {
       await guarded($, 'turn.complete', async () => {
@@ -880,6 +910,26 @@ export const register: Register = (on, options) => {
     return lesson === undefined ? next(e) : { deny: [START, T.lessonGate(plain(lesson.text), lesson.global), END].join('\n') }
   })
 
+  // A message to a subagent that finished long ago, so that its cache has gone cold, is stopped once with the price of the rewrite; the same
+  // message again passes. An agent that is running, a name or an id nothing is known of, another session and any failure here pass untouched:
+  // the guard must never be what stops a needed resume.
+  on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
+    try {
+      const to = typeof e.to === 'string' ? (agentNames.get(e.to) ?? e.to) : ''
+      if (/^a[0-9a-f]{16}$/.test(to) && !running.has(to)) {
+        const end = ended.get(to)
+        if (end !== undefined && (await $.clock.now()) - end < 300_000) return next(e) // warm whatever the limit: nothing to ask
+        const a = (await runCg($, python, ['agent-age', '--session', await $.session.id(), '--agent', to, ...(end === undefined ? [] : ['--ended', new Date(end).toISOString()])], 8_000)) as { found: boolean; age: number | null; limit: number; context: number; usd: number }
+        const key = `${to}|${end ?? ''}`
+        if (shouldStop(a, false, stoppedAgent.has(key))) {
+          stoppedAgent.add(key)
+          return { deny: T.coldAgent(Math.round((a.age ?? 0) / 60), size(a.context), money(a.usd).text) }
+        }
+      }
+    } catch {}
+    return next(e)
+  })
+
   // After a compaction the model no longer has what it was shown: this chat's lessons may be shown and may stop a command once more.
   // Only the main conversation's own, finished compaction (a subagent's, a precompute and a skipped one leave the chat as it was); the
   // result goes back whatever happens here.
@@ -920,14 +970,16 @@ export const register: Register = (on, options) => {
     const armed = await read($, isArmed)
     const busy = await read($, isBusy)
     const wait = await read($, delayedAt)
+    const hint = await read($, review)
     const data = await read($, info)
     const isOpen = await read($, isDetails)
 
     isWorking = e.props.isWorking // /clear in the middle of a turn is dangerous: no New worker then, and no waiting one either
     if (s === null || e.props.hasSurvey || s.id === hidden) return next(e)
 
-    const { Box, Button, Svg, Text } = $.ui.resolve(e)
-    const rule = e.surface === 'desktop' ? <Svg source={RULE_SVG} alt="—" /> : null
+    const els = $.ui.resolve(e)
+    const { Box, Button, Text } = els
+    const rule = e.surface === 'desktop' && 'Svg' in els ? <els.Svg source={RULE_SVG} alt="—" /> : null // the `in` narrows the union for the types
     // the band above the prompt is one area for every mod: ours is a row or a frame of its own, and what the mods beneath draw stays under it
     const below = await next(e)
     const isLit = isStale(s, minTokens, idleMinutes) && s.id !== calm
@@ -944,20 +996,21 @@ export const register: Register = (on, options) => {
             <Box gap={1} flexWrap="wrap">
               <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send', compression)} />
               <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill', compression)} />
-              {after !== null && (
-                <Button
-                  key="after"
-                  label={T.afterReset(when(new Date(after).toISOString(), s.now))}
-                  onPress={() =>
-                    guarded($, 'band', async () => {
-                      await update($, isArmed, () => false)
-                      if (!(await $.prompt.read()).text.trim()) return toast($, T.draftEmpty)
-                      await $.store.set(`delayed:${await $.session.id()}`, { at: after }) // the time printed on the button; the chat that is open now (a /clear may have come)
-                      await update($, delayedAt, () => after)
-                    })
-                  }
-                />
-              )}
+              {after !== null &&
+                ([undefined, 'opus', 'sonnet'] as const).map(model => (
+                  <Button
+                    key={model ? `after-${model}` : 'after'}
+                    label={`${T.afterReset(when(new Date(after).toISOString(), s.now))}${model ? ` ${T.afterResetModel(model)}` : ''}`}
+                    onPress={() =>
+                      guarded($, 'band', async () => {
+                        await update($, isArmed, () => false)
+                        if (!(await $.prompt.read()).text.trim()) return toast($, T.draftEmpty)
+                        await $.store.set(`delayed:${await $.session.id()}`, model ? { at: after, model } : { at: after }) // the time printed on the button; the chat that is open now (a /clear may have come)
+                        await update($, delayedAt, () => after)
+                      })
+                    }
+                  />
+                ))}
               <Button key="cancel" label={T.cancel} onPress={() => update($, isArmed, () => false)} />
             </Box>
             <Text dimColor>{T.atFilesHint}</Text>
@@ -968,6 +1021,18 @@ export const register: Register = (on, options) => {
     }
 
     const launchLabel = busy ? T.busy : T.newWorker
+    // the hint is asked of cg.py when the New worker button becomes ready, not on every redraw; a draw while it stays ready asks nothing
+    const readyId = wait === null && !isWorking && !busy ? s.id : ''
+    const isReady = readyId !== ''
+    if (readyId !== readyIn) {
+      readyIn = readyId
+      if (readyId && !isPonytailOff)
+        void guarded($, 'review', async () => {
+          const r = (await runCg($, python, ['review-hint', '--session', await $.session.id()], 8_000)) as unknown as Review
+          await update($, review, () => r)
+          isPonytailOff = r.ponytail === false
+        })
+    }
     const detailsLabel = isOpen ? T.compact : T.details
     const toggle = () => guarded($, 'band', async () => (await update($, isDetails, () => !isOpen), await $.store.set('details', !isOpen)))
     const waitText = wait === null ? '' : T.waitingAt(when(new Date(wait).toISOString(), s.now))
@@ -988,7 +1053,7 @@ export const register: Register = (on, options) => {
       // the row is the title, the tokens ("· " + text), a spacer and the buttons, one gap between neighbours; a Button draws `[ label ]`, its label plus 4.
       // The tokens' ' · ' joins in tokensWidth are 3 cells short of what they take in the row, and the spacer's gap is one more.
       const room = (rowTitle: string) => (e.surface === 'terminal' ? e.props.bodyColumns - rowTitle.length - buttons.join('').length - 5 * buttons.length - 4 : Infinity)
-      const all = lineTokens(s, data, isLit)
+      const all = lineTokens(s, data, isLit, hint, isReady)
       let [rowTitle, left] = [T.bandTitle, room(T.bandTitle)]
       let tokens = fitTokens(all, left)
       if (tokensWidth(tokens) > left) [rowTitle, left, tokens] = [SHIELD, room(SHIELD), fitTokens(all, room(SHIELD))] // not even the base alarm fits beside the name: the shield alone

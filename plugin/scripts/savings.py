@@ -8,9 +8,9 @@ import tempfile
 import time
 
 from cc_token_audit import minutes, price
-from transcripts import HANDOFF_BLOCK, INJECTED, _USAGE, _blocks, _load, last_usage, lp
+from transcripts import HANDOFF_BLOCK, INJECTED, _USAGE, _blocks, _load, find_session, last_usage, lp
 
-CACHE_VERSION = 2  # raise it when read_new, last_usage or agent_start return something else: old entries are then dropped
+CACHE_VERSION = 3  # raise it when read_new, last_usage or agent_start return something else: old entries are then dropped
 COLD_AFTER = 3600  # seconds: the cache of a chat that was silent this long is gone
 WINDOW, SPARE, RESUME = 14 * 86400, 20, (300, 3600)  # reference window (s), spare records, a pause (s, exclusive) after which a call resumes a cold cache
 _UUID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
@@ -158,12 +158,13 @@ def _kind(path):
 
 
 def agent_start(path):
-    """The start of a subagent transcript: {type, ts, model, usage: [input, cw5m, cw1h, cache_read], calls, workflow, resumes, cw1h_total}; None without a readable
-    .meta.json or without a call. `resumes` are the cache reads of calls after a pause inside RESUME, `cw1h_total` the 1h writes of all calls."""
+    """The start of a subagent transcript: {type, ts, model, usage: [input, cw5m, cw1h, cache_read], calls, workflow, resumes, cw1h_total, end, last}; None without
+    a readable .meta.json or without a call. `resumes` are the cache reads of calls after a pause inside RESUME, `cw1h_total` the 1h writes of all calls,
+    `end` the time and `last` the context size (input + writes + reads) of the last call."""
     kind = _kind(path)
     if kind is None:
         return None
-    first, seen, prev, resumes, cw1h = None, set(), None, [], 0
+    first, seen, prev, resumes, cw1h, last = None, set(), None, [], 0, 0
     with open(lp(path), 'rb') as f:
         for n, raw in enumerate(f):
             if b'assistant' not in raw:  # the calls are the only lines that matter: no parse of the big tool results
@@ -183,8 +184,21 @@ def agent_start(path):
                          'usage': [_num(u, 'input_tokens'), cc5, cc - cc5, cr], 'workflow': 'subagents/workflows/' in path.replace(chr(92), '/')}
             elif RESUME[0] < (minutes(prev, ts) or 0) * 60 < RESUME[1]:
                 resumes.append(cr)
-            prev = ts
-    return first and {**first, 'calls': len(seen), 'resumes': resumes, 'cw1h_total': cw1h}
+            prev, last = ts, _num(u, 'input_tokens') + cc + cr
+    return first and {**first, 'calls': len(seen), 'resumes': resumes, 'cw1h_total': cw1h, 'end': prev if isinstance(prev, str) else None, 'last': last}
+
+
+def agent_age(projects, sid, agent, ended, now):
+    """{found, age, limit, context, usd} of the subagent `agent` of chat `sid`: seconds since it ended (`ended`, an ISO time, else its last call), the
+    cache lifetime it wrote for (3600 with 1h writes, else 300), the context a resume rewrites and what that costs at its writing price."""
+    gone = {'found': False, 'age': None, 'limit': 300, 'context': 0, 'usd': 0.0}
+    path = next((p for p in find_session(projects, sid)[1] if os.path.basename(p) == 'agent-%s.jsonl' % agent), None)
+    r = path and agent_start(path)
+    if not r:
+        return gone
+    age = _age(ended or r['end'], now)
+    hour = r['cw1h_total'] > 0
+    return {'found': True, 'age': age, 'limit': 3600 if hour else 300, 'context': r['last'], 'usd': r['last'] * price(r['model'], r['last'])[0][2 if hour else 1] / 1e6}
 
 
 def _agents(projects, paths):

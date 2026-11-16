@@ -25,6 +25,7 @@ export const en = {
   saved: (usd: string) => `saved ≤ ${usd}`,
   dearer: (usd: string) => `${usd} dearer`,
   upTo: (usd: string) => `up to ${usd}`,
+  reviewHint: 'before the handoff: /ponytail-review',
   baseTrouble: 'base !',
   col: { chat: 'This chat', last: 'Last handoff', worker: 'Whole worker', limits: 'Limits', base: 'Base' },
   spent: (usd: string) => `spent ${usd}`,
@@ -48,12 +49,14 @@ export const en = {
   atFilesHint: '@files and images in the draft are not passed on',
   busy: 'Starting…',
   afterReset: (time: string) => `After reset (${time})`,
+  afterResetModel: (model: string) => `on ${model}`,
   waitingAt: (time: string) => `⏰ worker at ${time}`,
 
   // new worker launch: every failure says what was kept and where
   draftEmpty: 'New worker: the draft is empty, the chat is untouched. Type a message and press again.',
   handoffFailed: (why: string) => `New worker: the handoff was not built (${why}). The chat is untouched.`,
   clearFailed: (why: string, path: string) => `New worker: the chat was not cleared (${why}). The handoff is saved: ${path}`,
+  modelSwitchFailed: (model: string, why = '') => `New worker: the model did not switch to ${model}${why ? ` (${why})` : ''}, so nothing was sent. The chat is untouched, the draft is in the box.`,
   pickThenEnter: 'The chat is cleared; the handoff and the draft are in the input box. Pick the model and effort in the app menu at the bottom right and press Enter.',
   notSent: 'the handoff was not sent',
   submitFailed: (why: string, path: string) => `New worker: sending failed (${why}). The handoff and the draft are in the input box: press Enter. The handoff is saved: ${path}`,
@@ -166,7 +169,7 @@ export const en = {
 
   // lean agents: the rule the model reads in every prompt, to pick the cheap subagent types
   leanRule:
-    'Subagents (Alethite). A subagent that needs no browser, Obsidian, other MCP tools or skills gets a lean type: alethite:coder, alethite:reviewer, alethite:scout or alethite:researcher. Their start is 4-13 times smaller. general-purpose only when it needs those. In workflow scripts the same goes for agent(prompt, { agentType }). A lean agent has no Skill tool: if it needs a skill, give the path of its SKILL.md in the prompt and tell it to read and follow it. alethite:resident is costly (1-hour cache, each write 1.6 times dearer than the 5-minute one): only when one big picture of the project serves several tasks with pauses of 5 to 60 minutes, continue it with SendMessage, after an hour start a new one. Continue a finished agent with SendMessage only if it ended under 5 minutes ago and the next task needs what it read. Otherwise start a new lean one: a cold agent rewrites its whole context (median about 100k tokens).',
+    'Subagents (Alethite). A subagent that needs no browser, Obsidian, other MCP tools or skills gets a lean type: alethite:coder, alethite:reviewer, alethite:scout or alethite:researcher. Their start is 4-13 times smaller. general-purpose only when it needs those. In workflow scripts the same goes for agent(prompt, { agentType }). Write every subagent prompt in terse English: short phrases, no preamble. Keep names, paths, numbers, code and quotes verbatim. A lean agent has no Skill tool: if it needs a skill, give the path of its SKILL.md in the prompt and tell it to read and follow it. alethite:resident is costly (1-hour cache, each write 1.6 times dearer than the 5-minute one): only when one big picture of the project serves several tasks with pauses of 5 to 60 minutes, continue it with SendMessage, after an hour start a new one. Continue a finished agent with SendMessage only if it ended under 5 minutes ago and the next task needs what it read. Otherwise start a new lean one: a cold agent rewrites its whole context (median about 100k tokens).',
 
   // short memory: the rule the model reads in every prompt, and the owner's note that a fact was saved
   memoryRule:
@@ -197,6 +200,8 @@ export const en = {
   lessonsIntro: 'Alethite: lessons of this project that may concern this message. Check them before acting; ignore what is unrelated.',
   lessonGate: (lesson: string, isGlobal: boolean) =>
     `Alethite stopped this command once: it holds the trigger of a lesson ${isGlobal ? 'for all projects' : 'of this project'}. ${lesson}. If the lesson does not apply now, run the command again and it passes.`,
+  coldAgent: (minutes: number, tokens: string, usd: string) =>
+    `Alethite stopped this message once: the agent finished ${minutes} min ago and its cache has gone cold, so continuing it rewrites its whole context (${tokens} tokens, about ${usd}). A new lean alethite:* agent for the next step is cheaper. If this agent is really needed, send the same message again and it goes through.`,
   noLessons: 'No lessons in this project yet.',
   cgLessonsDescription: 'The lessons of this project and the ones for all projects (forget <pos>: delete one here and on the other computers)',
   cgLessonsHint: '[forget <pos>]',
@@ -263,7 +268,7 @@ export const en = {
   cgCleanupHint: '[on | off]',
   cgCleanupUsage: 'Use: /al-cleanup, /al-cleanup on or /al-cleanup off.',
   cleanupState: (on: boolean, chats: number, mb: number) =>
-    `${on ? 'Deleting old chats: on' : 'Deleting old chats: off'}. Waiting for deletion now: ${chats} (${mb} MB). The background job (/al-job) does the deleting. A chat is deleted only after a New worker handoff. All of it must be in the index (and in the shared folder, if sync is set), and nobody must have touched it for 60 minutes. The current chat is never deleted. Deletion is permanent. The text stays in the long memory.`,
+    `${on ? 'Deleting old chats: on' : 'Deleting old chats: off'}. Waiting for deletion now: ${chats} (${mb} MB). The background job (/al-job) does the deleting. A chat is deleted only after a New worker handoff. All of it must be in the index (and in the shared folder, if sync is on), and nobody must have touched it for 60 minutes. The current chat is never deleted. Deletion is permanent. The text stays in the long memory.`,
   cleanupNoPreview: (on: boolean) => `${on ? 'Deleting old chats: on' : 'Deleting old chats: off'}. cg.py gave no count of the chats waiting for deletion.`,
   cgCleanupFailed: 'al-cleanup: it did not work. The reason is in the toast.',
   healthCleanup: (on: boolean, removed: number) => (on ? `Deleting old chats: on, deleted ${removed}` : `Deleting old chats: off (deleted ${removed})`),

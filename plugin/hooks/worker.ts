@@ -2,6 +2,8 @@
 import { message } from './py'
 import { T } from './text'
 
+export type Model = 'opus' | 'sonnet'
+
 export type LaunchIO = {
   draft: () => Promise<string>
   handoff: () => Promise<{ text: string; path: string }>
@@ -10,11 +12,13 @@ export type LaunchIO = {
   fill: (text: string) => Promise<void>
   emptyBox: (draft: string) => Promise<void>
   toast: (text: string) => void
+  switchModel: (model: string) => Promise<boolean> // true: the chat is now on that model
 }
 
 // Until /clear the chat is untouched; after it, a failed step puts handoff + draft back in the box so nothing is lost.
 // 'send' submits them as the first message; 'fill' leaves them in the box ('ready') for the owner to pick model and effort in the app and send.
-export const launch = async (io: LaunchIO, mode: 'send' | 'fill'): Promise<'empty' | 'failed' | 'dropped' | 'sent' | 'ready'> => {
+// A model (After reset) is switched after the handoff, before /clear, and holds through /clear; one that did not switch stops the launch with the chat and the draft untouched.
+export const launch = async (io: LaunchIO, mode: 'send' | 'fill', model?: Model): Promise<'empty' | 'failed' | 'dropped' | 'sent' | 'ready'> => {
   const draft = await io.draft()
   if (draft.trim() === '') {
     io.toast(T.draftEmpty)
@@ -27,6 +31,19 @@ export const launch = async (io: LaunchIO, mode: 'send' | 'fill'): Promise<'empt
   } catch (err) {
     io.toast(T.handoffFailed(message(err)))
     return 'failed'
+  }
+  if (model) {
+    let isSwitched = false
+    let why = ''
+    try {
+      isSwitched = await io.switchModel(model)
+    } catch (err) {
+      why = message(err) // a throw counts as a model that did not switch
+    }
+    if (!isSwitched) {
+      io.toast(T.modelSwitchFailed(model, why))
+      return 'failed'
+    }
   }
   try {
     await io.clear()
