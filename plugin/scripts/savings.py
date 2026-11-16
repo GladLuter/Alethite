@@ -1,14 +1,19 @@
 """What the New-worker handoffs saved, from the transcripts alone: no index, no model. Numbers only; the sign is the saving (negative: dearer)."""
+import calendar
 import json
 import os
 import re
+import statistics
 import tempfile
+import time
 
 from cc_token_audit import minutes, price
 from transcripts import HANDOFF_BLOCK, INJECTED, _USAGE, _blocks, _load, last_usage, lp
 
-CACHE_VERSION = 1  # raise it when read_new or last_usage return something else: old entries are then dropped
+CACHE_VERSION = 2  # raise it when read_new, last_usage or agent_start return something else: old entries are then dropped
 COLD_AFTER = 3600  # seconds: the cache of a chat that was silent this long is gone
+LEAN_TYPES = frozenset(('alethite:coder', 'alethite:reviewer', 'alethite:scout', 'alethite:researcher', 'alethite:resident'))
+WINDOW, SPARE, RESUME = 14 * 86400, 20, (300, 3600)  # reference window (s), spare records, a pause (s, exclusive) after which a call resumes a cold cache
 _UUID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 # shortcut: every cache write is priced as the 1h write (what Claude Code sends); a 5m write in the first call is split off when the usage names it
 
@@ -139,6 +144,118 @@ def _paths(projects):
     return out
 
 
+def agent_start(path):
+    """The start of a subagent transcript: {type, ts, model, usage: [input, cw5m, cw1h, cache_read], calls, workflow, resumes, cw1h_total}; None without a readable
+    .meta.json or without a call. `resumes` are the cache reads of calls after a pause inside RESUME, `cw1h_total` the 1h writes of all calls."""
+    try:
+        with open(lp(path[:-6] + '.meta.json'), encoding='utf-8') as f:
+            kind = json.load(f)['agentType']
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(kind, str):
+        return None
+    first, seen, prev, resumes, cw1h = None, set(), None, [], 0
+    with open(lp(path), 'rb') as f:
+        for n, raw in enumerate(f):
+            if b'assistant' not in raw:  # the calls are the only lines that matter: no parse of the big tool results
+                continue
+            o = _load(raw)
+            m = o.get('message') if o and o.get('type') == 'assistant' else None
+            u = m.get('usage') if isinstance(m, dict) and m.get('model') != '<synthetic>' else None
+            if not isinstance(u, dict) or (m.get('id') or n) in seen:
+                continue
+            seen.add(m.get('id') or n)
+            cc, cr, ts = _num(u, 'cache_creation_input_tokens'), _num(u, 'cache_read_input_tokens'), o.get('timestamp')
+            split = u.get('cache_creation') if isinstance(u.get('cache_creation'), dict) else {}
+            cw1h += _num(split, 'ephemeral_1h_input_tokens')
+            if first is None:
+                cc5 = min(cc, _num(split, 'ephemeral_5m_input_tokens'))
+                first = {'type': kind, 'ts': ts if isinstance(ts, str) else None, 'model': m.get('model') or '',
+                         'usage': [_num(u, 'input_tokens'), cc5, cc - cc5, cr], 'workflow': 'subagents/workflows/' in path.replace(chr(92), '/')}
+            elif RESUME[0] < (minutes(prev, ts) or 0) * 60 < RESUME[1]:
+                resumes.append(cr)
+            prev = ts
+    return first and {**first, 'calls': len(seen), 'resumes': resumes, 'cw1h_total': cw1h}
+
+
+def _agents(projects):
+    """{session id: [agent-*.jsonl under <projects>/<folder>/<id>/subagents/, nested ones too]}."""
+    out = {}
+    try:
+        dirs = sorted(os.listdir(lp(projects)))
+    except OSError:
+        return out
+    for d in dirs:
+        try:
+            for sid in os.listdir(lp(os.path.join(projects, d))):
+                top = os.path.join(projects, d, sid, 'subagents')
+                for root, _, names in os.walk(lp(top)):
+                    out.setdefault(sid, []).extend(os.path.join(top, os.path.relpath(root, lp(top)), n) for n in sorted(names)
+                                                   if n.startswith('agent-') and n.endswith('.jsonl'))
+        except OSError:
+            pass
+    return {s: [os.path.normpath(p) for p in ps] for s, ps in out.items()}
+
+
+def _age(ts, now):
+    try:
+        return now - calendar.timegm(time.strptime(ts[:19], '%Y-%m-%dT%H:%M:%S'))
+    except (TypeError, ValueError):
+        return None
+
+
+def reference(records, now):
+    """{'agent', 'workflow'}: the median start of the general-purpose agents of the last 14 days (else of the last 20 records), or None."""
+    out = {}
+    for name, kind, wf in (('agent', 'general-purpose', False), ('workflow', 'workflow-subagent', True)):
+        rs = [r for r in records if r['type'] == kind and r['workflow'] == wf]
+        timed = sorted((r for r in rs if _age(r['ts'], now) is not None), key=lambda r: r['ts'], reverse=True)
+        pick = [r for r in timed if _age(r['ts'], now) <= WINDOW] or (timed + [r for r in rs if _age(r['ts'], now) is None])[:SPARE]
+        med = lambda f: statistics.median(f(r['usage']) for r in pick)
+        out[name] = pick and {'w': med(lambda u: u[1] + u[2]), 'r': med(lambda u: u[3]), 'start': med(sum), 'n': len(pick),
+                              'since': min((r['ts'] for r in pick if r['ts']), default=None)} or None
+    return out
+
+
+def lean_usd(rec, ref):
+    """USD a lean agent saved against the reference: its smaller first write and read, and the smaller start of every later call.
+    A resident (1h writes) is net: its resumes add, its dearer 1h writes subtract."""
+    if ref is None:
+        return 0
+    i, c5, c1, cr = rec['usage']
+    start = i + c5 + c1 + cr
+    p = price(rec['model'], start)[0]
+    resident = rec['type'] == 'alethite:resident'
+    write = p[1] if resident or not c1 else p[2]
+    usd = max(0, ref['r'] - cr) * p[3] + (max(0, ref['w'] - c5 - c1) * write if c5 + c1 else 0)  # a warm prefix (no write) saved no write
+    usd += (rec['calls'] - 1) * max(0, ref['start'] - start) * p[3]
+    if resident:
+        usd += sum(rec['resumes']) * (p[1] - p[3]) - rec['cw1h_total'] * (p[2] - p[1])
+    return usd / 1e6
+
+
+def _lean(projects, paths, cache, gone):
+    """(fn, files): fn(convs) is {usd, agents} of the lean agents of those chats (the files while the chat is on the disk, else what cleanup.snapshot
+    kept in `gone`; a chat once); files are the agent transcripts read. The reference comes from the disk only."""
+    on_disk = _agents(projects)
+    recs = {}
+    for ps in on_disk.values():
+        for p in ps:
+            try:
+                recs[p] = _cached(cache, p, agent_start)
+            except OSError:  # removed or locked meanwhile
+                pass
+    ref = reference([r for r in recs.values() if r], time.time())
+
+    def of(convs):
+        mine = []
+        for c in set(convs):
+            mine += [recs.get(p) for p in on_disk.get(c, ())] if c in paths else (gone or {}).get(c, {}).get('agents') or []
+        mine = [r for r in mine if r and r['type'] in LEAN_TYPES]
+        return {'usd': sum(lean_usd(r, ref['workflow' if r['workflow'] else 'agent']) for r in mine), 'agents': len(mine)}
+    return of, set(recs)
+
+
 def savings(projects, session, convs, cache_path, gone=None):
     """{last, worker, project}; `convs` are the project's conversations from the index, None if it could not be read."""
     try:
@@ -154,22 +271,25 @@ def savings(projects, session, convs, cache_path, gone=None):
         seen.add(cur)
         chain.append(ln)
         cur = _read(paths, cache, gone, cur, read_new)['old']
+    lean, agent_files = _lean(projects, paths, cache, gone)
+    mine = lean(seen | {cur})  # the current chat and every old one of the chain
     project = None
     if convs is not None:
         links = {ln['new']: ln for ln in chain}
         for c in convs:
             if c not in links and (ln := link(paths, c, cache, gone)):
                 links[c] = ln
-        project = {'usd': sum(ln['usd'] for ln in links.values()), 'links': len(links)}
+        every = lean(set(convs) | seen | {cur})
+        project = {'usd': sum(ln['usd'] for ln in links.values()) + every['usd'], 'links': len(links), 'lean': every}
     tmp = None
     try:  # a failed cache write costs only speed
         fd, tmp = tempfile.mkstemp(dir=os.path.dirname(cache_path) or '.', suffix='.tmp')
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            keep = set(paths.values())
+            keep = set(paths.values()) | agent_files
             json.dump({'v': CACHE_VERSION, 'files': {k: e for k, e in cache.items() if k.split('|', 1)[1] in keep}}, f)
         os.replace(tmp, cache_path)
     except OSError:
         tmp and os.path.exists(tmp) and os.remove(tmp)
     return {'last': chain and {'usd': chain[0]['first'], 'old_tokens': chain[0]['old_tokens'], 'new_tokens': chain[0]['new_tokens']} or None,
-            'worker': {'usd': sum(ln['usd'] for ln in chain), 'links': len(chain), 'calls': sum(ln['calls'] for ln in chain)},
+            'worker': {'usd': sum(ln['usd'] for ln in chain) + mine['usd'], 'lean': mine, 'links': len(chain), 'calls': sum(ln['calls'] for ln in chain)},
             'project': project}

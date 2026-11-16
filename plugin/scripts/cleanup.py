@@ -25,7 +25,8 @@ def snapshot(conn, projects, path):
     for p in (q for q in _files(path) if q.endswith('.jsonl')):  # the same list the gate checks, the main transcript first
         mem, ours = [], set()
         ev, ch = cc_token_audit.read_chain(p, Counter(), lambda q, o: mem.extend(stats._mem_event(q, o, ours)))
-        chains.append({'rel': os.path.relpath(p, root).replace(os.sep, '/'), 'mtime': os.path.getmtime(p), 'ev': ev, 'ch': dict(ch), 'mem': mem})
+        chains.append({'rel': os.path.relpath(p, root).replace(os.sep, '/'), 'mtime': os.path.getmtime(p), 'ev': ev, 'ch': dict(ch), 'mem': mem,
+                       **({'agent': savings.agent_start(p)} if p != lp(path) else {})})  # a subagent's start: the lean-agent savings outlive the file
     row = conn.execute('SELECT chains, read_new FROM removed WHERE conv = ?', (conv,)).fetchone()
     read_new = savings.read_new(path)
     if row:
@@ -54,7 +55,10 @@ def saved_chains(conn):
 
 
 def gone(conn):
-    return {conv: {'last_usage': _load(u), 'read_new': _load(n)} for conv, u, n in conn.execute('SELECT conv, last_usage, read_new FROM removed')}
+    out = {conv: {'last_usage': _load(u), 'read_new': _load(n), 'agents': []} for conv, u, n in conn.execute('SELECT conv, last_usage, read_new FROM removed')}
+    for conv, a in conn.execute("SELECT r.conv, json_extract(c.value, '$.agent') FROM removed r, json_each(r.chains) c WHERE json_valid(r.chains) AND json_extract(c.value, '$.agent') IS NOT NULL"):
+        out[conv]['agents'].append(_load(a))  # in SQL: the chains are big and this runs on every band update
+    return out
 
 
 def _old(path):

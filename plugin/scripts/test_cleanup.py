@@ -15,6 +15,7 @@ import memdb
 import savings
 import stats
 from memdb import connect
+import test_savings as savings_test
 from test_savings import A, B, C, HOUR2, MIN10, OLD, T, block, call, user
 
 SINCE = '2026-11-01'
@@ -82,6 +83,27 @@ class CleanupTest(unittest.TestCase):
             cleanup.snapshot(self.conn, self.projects, self.path(sid))
             self.remove(sid)
         self.assertEqual(savings.savings(self.projects, C, [A, B, C], self.cache, cleanup.gone(self.conn)), s1)
+
+    def test_removed_chat_keeps_its_lean_agents(self):
+        def agent(sid, name, typ, objs):
+            self.write('P/%s/subagents/%s.jsonl' % (sid, name), objs)
+            with open(os.path.join(self.projects, 'P', sid, 'subagents', name + '.meta.json'), 'w') as f:
+                json.dump({'agentType': typ}, f)
+
+        def acall(mid, **kw):
+            return savings_test.acall(mid, T, **kw)
+
+        self.write('P/%s.jsonl' % A, [call('oa', T, cr=OLD)])
+        self.write('P/%s.jsonl' % C, [call('oc', T, cr=OLD)])
+        agent(C, 'agent-g', 'general-purpose', [acall('g1', c5=50000, cr=10000)])
+        agent(A, 'agent-c', 'alethite:coder', [acall('c1', c1=8000, cr=2000), acall('c2', cr=3000)])
+        before = savings.savings(self.projects, C, [A, C], self.cache)['project']['lean']
+        self.assertEqual(before['agents'], 1)
+        cleanup.snapshot(self.conn, self.projects, self.path(A))
+        self.remove(A)
+        gone = cleanup.gone(self.conn)
+        self.assertEqual([a['type'] for a in gone[A]['agents']], ['alethite:coder'])
+        self.assertEqual(savings.savings(self.projects, C, [A, C], self.cache, gone)['project']['lean'], before)
 
     def test_snapshot_rewrites_on_second_call(self):
         self.chat_a()
