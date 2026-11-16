@@ -2279,10 +2279,17 @@ test('guard: an agent between turn.start and turn.complete passes without cg.py,
   expect(flag(argv, '--ended')).toBe(new Date(10_000_000_000).toISOString())
 })
 
-test('guard: a failing cg.py lets the message through', async ($, on) => {
-  await guardRig($, on, () => ({ deny: 'boom' }))
-  expect(await send($, AG)).toEqual({ result: 'sent' })
-  expect(await send($, AG)).toEqual({ result: 'sent' })
+const failing = (name: string, fail: () => unknown) =>
+  test(`guard: cg.py ${name}: it was asked, and the message goes through`, async ($, on) => {
+    const m = await guardRig($, on, fail)
+    expect(await send($, AG)).toEqual({ result: 'sent' })
+    expect(await send($, AG)).toEqual({ result: 'sent' }) // nothing was remembered as stopped
+    expect(ofCg(m, 'agent-age')).toHaveLength(2) // the guard path was reached both times
+  })
+failing('process.run rejects', () => ({ deny: 'boom' }))
+failing('process.run times out', () => ({ deny: 'timed out after 8000 ms' }))
+failing('hook throws', () => {
+  throw new Error('spawn broke')
 })
 
 test('guard: a name given at the spawn is the agent id', async ($, on) => {
