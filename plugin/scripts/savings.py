@@ -12,7 +12,6 @@ from transcripts import HANDOFF_BLOCK, INJECTED, _USAGE, _blocks, _load, last_us
 
 CACHE_VERSION = 2  # raise it when read_new, last_usage or agent_start return something else: old entries are then dropped
 COLD_AFTER = 3600  # seconds: the cache of a chat that was silent this long is gone
-LEAN_TYPES = frozenset(('alethite:coder', 'alethite:reviewer', 'alethite:scout', 'alethite:researcher', 'alethite:resident'))
 WINDOW, SPARE, RESUME = 14 * 86400, 20, (300, 3600)  # reference window (s), spare records, a pause (s, exclusive) after which a call resumes a cold cache
 _UUID = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 # shortcut: every cache write is priced as the 1h write (what Claude Code sends); a 5m write in the first call is split off when the usage names it
@@ -259,16 +258,21 @@ def _disk(projects, paths, cache, now):
     return on_disk, recs, reference([r for r in recs.values() if r], now)
 
 
+def _records(convs, on_disk, recs, paths, gone):
+    """The agent records of those chats: the files while the chat's transcript is on the disk, else what cleanup.snapshot kept in `gone`; a chat once."""
+    out = []
+    for c in set(convs):
+        out += [recs.get(p) for p in on_disk.get(c, ())] if c in paths else (gone or {}).get(c, {}).get('agents') or []
+    return [r for r in out if r]
+
+
 def _lean(projects, paths, cache, gone):
     """(fn, files): fn(convs) is {usd, agents} of the lean agents of those chats (the files while the chat is on the disk, else what cleanup.snapshot
     kept in `gone`; a chat once); files are the agent transcripts read. The reference comes from the disk only."""
     on_disk, recs, ref = _disk(projects, paths, cache, time.time())
 
     def of(convs):
-        mine = []
-        for c in set(convs):
-            mine += [recs.get(p) for p in on_disk.get(c, ())] if c in paths else (gone or {}).get(c, {}).get('agents') or []
-        mine = [r for r in mine if r and r['type'] in LEAN_TYPES]
+        mine = [r for r in _records(convs, on_disk, recs, paths, gone) if r['type'].startswith('alethite:')]
         return {'usd': sum(lean_usd(r, ref['workflow' if r['workflow'] else 'agent']) for r in mine), 'agents': len(mine)}
     return of, set(recs)
 
@@ -301,10 +305,9 @@ def lean_stats(projects, since, until, gone, now, cache_path=None):
     paths = _paths(projects)
     on_disk, disk, ref = _disk(projects, paths, cache, now)
     cache_path and _save_cache(cache_path, cache, set(paths.values()) | set(disk))
-    recs = [disk.get(p) for s, ps in on_disk.items() if s in paths for p in ps]
-    recs += [r for s, g in (gone or {}).items() if s not in paths for r in g.get('agents') or []]
-    mine = [r for r in recs if r and isinstance(r['ts'], str) and r['ts'][:10] >= since and (until is None or r['ts'][:10] < until)]
-    lean = [r for r in mine if r['type'] in LEAN_TYPES]
+    recs = _records(set(on_disk) | set(gone or ()), on_disk, disk, paths, gone)
+    mine = [r for r in recs if isinstance(r['ts'], str) and r['ts'][:10] >= since and (until is None or r['ts'][:10] < until)]
+    lean = [r for r in mine if r['type'].startswith('alethite:')]
     a = ref['agent']
     return {'agents': len(mine), 'lean': len(lean), 'usd': sum(lean_usd(r, ref['workflow' if r['workflow'] else 'agent']) for r in lean),
             'ref_tokens': a and round(a['start']), 'ref_since': a and a['since'] and a['since'][:10]}

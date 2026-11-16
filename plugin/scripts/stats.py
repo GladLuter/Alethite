@@ -121,7 +121,8 @@ def note_markdown(m, host, today, limits, rule_chars, memory_tokens=0, compressi
          t('stats_columns'), '|---|---|---|'] + ['| %s | %s | %s |' % r for r in rows] +
         ([''] + [t('stats_limits') + ', '.join('%s %s%%' % (l['kind'], l['percentUsed']) for l in limits)] if limits else []) +
         ['', t('stats_rule', rule=rule, calls=m['main_calls'], total=_int(rule * m['main_calls'])), '',
-         t('stats_lean', total=m['subagents'], lean=m['lean_agents'], share='%d%%' % round(100 * m['lean_agents'] / m['subagents']), usd=_usd(m['lean_usd']),
+         t('stats_lean_dearer' if m['lean_usd'] < 0 else 'stats_lean', total=m['subagents'], lean=m['lean_agents'], share='%d%%' % round(100 * m['lean_agents'] / m['subagents']),
+           usd=_usd(abs(m['lean_usd'])),
            ref='—' if m['lean_ref_tokens'] is None else _int(m['lean_ref_tokens']), since=m['lean_ref_since'] or '—')
          if m['subagents'] else t('stats_lean_none')] +
         _memory_rows(m, rule, memory_tokens, compression)) + '\n'

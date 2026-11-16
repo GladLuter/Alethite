@@ -43,7 +43,7 @@ class ManifestTest(unittest.TestCase):
                 self.assertNotIn(bad, fm['tools'])
             self.assertEqual(fm.get('omitClaudeMd'), 'true' if name == 'scout' else None)
             self.assertIn('no MCP tools', fm['description'])
-            self.assertEqual('foreground' in text, name in ('coder', 'reviewer', 'resident'))
+            self.assertEqual('foreground' in text.split('---', 2)[2], name in ('coder', 'reviewer', 'resident'))
             self.assertEqual('experimental' in fm, name == 'resident')
             self.assertEqual('cacheTtl: 1h' in head, name == 'resident')
             self.assertNotIn('effort', fm)

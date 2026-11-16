@@ -174,6 +174,13 @@ class StatsTest(unittest.TestCase):
         m = metrics(self.projects, self.conn, '2026-10-01', now=1_790_000_000)
         self.assertIn('subagents: 2', note_markdown(m, 'PC-1', '2026-11-13', [], 0))  # the frontmatter holds every metric
 
+    def test_negative_lean_sum_reads_dearer_not_dollar_minus(self):
+        m = metrics(self.projects, self.conn, '2026-10-01')
+        m.update(subagents=2, lean_agents=1, lean_usd=-0.3, lean_ref_tokens=60000, lean_ref_since='2026-10-05')
+        out = note_markdown(m, 'PC-1', '2026-11-13', [], 0)
+        self.assertIn(t('stats_lean_dearer', total=2, lean=1, share='50%', usd='$0.30', ref='60 000', since='2026-10-05'), out)
+        self.assertNotIn('$-', out)
+
     def test_lean_stats_reads_agent_files_through_the_cache(self):
         self.agent('agent-g', 'general-purpose', [acall('g1', '2026-10-05T10:00:02.000Z', c5=50000, cr=10000)])
         self.agent('agent-c', 'alethite:coder', [acall('c1', '2026-10-05T10:00:02.000Z', c1=8000, cr=2000)])

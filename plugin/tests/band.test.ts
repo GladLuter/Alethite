@@ -140,3 +140,8 @@ test('columns: a negative lean sum is an error line, the project line stays last
   expect(w.sub[2]).toBe('проект: дороже на $0.40 (4)')
   expect(w.subTone).toEqual({ 1: 'error', 2: 'error' })
 })
+test('columns and line: a Savings value without `lean` (kept across /reload-plugins) does not throw', () => {
+  const old = { last: null, worker: { usd: 1, links: 2, calls: 3 }, project: { usd: 2, links: 3 } } as any
+  expect(() => columns(snap(), info({ savings: old }), true)).not.toThrow()
+  expect(() => lineTokens(snap(), info({ savings: old }), false)).not.toThrow()
+})
