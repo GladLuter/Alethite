@@ -1,8 +1,9 @@
 import json
 import os
 import tempfile
+import time
 import unittest
-from transcripts import find_session, last_usage, project_key, project_keys, read_records, strip_handoff
+from transcripts import find_session, last_usage, project_key, project_keys, read_records, strip_handoff, _typed
 
 TS = '2026-10-13T10:00:00.000Z'
 
@@ -129,6 +130,14 @@ class TranscriptsTest(unittest.TestCase):
         recs2, off2 = read_records(path, off)
         self.assertEqual([(r['text'], r['pos']) for r in recs2], [('три', off)])
         self.assertEqual(off2, os.path.getsize(path))
+
+    def test_unclosed_markers_linear(self):
+        for mark in ('<system-reminder>', '[al-lessons]', '[al-handoff]'):
+            t0 = time.time()
+            _typed('a' + mark * 5000, 'owner')
+            strip_handoff('a' + mark * 5000)
+            self.assertLess(time.time() - t0, 1, mark)
+        self.assertEqual(_typed('x <system-reminder>r</system-reminder> y [al-lessons]l[/al-lessons] z [al-handoff]h[/al-handoff]', 'owner'), [('owner', 'x  y  z', None)])
 
     def test_tool_summary_and_edit(self):
         path = self.write('s.jsonl', [

@@ -123,7 +123,7 @@ def start_generation(conn, machine_dir, machine, cipher, key):
         gen = Gen(n, os.path.join(machine_dir, 'gen-%04d' % n), cipher, crypto.fingerprint(key) if key else None)
         os.makedirs(gen.path)
         path = os.path.join(gen.path, 'generation.json')
-        _put(path, _dumps({'format': FORMAT, 'gen': n, 'cipher': cipher, 'fingerprint': gen.fingerprint, 'created': _now()}).encode('utf-8'))
+        crypto.atomic_write(path, _dumps({'format': FORMAT, 'gen': n, 'cipher': cipher, 'fingerprint': gen.fingerprint, 'created': _now()}).encode('utf-8'))
         label = path
         _restart(conn, machine, n)
         conn.commit()
@@ -489,13 +489,6 @@ def _read(path):
         return f.read()
 
 
-def _put(path, data):
-    tmp = path + '.cg-tmp'
-    with open(tmp, 'wb') as f:
-        f.write(data)
-    os.replace(tmp, path)
-
-
 def project_folder(key):
     """A folder name for a project key: readable, and unique by the hash at its end."""
     return (re.sub(r'[^0-9A-Za-z]+', '-', key).strip('-')[-60:] or 'home') + '-' + hashlib.sha1(key.encode('utf-8')).hexdigest()[:8]
@@ -548,7 +541,7 @@ def _write_facts(gen, machine, project, secret, facts):
         folder = os.path.join(gen.path, 'memory', project_folder(project))
         os.makedirs(folder, exist_ok=True)
         for name, data in facts.items():
-            _put(os.path.join(folder, name), data)
+            crypto.atomic_write(os.path.join(folder, name), data)
         return
     have = _read_facts(gen, machine, project, secret)
     merged = {**have, **facts}
@@ -557,7 +550,7 @@ def _write_facts(gen, machine, project, secret, facts):
     path, aad = _memory_file(gen, machine, project, secret)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     head = _dumps({'type': 'memory', 'machine': machine, 'gen': gen.n})
-    _put(path, crypto.seal([head] + [_dumps({'name': n, 'data': base64.b64encode(d).decode('ascii')}) for n, d in sorted(merged.items())],
+    crypto.atomic_write(path, crypto.seal([head] + [_dumps({'name': n, 'data': base64.b64encode(d).decode('ascii')}) for n, d in sorted(merged.items())],
                            gen.cipher, secret, aad))
 
 
@@ -619,7 +612,7 @@ def sync_memory(conn, sync_dir, machine, peers, memory_dir, key, gens, secret, e
                     if not os.path.exists(path):
                         if rec:
                             return 'deleted'  # the owner deleted it after it came: it stays deleted
-                        _put(path, data)
+                        crypto.atomic_write(path, data)
                         added.append((local, data))
                         got = 'written'
                     elif _hash(_read(path)) == h:
@@ -628,7 +621,7 @@ def sync_memory(conn, sync_dir, machine, peers, memory_dir, key, gens, secret, e
                             return 'same'
                         got = 'same'
                     elif rec and rec[:2] == (peer, name) and _hash(_read(path)) == rec[2]:
-                        _put(path, data)  # our copy is as it came, and its source has a newer version
+                        crypto.atomic_write(path, data)  # our copy is as it came, and its source has a newer version
                         got = 'written'
                     else:
                         return 'busy'  # the owner's own text, or a copy the owner changed
@@ -646,7 +639,7 @@ def sync_memory(conn, sync_dir, machine, peers, memory_dir, key, gens, secret, e
         old = _read(index).decode('utf-8') if os.path.isfile(index) else ''
         new = [_pointer(n, d) for n, d in added if '](%s)' % n not in old]
         if new:
-            _put(index, (old + ('\n' if old and not old.endswith('\n') else '') + '\n'.join(new) + '\n').encode('utf-8'))
+            crypto.atomic_write(index, (old + ('\n' if old and not old.endswith('\n') else '') + '\n'.join(new) + '\n').encode('utf-8'))
     return out
 
 

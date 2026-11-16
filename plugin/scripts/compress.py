@@ -29,7 +29,6 @@ _CODE = re.compile(r'```.*?(?:```|\Z)|`[^`\n]*`', re.S)  # a fence a snippet cut
 _EMPHASIS = re.compile(r'(?<![\w*/])\*\*(?=\S)((?:(?!\*\*).)+?)(?<=\S)\*\*(?![\w*/])')
 _SPACES = re.compile(r'[ \t]+')
 _BLANKS = re.compile(r'\n[ \t]*(?:\n[ \t]*)+')
-_TOKEN = re.compile(r'(\S+)')
 _WORD = re.compile(r"[^\W\d_]+(?:['’-][^\W\d_]+)*")  # letters only, an apostrophe or a hyphen inside: пам'ять, що-небудь
 _LEAD = '(["\'«“‘[{…'
 _TAIL = ')"\'»”’.,;:!?…]}'

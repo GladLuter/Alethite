@@ -87,24 +87,15 @@ def _migrate(conn, home):
         conn.execute("INSERT OR REPLACE INTO meta VALUES('schema', '2')")
 
 
-def _gen_column(conn):
-    """Stage 5, once: peers.gen on an index made before it."""
+def _add_column(conn, table, column, decl):
+    """Once, on an index made before the column (peers.gen: stage 5, removed.agents: 0.8.0)."""
     def missing():
-        return 'gen' not in [r[1] for r in conn.execute('PRAGMA table_info(peers)')]
+        return column not in [r[1] for r in conn.execute('PRAGMA table_info(%s)' % table)]
     if missing():
         conn.execute('BEGIN IMMEDIATE')
         with conn:
             if missing():  # another process got here first
-                conn.execute('ALTER TABLE peers ADD COLUMN gen INTEGER NOT NULL DEFAULT 0')
-
-
-def _agents_column(conn):
-    """0.8.0, once: removed.agents on an index made before it."""
-    if 'agents' not in [r[1] for r in conn.execute('PRAGMA table_info(removed)')]:
-        conn.execute('BEGIN IMMEDIATE')
-        with conn:
-            if 'agents' not in [r[1] for r in conn.execute('PRAGMA table_info(removed)')]:  # another process got here first
-                conn.execute('ALTER TABLE removed ADD COLUMN agents TEXT')
+                conn.execute('ALTER TABLE %s ADD COLUMN %s %s' % (table, column, decl))
 
 
 def db_errors():
@@ -160,8 +151,8 @@ def connect(path=None, home=None):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     conn = _open(path)
     conn.executescript(_SCHEMA)
-    _gen_column(conn)
-    _agents_column(conn)
+    _add_column(conn, 'peers', 'gen', 'INTEGER NOT NULL DEFAULT 0')
+    _add_column(conn, 'removed', 'agents', 'TEXT')
     if meta(conn, 'schema') != '2':
         _migrate(conn, home)
     return conn

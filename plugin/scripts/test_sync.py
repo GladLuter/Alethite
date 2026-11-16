@@ -22,7 +22,7 @@ from test_memdb import TS, claude_line, owner_line, search
 from test_vectors import fake
 from texts import t
 from transcripts import project_key
-from vectors import DOC_PREFIX, MODEL, embed_pending, hybrid_search, pack, search_vectors
+from vectors import DOC_PREFIX, MODEL, embed_pending, hybrid_search, pack, search_many
 
 CG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cg.py')
 HOMES = {'HOMEPC': 'C:\\Users\\Ann', 'NOTEBOOK': 'C:\\Users\\alice', 'THIRD': 'C:\\Users\\third'}
@@ -142,7 +142,7 @@ class SyncTest(unittest.TestCase):
         # the laptop's conversation is found on the i3 by its words and by its vectors
         self.assertEqual(search(self.a.conn, 'ноутбуке')[0]['conv'], 'SB')
         sb = self.a.q("SELECT rowid FROM chunks WHERE text = 'кэш протух на ноутбуке'")
-        self.assertEqual(search_vectors(self.a.conn, pack(fake(['протух ноутбуке'])[0]), None)[0][0], sb)
+        self.assertEqual(search_many(self.a.conn, [pack(fake(['протух ноутбуке'])[0])], None)[0][0][0], sb)
         hits, state = hybrid_search(self.a.conn, 'кэш протух', embed_fn=fake)
         self.assertEqual((state, hits[0]['conv']), ('ok', 'SB'))
         # neither computer embedded the other's records, now or later

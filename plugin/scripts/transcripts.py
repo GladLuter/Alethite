@@ -12,13 +12,13 @@ _OPEN, _CLOSE = r'\[(?:al|cg)-handoff\]', r'\[/(?:al|cg)-handoff\]'
 HANDOFF_MARK = re.compile('%s|%s' % (_OPEN, _CLOSE))
 HANDOFF_BLOCK = re.compile(r'%s.*?(?:%s|\Z)' % (_OPEN, _CLOSE), re.S)
 # a whole block anywhere, an unclosed one only at the start: a mention of the marker in the owner's text must not cut the rest of it
-_HANDOFF = re.compile(r'\A\s*%s.*?(?:%s|\Z)|%s.*?%s' % ((_OPEN, _CLOSE) * 2), re.S)
+_HANDOFF = re.compile(r'\A\s*%s.*?(?:%s|\Z)|%s(?:(?!%s).)*?%s' % (_OPEN, _CLOSE, _OPEN, _OPEN, _CLOSE), re.S)
 # user text Claude Code injects without isMeta: cc_token_audit.INJECTED plus the echo of a typed slash command
 INJECTED = re.compile(r'\s*<(task-notification|local-command-|system-reminder|command-(?:name|message)>)')
-_REMINDER = re.compile(r'<system-reminder>.*?</system-reminder>', re.S)
+_REMINDER = re.compile(r'<system-reminder>(?:(?!<system-reminder>).)*?</system-reminder>', re.S)
 # the lessons the mod put beside the owner's message (stage 4), wherever the engine keeps that context: not the owner's words;
-# a closed block only (the mod writes both marks): a mention of the mark in the owner's text must not cut the rest of it
-_LESSONS = re.compile(r'\[(?:al|cg)-lessons\].*?\[/(?:al|cg)-lessons\]', re.S)
+# a closed block only (the mod writes both marks), the body never crossing a new opening mark (an unclosed run stays linear): a mention of the mark in the owner's text must not cut the rest of it
+_LESSONS = re.compile(r'\[(?:al|cg)-lessons\](?:(?!\[(?:al|cg)-lessons\]).)*?\[/(?:al|cg)-lessons\]', re.S)
 _WORKTREE = re.compile(r'[\\/]\.claude[\\/]worktrees(?:[\\/].*)?$')
 _ARGS = ('command', 'file_path', 'notebook_path', 'path', 'pattern', 'skill', 'url', 'query', 'description')
 _USAGE = ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'output_tokens')

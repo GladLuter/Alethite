@@ -157,10 +157,6 @@ def search_many(conn, qvecs, project, limit=50):
     return out
 
 
-def search_vectors(conn, qvec, project, limit=50):
-    return search_many(conn, [qvec], project, limit)[0]
-
-
 def vector_status(conn):
     total, pending = conn.execute('SELECT count(*), coalesce(sum(NOT EXISTS (SELECT 1 FROM vecs WHERE chunk = chunks.rowid)), 0) ' + _RECORDS).fetchone()
     return {'model': memdb.meta(conn, 'embed_model'), 'with_vectors': total - pending,

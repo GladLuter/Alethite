@@ -144,25 +144,14 @@ def _sync_dir(s):
     return s['syncDir'].strip().strip('"') if isinstance(s.get('syncDir'), str) else ''
 
 
-def _cipher(s, flag=None):
-    """How the sync folder is sealed: --share-cipher, else shareCipher of the settings file, else sqlcipher. A name no cipher has is an error
-    that names the setting, not a KeyError of the cipher table."""
-    c = flag or s.get('shareCipher')
+def _cipher(s, flag=None, index=False):
+    """How the sync folder is sealed (`index`: how the index is encrypted): --share-cipher (--index-cipher), else shareCipher (indexCipher) of
+    the settings file, else sqlcipher. A name no cipher has is an error that names the setting, not a KeyError of the cipher table."""
+    c = flag or s.get('indexCipher' if index else 'shareCipher')
     if c is None:
         return 'sqlcipher'
-    if c not in crypto.CIPHERS:
-        raise ValueError(texts.t('share_cipher_bad', value=c))
-    return c
-
-
-def _index_cipher(s, flag=None):
-    """How the index is encrypted: --index-cipher, else indexCipher of the settings file, else sqlcipher; a name no cipher has is an error that
-    names the setting."""
-    c = flag or s.get('indexCipher')
-    if c is None:
-        return 'sqlcipher'
-    if c not in crypto.INDEX_CIPHERS:
-        raise ValueError(texts.t('index_cipher_bad', value=c))
+    if c not in (crypto.INDEX_CIPHERS if index else crypto.CIPHERS):
+        raise ValueError(texts.t('index_cipher_bad' if index else 'share_cipher_bad', value=c))
     return c
 
 
@@ -391,7 +380,7 @@ def _encrypt(a):
         ui = dialogs.WindowsUI()
         if a.action == 'off':
             return encrypt.off(a.db, sync_dir, a.machine, ui, **kw)
-        return getattr(encrypt, a.action)(a.db, sync_dir, _cipher(s, a.share_cipher), a.machine, ui, index_cipher=_index_cipher(s, a.index_cipher), **kw)
+        return getattr(encrypt, a.action)(a.db, sync_dir, _cipher(s, a.share_cipher), a.machine, ui, index_cipher=_cipher(s, a.index_cipher, True), **kw)
 
 
 def _index_dir(a):
