@@ -123,6 +123,14 @@ class CleanupTest(unittest.TestCase):
         cleanup.snapshot(self.conn, self.projects, self.path(A))
         self.assertEqual(self.conn.execute('SELECT count(*) FROM removed').fetchone()[0], 1)
 
+    def test_snapshot_survives_a_damaged_saved_row(self):
+        self.chat_a()
+        cleanup.snapshot(self.conn, self.projects, self.path(A))
+        n = len(json.loads(self.conn.execute('SELECT chains FROM removed').fetchone()[0]))
+        self.conn.execute("UPDATE removed SET chains = '{bad', read_new = '{bad'")
+        cleanup.snapshot(self.conn, self.projects, self.path(A))
+        self.assertEqual(len(json.loads(self.conn.execute('SELECT chains FROM removed').fetchone()[0])), n)
+
     def test_an_index_made_without_the_agents_column_opens_and_gone_works(self):
         path = os.path.join(os.path.dirname(self.db), 'old.db')
         old = sqlite3.connect(path)

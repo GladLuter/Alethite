@@ -32,12 +32,12 @@ def snapshot(conn, projects, path):
     read_new = savings.read_new(path)
     if row:
         fresh = set().union(*map(_ids, chains))
-        for c in json.loads(row[0]):
+        for c in _load(row[0]) or ():
             if not os.path.exists(lp(os.path.join(projects, c['rel']))):  # a pass that failed half-way left files gone: their chains are only in the old row
                 chains.append(c)
             elif not _ids(c) <= fresh:  # the transcript came back holding only new lines: the old chain stays under a name no file has
                 chains.append(dict(c, rel='%s#%d' % (c['rel'], c['mtime'])))
-        read_new = read_new or json.loads(row[1] or 'null')
+        read_new = read_new or _load(row[1] or 'null')
         old = _load(row[2] or 'null')
         for rel, a in (old.items() if isinstance(old, dict) else ()):
             if not os.path.exists(lp(os.path.join(projects, rel))):  # the same half-failed pass: a file gone keeps its start

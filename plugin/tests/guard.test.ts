@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { isStale, price, shouldStop, statusText } from '../hooks/guard'
 import { setLanguage } from '../hooks/text'
+import type { Snap } from '../types'
 
 // the Russian texts of stage 1 for one test; the module is this file's own, the plugin's language is not touched
 const inRussian = (body: () => void) => {
@@ -13,7 +14,7 @@ const inRussian = (body: () => void) => {
 }
 
 const now = 10_000_000_000
-const snap = (over = {}) => ({ id: 'id', model: 'claude-opus-5-5', now, tokens: 512_000, at: now - 6.2 * 3_600_000,
+const snap = (over: Partial<Snap> = {}): Snap => ({ id: 'id', model: 'claude-opus-5-5', now, tokens: 512_000, at: now - 6.2 * 3_600_000, cost: null,
   limits: [{ kind: 'five_hour', percentUsed: 7 }, { kind: 'seven_day', percentUsed: 70 }], ...over })
 
 test('price: haiku-5-5 over 100k uses the long-context price', () => {

@@ -979,8 +979,9 @@ export const register: Register = (on, options) => {
     isWorking = e.props.isWorking // /clear in the middle of a turn is dangerous: no New worker then, and no waiting one either
     if (s === null || e.props.hasSurvey || s.id === hidden) return next(e)
 
-    const { Box, Button, Svg, Text } = $.ui.resolve(e)
-    const rule = e.surface === 'desktop' ? <Svg source={RULE_SVG} alt="—" /> : null
+    const els = $.ui.resolve(e)
+    const { Box, Button, Text } = els
+    const rule = e.surface === 'desktop' && 'Svg' in els ? <els.Svg source={RULE_SVG} alt="—" /> : null // the `in` narrows the union for the types
     // the band above the prompt is one area for every mod: ours is a row or a frame of its own, and what the mods beneath draw stays under it
     const below = await next(e)
     const isLit = isStale(s, minTokens, idleMinutes) && s.id !== calm

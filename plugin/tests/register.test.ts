@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import type { CommandRunInput, SessionCompactResult, SessionMessage } from 'claude-code'
 import { ru } from '../hooks/lang/ru'
 import { uk } from '../hooks/lang/uk'
 import { notePath, summaryPath } from '../hooks/notes'
@@ -8,6 +9,8 @@ import { T } from '../hooks/text'
 
 const usage = { context: { tokens: 512_000, window: 1_000_000 }, rateLimits: [{ kind: 'five_hour', percentUsed: 7 }] }
 const turn = { answer: '', durationMs: 1, isAborted: false, turnId: 't', reason: 'answer', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, model: 'claude-opus-5-5' } }
+// a person's /command as the engine stamps it: typed at the prompt (composer), on the main screen of an 80-column terminal
+const typedCmd = (command: string, args = ''): CommandRunInput => ({ command, args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
 const props = { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 80 }
 
 const ran = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
@@ -148,7 +151,7 @@ const box = (on: any, draft: string, log: string[], gate: Promise<unknown> = Pro
 const withMemory = { value: { ...usage, context: { ...usage.context, breakdown: { memoryFiles: [{ path: 'C:/mem/memory/MEMORY.md', type: 'AutoMem', tokens: 1 }] } } } }
 const handoffOk = (_: unknown, e: { argv: string[] }) => (e.argv.includes('handoff') ? ran(JSON.stringify({ text: '[al-handoff]x[/al-handoff]', path: 'C:/h/id.md' })) : noTurn())
 const mountBand = async ($: any) => {
-  await $.command.run({ command: 'al-band', args: '' })
+  await $.command.run(typedCmd('al-band'))
   return $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props } as never)
 }
 
@@ -180,7 +183,7 @@ test('a stale chat lights the row and offers to stay; staying lasts to the end o
 test('a stale chat paints the size and the price as a warning, the price at the cold rate', async ($, on) => {
   const at = new Date(10_000_000_000 - 2 * 3_600_000).toISOString()
   wire(on, [], () => ({ value: usage }), () => ran(JSON.stringify({ tokens: 300_000, at, model: 'claude-opus-5-5' })))
-  await $.command.run({ command: 'al-band', args: '' })
+  await $.command.run(typedCmd('al-band'))
   const ui = await $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns: 140 } } as never)
   const all = await ui.findAll({ type: 'Text' })
   const warned = all.filter((t: { props: { color?: string } }) => t.props.color === 'warning').map((t: { text: string }) => t.text)
@@ -855,7 +858,7 @@ test('language ru: the mod speaks Russian to the owner and to the model, and so 
 
 test('leanRule: terse prompts phrase, and the rule stays short in every language', async () => {
   expect(T.leanRule).toContain('terse')
-  for (const rule of [T.leanRule, ru.leanRule, uk.leanRule]) expect(rule.length).toBeLessThanOrEqual(1200)
+  for (const rule of [T.leanRule, ru.leanRule, uk.leanRule]) expect(rule!.length).toBeLessThanOrEqual(1200)
 })
 
 test('language uk: Ukrainian to the owner and to the model, and to cg.py', { options: { language: 'uk' } }, async ($, on) => {
@@ -1248,8 +1251,8 @@ test('lessons: a PowerShell command is stopped once as well', async ($, on) => {
 })
 
 test('lessons: after a compaction of the chat a lesson is shown and stops a command once more; a precompute, a skipped one and a subagent\'s change nothing', async ($, on) => {
-  const kept = [{ role: 'user', text: 'summary', toolUses: [] }] // a compaction leaves at least one message
-  let result: object = { messages: kept }
+  const kept: SessionMessage[] = [{ role: 'user', text: 'summary', toolUses: [] }] // a compaction leaves at least one message
+  let result: SessionCompactResult = { messages: kept }
   on('session.compact', () => result)
   const contexts: string[][] = []
   await lessonRig($, on, undefined, undefined, { context: contexts })
@@ -1306,7 +1309,7 @@ test('global lessons: the first owner message carries the rules, the next one at
 })
 
 test('global lessons: due again after 20k tokens, after a compaction and after a smaller size', async ($, on) => {
-  const kept = [{ role: 'user', text: 'summary', toolUses: [] }]
+  const kept: SessionMessage[] = [{ role: 'user', text: 'summary', toolUses: [] }]
   on('session.compact', () => ({ messages: kept }))
   const contexts: string[][] = []
   const { m } = await lessonRig($, on, [], [rule], { context: contexts })
@@ -1322,7 +1325,7 @@ test('global lessons: due again after 20k tokens, after a compaction and after a
 })
 
 test('global lessons: after a compaction the rules come once, also when the first turn after it is interrupted', async ($, on) => {
-  const kept = [{ role: 'user', text: 'summary', toolUses: [] }]
+  const kept: SessionMessage[] = [{ role: 'user', text: 'summary', toolUses: [] }]
   on('session.compact', () => ({ messages: kept }))
   const contexts: string[][] = []
   const { m } = await lessonRig($, on, [], [rule], { context: contexts })
@@ -1766,7 +1769,7 @@ test('/al-health: the notes of the index folder follow the index line', async ($
   )
   on('session.root', () => ({ value: 'C:/w' }))
   const lines = (await ($ as any).command.run({ command: 'al-health', args: '' })).text.split('\n')
-  expect(lines[lines.findIndex(l => l.startsWith('Index:')) + 1]).toBe('n1')
+  expect(lines[lines.findIndex((l: string) => l.startsWith('Index:')) + 1]).toBe('n1')
 })
 
 test('home_notes: each new note of cg.py gives one toast, and /al-health tells all of them right after the index', async ($, on) => {
@@ -1782,7 +1785,7 @@ test('home_notes: each new note of cg.py gives one toast, and /al-health tells a
   await run('al-index')
   expect(m.toasts).toEqual([T.toast(first), T.toast(notes[1]!)])
   const lines = (await run('al-health')).text.split('\n')
-  const at = lines.findIndex(l => l.startsWith('Index:'))
+  const at = lines.findIndex((l: string) => l.startsWith('Index:'))
   expect(lines.slice(at + 1, at + 3)).toEqual(notes)
   expect(m.toasts).toHaveLength(2)
 })
@@ -1815,7 +1818,7 @@ test('band data: status and savings are asked at the start and after /al-sync', 
   const [s0, v0] = asked()
   await ($ as any).command.run({ command: 'al-sync', args: '' })
   await m.clock.advance(0) // the refresh is not awaited by the reply
-  expect(asked()).toEqual([s0 + 1, v0 + 1])
+  expect(asked()).toEqual([s0! + 1, v0! + 1])
 })
 
 test('band data: a failed savings is noted once, status still arrives', async ($, on) => {
@@ -1874,7 +1877,7 @@ test('narrow terminal keeps one row: the savings drop out first, the row fits', 
 const STALE = new Date(10_000_000_000 - 2 * 3_600_000).toISOString()
 test('a stale row with Stay here fits 60 columns', async ($, on) => {
   wire(on, [], () => ({ value: usage }), () => ran(JSON.stringify({ tokens: 300_000, at: STALE, model: 'm' })))
-  await $.command.run({ command: 'al-band', args: '' })
+  await $.command.run(typedCmd('al-band'))
   const ui = await atColumns($, 60)
   expect(await buttons(ui)).toEqual(['launch', 'stay', 'details'])
   expect(await rowWidth(ui)).toBeLessThanOrEqual(60)
@@ -1882,7 +1885,7 @@ test('a stale row with Stay here fits 60 columns', async ($, on) => {
 
 test('the same in Russian: the name shortens to the shield when the buttons leave no room', { options: { language: 'ru' } }, async ($, on) => {
   wire(on, [], () => ({ value: usage }), () => ran(JSON.stringify({ tokens: 300_000, at: STALE, model: 'm' })))
-  await $.command.run({ command: 'al-band', args: '' })
+  await $.command.run(typedCmd('al-band'))
   const ui = await atColumns($, 60)
   expect(await buttons(ui)).toEqual(['launch', 'stay', 'details'])
   expect(await rowWidth(ui)).toBeLessThanOrEqual(60)
@@ -2304,7 +2307,7 @@ const hintRig = async ($: any, on: any, reply: string) => started($, on, a => (a
 
 test('review hint: asked when New worker becomes ready, drawn on the row, not asked again on a redraw', async ($, on) => {
   const m = await hintRig($, on, '{"ponytail":true,"edits":6}')
-  await $.command.run({ command: 'al-band', args: '' })
+  await $.command.run(typedCmd('al-band'))
   const ui = await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props: { ...props, bodyColumns: 140 } } as never) // the hint goes before the cache and the size in a tight row
   expect(ofCg(m, 'review-hint')).toHaveLength(1)
   expect(flag(ofCg(m, 'review-hint')[0]!.argv, '--session')).toBe('id')
@@ -2316,7 +2319,7 @@ test('review hint: asked when New worker becomes ready, drawn on the row, not as
 
 test('review hint: not asked while the model works', async ($, on) => {
   const m = await hintRig($, on, '{"ponytail":true,"edits":6}')
-  await $.command.run({ command: 'al-band', args: '' })
+  await $.command.run(typedCmd('al-band'))
   const ui = await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props: { ...props, isWorking: true } } as never)
   expect(ofCg(m, 'review-hint')).toHaveLength(0)
   expect(await texts(ui)).not.toContain(`· ${T.reviewHint}`)
