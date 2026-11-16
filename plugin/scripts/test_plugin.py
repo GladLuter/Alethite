@@ -30,7 +30,9 @@ class ManifestTest(unittest.TestCase):
         models = {'scout': 'haiku'}
         for name, tools in want.items():
             with open(os.path.join(ROOT, 'plugin', 'agents', name + '.md'), encoding='utf-8') as f:
-                head = f.read().split('---')[1]
+                text = f.read()
+            self.assertTrue(text.startswith('---'))
+            head = text.split('---', 2)[1]
             fm = dict(l.split(':', 1) for l in head.strip().splitlines() if not l.startswith(' '))
             fm = {k.strip(): v.strip() for k, v in fm.items()}
             self.assertEqual(fm['name'], name)
@@ -39,7 +41,9 @@ class ManifestTest(unittest.TestCase):
             self.assertEqual(fm['model'], models.get(name, 'sonnet'))
             for bad in ('mcp__', 'Agent', 'Skill'):
                 self.assertNotIn(bad, fm['tools'])
-            self.assertEqual('omitClaudeMd' in fm and fm['omitClaudeMd'], 'true' if name == 'scout' else False)
+            self.assertEqual(fm.get('omitClaudeMd'), 'true' if name == 'scout' else None)
+            self.assertIn('no MCP tools', fm['description'])
+            self.assertEqual('foreground' in text, name in ('coder', 'reviewer', 'resident'))
             self.assertEqual('experimental' in fm, name == 'resident')
             self.assertEqual('cacheTtl: 1h' in head, name == 'resident')
             self.assertNotIn('effort', fm)

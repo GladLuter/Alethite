@@ -241,7 +241,8 @@ class StatsTest(unittest.TestCase):
         a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'stats', '--since', '2026-10-01', '--host', 'h', '--today', '2026-10-13',
                                      '--limits', '[]', '--rule-chars', '0'])
         for gone, effect in (({'X': {'agents': [CODER]}}, None), (None, ValueError('damaged'))):
-            with mock.patch('cg.memdb.connect', return_value=self.conn), mock.patch('cleanup.gone', return_value=gone, side_effect=effect),                     mock.patch('stats.metrics', wraps=metrics) as spy:
+            with mock.patch('cg.memdb.connect', return_value=self.conn), mock.patch('cleanup.gone', return_value=gone, side_effect=effect), \
+                    mock.patch('stats.metrics', wraps=metrics) as spy:
                 a.fn(a)
             self.assertEqual(spy.call_args.args[7], gone)
 
