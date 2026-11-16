@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Review, Savings, Snap } from '../types'
 import { columns, delayAt, money, REVIEW_EDITS, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
-import { isStale, shouldStop, size, statusText } from './guard'
+import { isStale, shouldDenyBackground, shouldStop, size, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
 import { flush, notePath, summaryNote, summaryPath } from './notes'
@@ -588,10 +588,12 @@ export const register: Register = (on, options) => {
   const ended = new Map<string, number>()
   const stoppedAgent = new Set<string>()
   const agentNames = new Map<string, string>()
+  const agentTypes = new Map<string, string>()
 
   on('agent.spawn', async (_, e, next) => {
     const r = await next(e)
     if (e.name !== undefined && r.agentId !== undefined) agentNames.set(e.name, r.agentId)
+    if (r.agentId !== undefined) agentTypes.set(r.agentId, e.subagentType)
     return r
   })
 
@@ -902,6 +904,15 @@ export const register: Register = (on, options) => {
       }
     }
     return next(blocks.length ? { ...e, context: [...(e.context ?? []), ...blocks] } : e)
+  })
+
+  // A lean agent asking for a background command is refused with the way to run it in the foreground; the main chat, other types, unknown
+  // ids and any failure pass.
+  on('tool.call', { tool: ['Bash', 'PowerShell'] }, async (_, e, next) => {
+    try {
+      if (e.agentId !== undefined && shouldDenyBackground(agentTypes.get(e.agentId), e.run_in_background)) return { deny: T.bgDenied }
+    } catch {}
+    return next(e)
   })
 
   // A Bash or PowerShell command that holds a lesson's trigger is stopped once in a chat, with the lesson; the same command again passes.

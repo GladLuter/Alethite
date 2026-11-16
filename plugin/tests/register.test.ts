@@ -858,6 +858,8 @@ test('language ru: the mod speaks Russian to the owner and to the model, and so 
 
 test('leanRule: terse prompts phrase, and the rule stays short in every language', async () => {
   expect(T.leanRule).toContain('terse')
+  expect(ru.leanRule).toContain('сжатым')
+  expect(uk.leanRule).toContain('стислою')
   for (const rule of [T.leanRule, ru.leanRule, uk.leanRule]) expect(rule!.length).toBeLessThanOrEqual(1200)
 })
 
@@ -2303,6 +2305,31 @@ test('guard: a name given at the spawn is the agent id', async ($, on) => {
   await ($ as any).agent.spawn({ prompt: 'p', name: 'scout-1' })
   expect(await send($, 'scout-1')).toEqual({ deny: coldText() })
   expect(flag(ofCg(m, 'agent-age')[0]!.argv, '--agent')).toBe(AG)
+})
+
+// ---- the guard of background commands ----
+const bgRig = async ($: any, on: any, type: string) => {
+  on('agent.spawn', () => ({ model: 'm', agentId: AG }))
+  on('tool.call', { tool: ['Bash', 'PowerShell'] }, () => ({ result: 'ran' }))
+  const m = await started($, on, () => ran('{}'))
+  await $.agent.spawn({ prompt: 'p', subagentType: type })
+  return m
+}
+const bash = ($: any, over: object) => $.tool.call({ tool: 'Bash', command: 'sleep 1', ...over })
+
+test('background guard: a lean agent that asks for run_in_background is refused, in the foreground it passes, PowerShell the same', async ($, on) => {
+  await bgRig($, on, 'alethite:coder')
+  expect(await bash($, { agentId: AG, run_in_background: true })).toEqual({ deny: T.bgDenied })
+  expect(await bash($, { agentId: AG, run_in_background: false })).toEqual({ result: 'ran' })
+  expect(await bash($, { agentId: AG })).toEqual({ result: 'ran' })
+  expect(await $.tool.call({ tool: 'PowerShell', command: 'x', agentId: AG, run_in_background: true })).toEqual({ deny: T.bgDenied })
+})
+
+test('background guard: the main chat, another type and an unknown agent pass', async ($, on) => {
+  await bgRig($, on, 'general-purpose')
+  expect(await bash($, { agentId: AG, run_in_background: true })).toEqual({ result: 'ran' })
+  expect(await bash($, { run_in_background: true })).toEqual({ result: 'ran' })
+  expect(await bash($, { agentId: 'a1111111111111111', run_in_background: true })).toEqual({ result: 'ran' })
 })
 
 let hintReply = ''
