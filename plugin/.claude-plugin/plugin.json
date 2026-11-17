@@ -1,6 +1,6 @@
 {
   "name": "alethite",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "author": { "name": "Yevgenii Slieptsov (GladLuter)" },
   "license": "MIT",
   "description": "Alethite: price a send into a big idle chat, offer a clean new worker, remember what was learned, share the memory between computers.",
@@ -11,7 +11,7 @@
     "syncDir": { "type": "string", "title": "Sync folder", "description": "A folder on the network share that every computer of yours reaches, for example \\\\NAS\\share\\alethite or Z:\\alethite; create it once. Each computer writes only into its own subfolder. Empty: no sync.", "default": "" },
     "shareCipher": { "type": "string", "title": "Sync folder encryption", "description": "How what this computer puts in the sync folder is sealed once encryption is on (/al-encrypt on): sqlcipher (one SQLCipher file per batch) or cryptography (AES-GCM built into Windows, no package needed). A computer reads the data of the others whichever they chose; sqlcipher needs the sqlcipher3 package on the reading computer.", "default": "sqlcipher", "options": ["sqlcipher", "cryptography"] },
     "indexCipher": { "type": "string", "title": "Index encryption", "description": "How the index on this computer is encrypted once encryption is on (/al-encrypt on): sqlcipher (an SQLCipher file; needs the sqlcipher3 package) or efs (Windows file encryption: needs Windows Pro and NTFS, no package needed, works with Smart App Control on).", "default": "sqlcipher", "options": ["sqlcipher", "efs"] },
-    "bandMinTokens": { "type": "number", "title": "Band: highlight from how many context tokens", "description": "The band row is always shown. It is highlighted, and offers Stay here, when the chat holds more tokens than this and enough minutes have passed since the last reply.", "default": 100000 },
+    "bandMinTokens": { "type": "number", "title": "Band: highlight from how many context tokens", "description": "The band row is always shown. It is highlighted when the chat holds more tokens than this and enough minutes have passed since the last reply.", "default": 100000 },
     "bandIdleMinutes": { "type": "number", "title": "Band: highlight after how many minutes", "description": "The row is highlighted when more minutes than this have passed since the last reply (and the chat holds more tokens than the setting above). The cache lives 60 minutes.", "default": 55 },
     "showLimits": { "type": "boolean", "title": "Band: show the limits column", "description": "Add the Limits column (used percentages of the 5 hours and week limits, and when they reset) to Details.", "default": true },
     "python": { "type": "string", "title": "Python command", "description": "The command the mod runs its Python scripts with: one executable, no arguments.", "default": "python" },
