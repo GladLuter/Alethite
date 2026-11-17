@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { baseTrouble, columns, delayTimes, fitTokens, lineTokens, money } from '../hooks/band'
+import { baseTrouble, columns, delayTimes, fitTokens, lineTokens, money, newerLimits } from '../hooks/band'
 import { setLanguage, T } from '../hooks/text'
 
 setLanguage('ru')
@@ -124,11 +124,23 @@ test('delayTimes: reset times to offer, each plus 5 minutes', () => {
   expect(delayTimes([w('five_hour', 92, h), w('seven_day', 40, 3 * day)], now)).toEqual([now + h + f])
   expect(delayTimes([w('spend_limit', 120, 2 * day), w('five_hour', 50, h)], now)).toEqual([now + 2 * day + f])
   expect(delayTimes([w('five_hour', 95, h), w('seven_day', 95, h)], now)).toEqual([now + h + f])
-  expect(delayTimes([w('five_hour', 89, h)], now)).toEqual([])
+  expect(delayTimes([w('five_hour', 89, h)], now)).toEqual([now + h + f])
+  expect(delayTimes([w('five_hour', 6, h), w('seven_day', 15, 3 * day)], now)).toEqual([now + h + f])
   expect(delayTimes([{ kind: 'five_hour', percentUsed: 100 }], now)).toEqual([])
   expect(delayTimes([{ kind: 'five_hour', percentUsed: 100, resetsAt: 'soon' }], now)).toEqual([])
   expect(delayTimes([w('five_hour', 100, -h)], now)).toEqual([])
   expect(delayTimes([], now)).toEqual([])
+  expect(delayTimes([w('seven_day', 15, 3 * day)], now)).toEqual([])
+})
+test('newerLimits: the newer window wins per kind', () => {
+  const at = (ms: number) => new Date(ms).toISOString()
+  const w = (kind: string, percentUsed: number, off: number | undefined) => ({ kind, percentUsed, resetsAt: off === undefined ? undefined : at(now + off) })
+  expect(newerLimits([w('five_hour', 90, 1000)], [w('five_hour', 5, 5_000_000)])).toEqual([w('five_hour', 5, 5_000_000)]) // later reset wins
+  expect(newerLimits([w('five_hour', 50, 5_000_000)], [w('five_hour', 90, 1000)])).toEqual([w('five_hour', 50, 5_000_000)]) // an old idle reading does not replace a newer one
+  expect(newerLimits([w('five_hour', 50, 0)], [w('five_hour', 60, 30_000)])).toEqual([w('five_hour', 60, 30_000)]) // same window, higher share
+  expect(newerLimits([w('five_hour', 70, 30_000)], [w('five_hour', 60, 0)])).toEqual([w('five_hour', 70, 30_000)])
+  expect(newerLimits([w('five_hour', 60, 0)], [w('five_hour', 60, 30_000)])).toEqual([w('five_hour', 60, 0)]) // tie keeps the stored one
+  expect(newerLimits([w('seven_day', 10, 1000), w('x', 1, undefined)], [w('five_hour', 5, undefined)])).toEqual([w('seven_day', 10, 1000), w('five_hour', 5, undefined)])
 })
 
 test('line: lean agents alone show the saving; none, none', () => {

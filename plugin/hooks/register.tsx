@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Review, Savings, Snap } from '../types'
-import { columns, delayTimes, money, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
+import { columns, delayTimes, money, newerLimits, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
 import { isStale, shouldDenyBackground, shouldStop, size, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
@@ -36,7 +36,6 @@ const afterLevel = atom({ plugin: 'alethite', key: 'afterLevel' } as const, null
 const isBusy = atom({ plugin: 'alethite', key: 'isBusy' } as const, false)
 const info = atom({ plugin: 'alethite', key: 'info' } as const, null)
 const isDetails = atom({ plugin: 'alethite', key: 'isDetails' } as const, false)
-const calmId = atom({ plugin: 'alethite', key: 'calmId' } as const, '')
 const delayedAt = atom({ plugin: 'alethite', key: 'delayedAt' } as const, null)
 // the New worker picker closes and opens next time at its first level
 const disarm = ($: EngineInterface) => Promise.all([update($, isArmed, () => false), update($, afterLevel, () => null)])
@@ -213,8 +212,8 @@ const lessonsOr = async ($: EngineInterface, python: string, kept: Lesson[]) => 
 // The old single array `rulesSeen` is carried over into keys on its first read.
 // shortcut: one chain per process, two chats starting at the same moment may toast a new rule twice
 let rulesChain: Promise<void> = Promise.resolve() // one run at a time in this process: two at once would each take the other's half-written keys for news
-const noteRules = ($: EngineInterface, list: Lesson[], on: boolean, own?: number) => (rulesChain = rulesChain.then(() => noteRulesNow($, list, on, own)))
-const noteRulesNow = async ($: EngineInterface, list: Lesson[], on: boolean, own?: number) => {
+const noteRules = ($: EngineInterface, list: Lesson[], isOn: boolean, own?: number) => (rulesChain = rulesChain.then(() => noteRulesNow($, list, isOn, own)))
+const noteRulesNow = async ($: EngineInterface, list: Lesson[], isOn: boolean, own?: number) => {
   try {
     const old = (await $.store.get('rulesSeen')) as number[] | undefined
     const keys = new Set((await $.store.keys()).filter(k => k.startsWith('rulesSeen:')))
@@ -222,7 +221,7 @@ const noteRulesNow = async ($: EngineInterface, list: Lesson[], on: boolean, own
     const key = (pos: number) => `rulesSeen:${pos}`
     const fresh = list.filter(l => l.global && !keys.has(key(l.pos)) && !old?.includes(l.pos))
     const { left } = rulesContext(list)
-    if (!isFirst) for (const l of fresh) if (l.pos !== own) toast($, T.lessonToast(oneLine(l.text), { left, on, stale: false }))
+    if (!isFirst) for (const l of fresh) if (l.pos !== own) toast($, T.lessonToast(oneLine(l.text), { left, isOn, stale: false }))
     if (isFirst || old !== undefined) await $.store.set('rulesSeen:init', true)
     for (const pos of [...(old ?? []), ...fresh.map(l => l.pos)]) if (!keys.has(key(pos))) await $.store.set(key(pos), true)
     if (old !== undefined) await $.store.delete('rulesSeen') // after the keys are written: a cut run carries over again
@@ -230,9 +229,9 @@ const noteRulesNow = async ($: EngineInterface, list: Lesson[], on: boolean, own
 }
 
 // The same, with the notice of new rules.
-const reloadLessons = async ($: EngineInterface, python: string, kept: Lesson[], on: boolean) => {
+const reloadLessons = async ($: EngineInterface, python: string, kept: Lesson[], isOn: boolean) => {
   const list = await lessonsOr($, python, kept)
-  await noteRules($, list, on)
+  await noteRules($, list, isOn)
   return list
 }
 
@@ -287,6 +286,14 @@ const refresh = async ($: EngineInterface, python: string) => {
       await fail($, 'last-turn', err)
     }
   }
+  // the engine reports the windows of this chat's last reply only: a new chat has none until its first reply, and an idle chat's reading may be hours old, so keep the newer window of this chat's and the stored one
+  let limits: Snap['limits'] = usage.rateLimits.map(({ kind, percentUsed, resetsAt }) => ({ kind, percentUsed, resetsAt }))
+  try {
+    const kept = ((await $.store.get('limits')) as typeof limits | undefined) ?? []
+    const merged = newerLimits(kept, limits)
+    if (JSON.stringify(merged) !== JSON.stringify(kept)) await $.store.set('limits', merged)
+    limits = merged.filter(l => !(Date.parse(l.resetsAt ?? '') <= now))
+  } catch {} // the reading matters more than its memory
   const fresh: Snap = {
     id,
     model,
@@ -295,7 +302,7 @@ const refresh = async ($: EngineInterface, python: string) => {
     tokens: usage.context.tokens ?? rec?.tokens ?? null,
     at: rec?.at ?? null,
     cost: usage.cost?.usd ?? null,
-    limits: usage.rateLimits.map(({ kind, percentUsed, resetsAt }) => ({ kind, percentUsed, resetsAt })),
+    limits,
   }
   showStatus($, statusText(fresh.tokens, fresh.at, now))
   await update($, snap, () => fresh)
@@ -330,10 +337,10 @@ const rebuildSummary = async ($: EngineInterface, today: string) => {
   const notes = files.filter(p => p.endsWith('.md') && p !== summary && p.startsWith(`${folder}/`) && !p.includes('/', folder.length + 1))
   const final = new Date(Date.parse(today) - 2 * 86_400_000).toISOString().slice(0, 10)
   const fronts: Record<string, unknown>[] = []
-  let next = 0
+  let cursor = 0
   const worker = async () => {
-    while (next < notes.length) {
-      const [i, path] = [next, notes[next++]!]
+    while (cursor < notes.length) {
+      const [i, path] = [cursor, notes[cursor++]!]
       const day = path.slice(folder.length + 1, folder.length + 11)
       const isFinal = /^\d{4}-\d\d-\d\d$/.test(day) && day < final
       const kept = isFinal ? ((await $.store.get(`summaryRow:${path}`)) as Record<string, unknown> | undefined) : undefined
@@ -743,7 +750,7 @@ export const register: Register = (on, options) => {
       const memory = dir === null ? null : { dir, facts, tokens: autoMemTokens(mem) }
       const embedCmd = `& "${python}" "${$.plugin.root}/scripts/cg.py" --lang ${language()} embed --model ${embedModel} --max-seconds 100000`
       const counts = await sumCounts($)
-      const lessons = { count: lessonList.filter(l => !l.global).length, shown: counts.shown ?? 0, chars: counts.chars ?? 0, stopped: counts.stopped ?? 0, on: isLessonsOn }
+      const lessons = { count: lessonList.filter(l => !l.global).length, shown: counts.shown ?? 0, chars: counts.chars ?? 0, stopped: counts.stopped ?? 0, isOn: isLessonsOn }
       const rules = { global: lessonList.filter(l => l.global).length, rules: counts.rules ?? 0, chars: counts.rulesChars ?? 0, left: rulesContext(lessonList).left }
       if (homeDir !== undefined) settingsFile = await settingsFileOf($, homeDir) // after the status run, which may have moved the folder
       return {
@@ -894,7 +901,7 @@ export const register: Register = (on, options) => {
       if (!r.new) return T.lessonKnown
       if (input.scope === 'all') {
         if (!stale) await noteRules($, lessonList, isLessonsOn, r.pos as number)
-        const g = { left: rulesContext(lessonList).left, on: isLessonsOn, stale }
+        const g = { left: rulesContext(lessonList).left, isOn: isLessonsOn, stale }
         toast($, T.lessonToast(oneLine(String(r.text)), g))
         return T.lessonSaved(String(r.text), g)
       }
@@ -1096,7 +1103,6 @@ export const register: Register = (on, options) => {
     // every read first, so the band is subscribed to all of them even when it draws nothing
     const s = await read($, snap)
     const hidden = await read($, hiddenId)
-    const calm = await read($, calmId)
     const armed = await read($, isArmed)
     const busy = await read($, isBusy)
     const wait = await read($, delayedAt)
@@ -1112,7 +1118,7 @@ export const register: Register = (on, options) => {
     const rule = e.surface === 'desktop' && 'Svg' in els ? <els.Svg source={RULE_SVG} alt="—" /> : null // the `in` narrows the union for the types
     // the band above the prompt is one area for every mod: ours is a row or a frame of its own, and what the mods beneath draw stays under it
     const below = await next(e)
-    const isLit = isStale(s, minTokens, idleMinutes) && s.id !== calm
+    const isLit = isStale(s, minTokens, idleMinutes)
     const title = <Text bold>{T.bandTitle}</Text>
     const times = delayTimes(s.limits, s.now)
     // a new usage snapshot may leave one time (no list to pick from) or put the picked time in the past: back to the first level then
@@ -1204,14 +1210,13 @@ export const register: Register = (on, options) => {
         {wait !== null && <Text color="warning">{waitText}</Text>}
         {wait !== null && <Button key="cancel-delay" label={T.cancel} onPress={cancelWait} />}
         {wait === null && !isWorking && <Button key="launch" label={launchLabel} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />}
-        {wait === null && !isWorking && isLit && <Button key="stay" label={T.stayHere} onPress={() => update($, calmId, () => s.id)} />}
         {hasDetails && <Button key="details" label={detailsLabel} onPress={toggle} />}
       </Box>
     )
 
     if (!isOpen) {
       // the terminal counts cells; the desktop draws wider and does not wrap, so only the terminal trims the tokens to the room the buttons leave
-      const buttons = wait !== null ? [waitText, T.cancel, detailsLabel] : [launchLabel, ...(isLit ? [T.stayHere] : []), detailsLabel].slice(isWorking ? -1 : 0)
+      const buttons = wait !== null ? [waitText, T.cancel, detailsLabel] : [launchLabel, detailsLabel].slice(isWorking ? -1 : 0)
       // the row is the title, the tokens ("· " + text), a spacer and the buttons, one gap between neighbours; a Button draws `[ label ]`, its label plus 4.
       // The tokens' ' · ' joins in tokensWidth are 3 cells short of what they take in the row, and the spacer's gap is one more.
       const room = (rowTitle: string) => (e.surface === 'terminal' ? e.props.bodyColumns - rowTitle.length - buttons.join('').length - 5 * buttons.length - 4 : Infinity)

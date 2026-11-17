@@ -124,10 +124,22 @@ export const columns = (s: Snap, info: Info | null, showLimits: boolean): Col[] 
   return [chat, lastCol, workerCol, ...limitsCol, baseCol]
 }
 
-// Start times to offer: an exhausted window cannot be launched into before its reset, so the floor is the latest exhausted reset; then the 90%+ resets from the floor, plus the earliest reset (the 5-hour one while the week has room). Each + 5 minutes so the worker does not hit the next limit.
+// Per window kind the newer reading of the stored and the live one: a later reset is a newer window; the same reset (within a minute) keeps the higher share, since it never drops within a window; a tie keeps the stored one. Stored windows without a reset time are dropped.
+export const newerLimits = (kept: Snap['limits'], live: Snap['limits']) => {
+  const ms = (l?: Snap['limits'][number]) => Date.parse(l?.resetsAt ?? '')
+  const keptWins = (k: Snap['limits'][number], l: Snap['limits'][number]) => ms(k) > ms(l) + 60_000 || (Math.abs(ms(k) - ms(l)) <= 60_000 && k.percentUsed >= l.percentUsed)
+  return [...new Set([...kept, ...live].map(l => l.kind))].flatMap(kind => {
+    const k = kept.find(x => x.kind === kind)
+    const l = live.find(x => x.kind === kind)
+    if (!l) return ms(k) >= 0 ? [k!] : []
+    return [k && keptWins(k, l) ? k : l]
+  })
+}
+
+// Start times to offer: an exhausted window cannot be launched into before its reset, so the floor is the latest exhausted reset; then the 90%+ resets from the floor, plus the earliest reset (the 5-hour one while the week has room). Offered when a limit is at 90%+ or resets within 5 hours. Each + 5 minutes so the worker does not hit the next limit.
 export const delayTimes = (limits: Snap['limits'], now: number) => {
   const live = limits.flatMap(l => (l.resetsAt && Date.parse(l.resetsAt) > now ? [{ at: Date.parse(l.resetsAt), p: l.percentUsed }] : []))
-  if (!live.some(l => l.p >= 90)) return []
+  if (!live.some(l => l.p >= 90 || l.at <= now + 18_000_000)) return []
   const floor = Math.max(now, ...live.filter(l => l.p >= 100).map(l => l.at))
   const ok = live.filter(l => l.at >= floor)
   const times = [...ok.filter(l => l.p >= 90).map(l => l.at), Math.min(...ok.map(l => l.at))]
