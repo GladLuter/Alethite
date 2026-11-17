@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Review, Savings, Snap } from '../types'
-import { columns, delayTimes, money, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
+import { columns, delayTimes, money, newerLimits, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
 import { isStale, shouldDenyBackground, shouldStop, size, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
 import type { Compression } from './memory'
@@ -286,11 +286,13 @@ const refresh = async ($: EngineInterface, python: string) => {
       await fail($, 'last-turn', err)
     }
   }
-  // the engine reports the windows of this chat's last reply only: a new chat has none until its first reply, so fall back to the last reading of any chat
-  let limits = usage.rateLimits.map(({ kind, percentUsed, resetsAt }) => ({ kind, percentUsed, resetsAt }))
+  // the engine reports the windows of this chat's last reply only: a new chat has none until its first reply, and an idle chat's reading may be hours old, so keep the newer window of this chat's and the stored one
+  let limits: Snap['limits'] = usage.rateLimits.map(({ kind, percentUsed, resetsAt }) => ({ kind, percentUsed, resetsAt }))
   try {
-    if (limits.length > 0) await $.store.set('limits', limits)
-    else limits = (((await $.store.get('limits')) as typeof limits | undefined) ?? []).filter(l => Date.parse(l.resetsAt ?? '') > now)
+    const kept = ((await $.store.get('limits')) as typeof limits | undefined) ?? []
+    const merged = newerLimits(kept, limits)
+    if (JSON.stringify(merged) !== JSON.stringify(kept)) await $.store.set('limits', merged)
+    limits = merged.filter(l => !(Date.parse(l.resetsAt ?? '') <= now))
   } catch {} // the reading matters more than its memory
   const fresh: Snap = {
     id,

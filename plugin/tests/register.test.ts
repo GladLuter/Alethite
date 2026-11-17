@@ -1988,7 +1988,7 @@ const delayed = async ($: any, on: any, draft = 'продолжаем', store = 
   return { m, log, gone, state, ui: await $.ui.mount(UI) }
 }
 
-test('after-reset is offered only near a limit', async ($, on) => {
+test('after-reset is offered while a window resets within 5 hours or is near its limit',async ($, on) => {
   wire(on, [], nearLimit())
   const ui = await mountBand($)
   await ui.press({ key: 'launch' })
@@ -2027,7 +2027,27 @@ test('a chat with no readings yet still gets After reset from the last reading, 
   expect(store.get('limits')).toHaveLength(1)
 })
 
-test('a stored reading whose reset has passed is not used', async ($, on) => {
+test('an idle chat with an old reading does not overwrite a newer stored one, and writes nothing when unchanged', async ($, on) => {
+  const newer = { kind: 'five_hour', percentUsed: 40, resetsAt: new Date(NOW + 3_600_000).toISOString() }
+  let sets = 0
+  class Counting extends Map<string, unknown> {
+    set(k: string, v: unknown) {
+      if (k === 'limits') sets++
+      return super.set(k, v)
+    }
+  }
+  const store = new Counting([['limits', [newer]]])
+  sets = 0
+  wire(on, [], nearLimit(new Date(NOW + 1000).toISOString(), 95), undefined, store) // an older window than the stored one
+  await ($ as any).command.run({ command: 'al-band', args: '' })
+  expect(store.get('limits')).toEqual([newer])
+  expect(sets).toBe(0)
+  const ui = await mountBand($)
+  await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
+})
+
+test('a stored reading whose reset has passed is not used',async ($, on) => {
   const store = new Map<string, unknown>([['limits', [{ kind: 'five_hour', percentUsed: 92, resetsAt: new Date(NOW - 1000).toISOString() }]]])
   wire(on, [], () => ({ value: { ...usage, rateLimits: [] } }), undefined, store)
   const ui = await mountBand($)
@@ -2138,7 +2158,8 @@ test('the time level goes back to the first one when a new snapshot leaves one t
   await ui.press({ key: 'launch' })
   await ui.press({ key: 'after' })
   expect(await buttons(ui)).toEqual(['at-1', 'at-2', 'cancel'])
-  limits = two(91, 85) // the week drops under 90%: only the 5-hour reset is left
+  // a new week starts (later reset, low share): only the 5-hour reset is left
+  limits = () => ({ value: { ...usage, rateLimits: [{ kind: 'five_hour', percentUsed: 91, resetsAt: new Date(NOW + 3_600_000).toISOString() }, { kind: 'seven_day', percentUsed: 5, resetsAt: new Date(NOW + 10 * 86_400_000).toISOString() }] } })
   await m.clock.advance(30_000)
   expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
 })
