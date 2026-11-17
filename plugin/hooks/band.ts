@@ -124,10 +124,10 @@ export const columns = (s: Snap, info: Info | null, showLimits: boolean): Col[] 
   return [chat, lastCol, workerCol, ...limitsCol, baseCol]
 }
 
-// Start times to offer: an exhausted window cannot be launched into before its reset, so the floor is the latest exhausted reset; then the 90%+ resets from the floor, plus the earliest reset (the 5-hour one while the week has room). Each + 5 minutes so the worker does not hit the next limit.
+// Start times to offer, whatever the usage: an exhausted window cannot be launched into before its reset, so the floor is the latest exhausted reset; then the 90%+ resets from the floor, plus the earliest reset (the 5-hour one while the week has room). Each + 5 minutes so the worker does not hit the next limit.
 export const delayTimes = (limits: Snap['limits'], now: number) => {
   const live = limits.flatMap(l => (l.resetsAt && Date.parse(l.resetsAt) > now ? [{ at: Date.parse(l.resetsAt), p: l.percentUsed }] : []))
-  if (!live.some(l => l.p >= 90)) return []
+  if (live.length === 0) return []
   const floor = Math.max(now, ...live.filter(l => l.p >= 100).map(l => l.at))
   const ok = live.filter(l => l.at >= floor)
   const times = [...ok.filter(l => l.p >= 90).map(l => l.at), Math.min(...ok.map(l => l.at))]

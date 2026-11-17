@@ -169,16 +169,6 @@ test('the band is always one row: the title first, no frame', async ($, on) => {
   expect((await texts(ui))[0]).toBe(T.bandTitle)
 })
 
-test('a stale chat lights the row and offers to stay; staying lasts to the end of the chat', async ($, on) => {
-  const at = new Date(10_000_000_000 - 2 * 3_600_000).toISOString()
-  wire(on, [], () => ({ value: usage }), () => ran(JSON.stringify({ tokens: 300_000, at, model: 'm' })))
-  const ui = await mountBand($)
-  expect(await buttons(ui)).toEqual(['launch', 'stay', 'details'])
-  await ui.press({ key: 'stay' })
-  expect(await buttons(ui)).toEqual(['launch', 'details'])
-  await ($ as any).turn.complete(turn) // a turn must not bring the light back
-  expect(await buttons(ui)).toEqual(['launch', 'details'])
-})
 
 test('a stale chat paints the size and the price as a warning, the price at the cold rate', async ($, on) => {
   const at = new Date(10_000_000_000 - 2 * 3_600_000).toISOString()
@@ -1473,8 +1463,8 @@ test('lesson_save scope all: the answer, the toast and the args', async ($, on) 
   const { m } = await lessonRig($, on, [], [rule])
   const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
   expect(ofCg(m, 'lesson-save')[0]!.argv).toEqual(['lesson-save', '--cwd', 'C:/w', '--model', 'embeddinggemma', '--action=x', '--symptom=y', '--cause=z', '--fix=f', '--scope=all'])
-  expect(r).toEqual({ result: T.lessonSaved('Action: x\nSymptom: y\nCause: z', { on: true, stale: false }) })
-  expect(m.toasts).toEqual([T.toast(T.lessonToast('Action: x | Symptom: y | Cause: z', { left: 0, on: true, stale: false }))])
+  expect(r).toEqual({ result: T.lessonSaved('Action: x\nSymptom: y\nCause: z', { isOn: true, stale: false }) })
+  expect(m.toasts).toEqual([T.toast(T.lessonToast('Action: x | Symptom: y | Cause: z', { left: 0, isOn: true, stale: false }))])
 })
 
 test('global lessons: rules that no longer fit show in the save toast and in /al-health', async ($, on) => {
@@ -1483,7 +1473,7 @@ test('global lessons: rules that no longer fit show in the save toast and in /al
   const { m } = await lessonRig($, on, [], [long(8, 'a'), long(9, 'b'), long(10, 'c'), long(11, 'd')]) // 4 x 302 > RULES_CHARS: three fit
   await typed($, 'да')
   await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
-  expect(m.toasts).toEqual([T.toast(T.lessonToast('Action: x | Symptom: y | Cause: z', { left: 1, on: true, stale: false }))])
+  expect(m.toasts).toEqual([T.toast(T.lessonToast('Action: x | Symptom: y | Cause: z', { left: 1, isOn: true, stale: false }))])
   const counts = m.store.get('lessonCounts:id') as Record<string, number>
   const { text } = await ($ as any).command.run({ command: 'al-health', args: '' })
   expect(text).toContain(T.healthRules(4, 1, counts.rulesChars!, 1, true))
@@ -1497,7 +1487,7 @@ test('lesson_save scope all: a failed re-read of the list keeps the old list and
   await ($ as any).command.run({ command: 'al-lessons', args: '' })
   broken = true
   const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
-  const g = { left: 0, on: true, stale: true }
+  const g = { left: 0, isOn: true, stale: true }
   expect(r).toEqual({ result: T.lessonSaved('Action: x', g) })
   expect(m.toasts).toEqual([T.toast(T.lessonToast('Action: x', g))])
   expect(T.lessonToast('Action: x', g)).not.toBe(T.lessonToast('Action: x', { ...g, stale: false }))
@@ -1507,16 +1497,16 @@ test('lesson_save scope all with lessons off does not promise the rule will come
   on('tool.call', { tool: 'AskUserQuestion' }, (_: unknown, e: any) => ({ result: { answers: { [e.questions[0].question]: T.ruleAskYes } } })) // $.ui.ask is a tool.call of AskUserQuestion
   const { m } = await lessonRig($, on, [], [rule])
   const r = await ($ as any).tool.call({ tool: 'mcp__alethite__lesson_save', action: 'x', symptom: 'y', cause: 'z', fix: 'f', scope: 'all' })
-  const g = { left: 0, on: false, stale: false }
+  const g = { left: 0, isOn: false, stale: false }
   expect(r).toEqual({ result: T.lessonSaved('Action: x\nSymptom: y\nCause: z', g) })
   expect(m.toasts).toEqual([T.toast(T.lessonToast('Action: x | Symptom: y | Cause: z', g))])
-  expect(T.lessonSaved('t', g)).not.toBe(T.lessonSaved('t', { ...g, on: true }))
+  expect(T.lessonSaved('t', g)).not.toBe(T.lessonSaved('t', { ...g, isOn: true }))
 })
 
 test('global lessons: a rule that the sync brought from the other computer is toasted once, not silently added', async ($, on) => {
   const list: object[] = []
   const { m } = await lessonRig($, on, [], list)
-  const arrived = T.toast(T.lessonToast('Action: a | Symptom: b | Cause: c | Fix: Answer in Ukrainian', { left: 0, on: true, stale: false }))
+  const arrived = T.toast(T.lessonToast('Action: a | Symptom: b | Cause: c | Fix: Answer in Ukrainian', { left: 0, isOn: true, stale: false }))
   const count = () => m.toasts.filter(t => t === arrived).length
   expect(count()).toBe(0)
   list.push(rule)
@@ -1526,7 +1516,7 @@ test('global lessons: a rule that the sync brought from the other computer is to
   expect(count()).toBe(1)
 })
 
-const arrivedText = () => T.toast(T.lessonToast('Action: a | Symptom: b | Cause: c | Fix: Answer in Ukrainian', { left: 0, on: true, stale: false }))
+const arrivedText = () => T.toast(T.lessonToast('Action: a | Symptom: b | Cause: c | Fix: Answer in Ukrainian', { left: 0, isOn: true, stale: false }))
 
 test('global lessons: the first read after the update stores the rules and says nothing', async ($, on) => {
   const { m } = await lessonRig($, on, [], [rule])
@@ -1918,20 +1908,20 @@ test('narrow terminal keeps one row: the savings drop out first, the row fits', 
 })
 
 const STALE = new Date(10_000_000_000 - 2 * 3_600_000).toISOString()
-test('a stale row with Stay here fits 60 columns', async ($, on) => {
+test('a stale row fits 60 columns', async ($, on) => {
   wire(on, [], () => ({ value: usage }), () => ran(JSON.stringify({ tokens: 300_000, at: STALE, model: 'm' })))
   await $.command.run(typedCmd('al-band'))
   const ui = await atColumns($, 60)
-  expect(await buttons(ui)).toEqual(['launch', 'stay', 'details'])
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
   expect(await rowWidth(ui)).toBeLessThanOrEqual(60)
 })
 
 test('the same in Russian: the name shortens to the shield when the buttons leave no room', { options: { language: 'ru' } }, async ($, on) => {
   wire(on, [], () => ({ value: usage }), () => ran(JSON.stringify({ tokens: 300_000, at: STALE, model: 'm' })))
   await $.command.run(typedCmd('al-band'))
-  const ui = await atColumns($, 60)
-  expect(await buttons(ui)).toEqual(['launch', 'stay', 'details'])
-  expect(await rowWidth(ui)).toBeLessThanOrEqual(60)
+  const ui = await atColumns($, 36)
+  expect(await buttons(ui)).toEqual(['launch', 'details'])
+  expect(await rowWidth(ui)).toBeLessThanOrEqual(36)
   expect((await texts(ui))[0]).toBe('🛡')
 })
 
@@ -2008,16 +1998,42 @@ test('after-reset is offered only near a limit', async ($, on) => {
   expect(await texts(ui)).toContain(T.afterReset(when(new Date(AT).toISOString(), NOW)))
 })
 
-for (const [name, limit] of [
-  ['under 90%', nearLimit(undefined, 50)],
-  ['without a reset time', () => ({ value: { ...usage, rateLimits: [{ kind: 'five_hour', percentUsed: 92 }] } })],
-] as const)
-  test(`after-reset is not offered ${name}`, async ($, on) => {
-    wire(on, [], limit)
-    const ui = await mountBand($)
-    await ui.press({ key: 'launch' })
-    expect(await buttons(ui)).toEqual(['send', 'pick', 'cancel'])
-  })
+test('after-reset is offered at low usage too', async ($, on) => {
+  wire(on, [], nearLimit(undefined, 50))
+  const ui = await mountBand($)
+  await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
+})
+
+test('after-reset is not offered without a reset time', async ($, on) => {
+  wire(on, [], () => ({ value: { ...usage, rateLimits: [{ kind: 'five_hour', percentUsed: 92 }] } }))
+  const ui = await mountBand($)
+  await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'cancel'])
+})
+
+test('a chat with no readings yet still gets After reset from the last reading, kept for all chats', async ($, on) => {
+  let answer = nearLimit()
+  const store = new Map<string, unknown>()
+  wire(on, [], () => answer(), undefined, store)
+  await ($ as any).command.run({ command: 'al-band', args: '' })
+  expect(store.get('limits')).toEqual([{ kind: 'five_hour', percentUsed: 92, resetsAt: new Date(NOW + 3_600_000).toISOString() }])
+  answer = () => ({ value: { ...usage, rateLimits: [] } }) // a fresh chat after /clear
+  ids.now = 'other'
+  await ($ as any).command.run({ command: 'al-band', args: '' })
+  const ui = await mountBand($)
+  await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'after', 'cancel'])
+  expect(store.get('limits')).toHaveLength(1)
+})
+
+test('a stored reading whose reset has passed is not used', async ($, on) => {
+  const store = new Map<string, unknown>([['limits', [{ kind: 'five_hour', percentUsed: 92, resetsAt: new Date(NOW - 1000).toISOString() }]]])
+  wire(on, [], () => ({ value: { ...usage, rateLimits: [] } }), undefined, store)
+  const ui = await mountBand($)
+  await ui.press({ key: 'launch' })
+  expect(await buttons(ui)).toEqual(['send', 'pick', 'cancel'])
+})
 
 test('after-reset needs a draft and waits', async ($, on) => {
   const { m, state, ui } = await delayed($, on, '')

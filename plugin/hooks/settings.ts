@@ -12,7 +12,7 @@ const SILENT = ['encryptionKey', 'indexDir', 'projectAliases', 'deleteOldChats']
 
 // The options with the file's values over them, and the file's keys that are not a field or not of the field's type, left out.
 export const withFile = (options: Record<string, unknown>, text: string) => {
-  const file: unknown = JSON.parse(text.replace(/^﻿/, '')) // Windows editors and PowerShell save UTF-8 with a BOM
+  const file: unknown = JSON.parse(text.replace(/^\uFEFF/, '')) // Windows editors and PowerShell save UTF-8 with a BOM
   if (typeof file !== 'object' || file === null || Array.isArray(file)) throw new Error(T.settingsNotObject)
   const isField = ([k, v]: [string, unknown]) => k in options && typeof v === typeof options[k]
   const entries = Object.entries(file)

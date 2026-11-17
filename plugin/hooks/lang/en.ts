@@ -41,7 +41,6 @@ export const en = {
 
   // band buttons
   newWorker: 'New worker',
-  stayHere: 'Stay here',
   willClear: 'This chat will be cleared; the handoff is saved to a file.',
   sendNow: 'Send now',
   pickInMenu: "I'll pick the model",
@@ -184,9 +183,9 @@ export const en = {
   lessonFix: 'What to do instead, if known.',
   lessonTrigger: "Optional: a literal piece of a command, 8 characters or more (e.g. 'gh api /repos'), that stops and reminds before it runs again.",
   lessonScope: "Optional: 'all' is an owner's standing rule on how to work, true in any project (examples: chat language, delegating to subagents, commit rules), never a fact about this project's code; then fix is the rule itself in one sentence, shown in every chat.",
-  lessonSaved: (text: string, g?: { on: boolean; stale: boolean }) =>
+  lessonSaved: (text: string, g?: { isOn: boolean; stale: boolean }) =>
     g
-      ? `Lesson for all projects saved${g.on ? ', it will come in every chat' : ' (reminders are off, setting "Lessons")'}${g.stale ? '; the list of rules could not be re-read, /al-lessons re-reads it' : ''}:\n${text}`
+      ? `Lesson for all projects saved${g.isOn ? ', it will come in every chat' : ' (reminders are off, setting "Lessons")'}${g.stale ? '; the list of rules could not be re-read, /al-lessons re-reads it' : ''}:\n${text}`
       : `Lesson saved:\n${text}`,
   lessonKnown: 'This lesson is saved already.',
   lessonSaveFailed: (msg: string) => `The lesson was not saved: ${msg}`,
@@ -194,9 +193,9 @@ export const en = {
   ruleAskYes: 'Yes, save it',
   ruleAskNo: 'No',
   ruleDeclined: 'The owner did not agree to save this rule for all projects. Nothing was saved.',
-  lessonToast: (action: string, g?: { left: number; on: boolean; stale: boolean }) =>
+  lessonToast: (action: string, g?: { left: number; isOn: boolean; stale: boolean }) =>
     g
-      ? `lesson saved for all projects${g.on ? ', it will come in every chat' : ' (reminders are off, setting "Lessons")'}: ${action}${g.stale ? ' (the list of rules could not be re-read, /al-lessons re-reads it)' : g.left > 0 ? ` (${g.left} older no longer fit)` : ''}`
+      ? `lesson saved for all projects${g.isOn ? ', it will come in every chat' : ' (reminders are off, setting "Lessons")'}: ${action}${g.stale ? ' (the list of rules could not be re-read, /al-lessons re-reads it)' : g.left > 0 ? ` (${g.left} older no longer fit)` : ''}`
       : `lesson saved: ${action}`,
   lessonGlobalMark: '[all projects] ',
   rulesIntro: "Alethite: rules saved for all projects (/al-lessons lists them). Follow them unless the owner's messages or permissions say otherwise.",

@@ -53,7 +53,7 @@ export const healthLines = (h: {
   compression?: string
   settingsFile?: string
   shareCipher?: string
-  lessons?: { count: number; shown: number; chars: number; stopped: number; on: boolean }
+  lessons?: { count: number; shown: number; chars: number; stopped: number; isOn: boolean }
   rules?: { global: number; rules: number; chars: number; left: number } // the lessons for all projects and the reminder of them
   homeNotes?: string[] // the notes of the move of the mod folder in the status answer shown
 }) => {
@@ -73,8 +73,8 @@ export const healthLines = (h: {
     ...(h.settingsFile === undefined ? [] : [T.healthSettings(h.settingsFile)]),
     ...(enc ? encryptHealth(enc, h.shareCipher ?? 'sqlcipher') : []),
     ...(h.compression === undefined ? [] : [T.compressionLine(h.compression)]),
-    ...(h.lessons === undefined ? [] : [T.healthLessons(h.lessons.count, h.lessons.shown, h.lessons.chars, h.lessons.stopped, h.lessons.on)]),
-    ...(h.rules && h.rules.global > 0 ? [T.healthRules(h.rules.global, h.rules.rules, h.rules.chars, h.rules.left, h.lessons?.on ?? true)] : []),
+    ...(h.lessons === undefined ? [] : [T.healthLessons(h.lessons.count, h.lessons.shown, h.lessons.chars, h.lessons.stopped, h.lessons.isOn)]),
+    ...(h.rules && h.rules.global > 0 ? [T.healthRules(h.rules.global, h.rules.rules, h.rules.chars, h.rules.left, h.lessons?.isOn ?? true)] : []),
     ...(cleanup ? [cleanupHealth(cleanup)] : []),
     ...(h.syncDir === undefined ? [] : syncHealth(h.syncDir, i.sync)),
     ...(err !== undefined || !('job' in i) ? [] : jobHealth(job)),

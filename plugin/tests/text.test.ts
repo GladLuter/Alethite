@@ -41,7 +41,6 @@ test('a key the language lacks comes from English', () =>
     () => {
       expect(language()).toBe('xx')
       expect(T.newWorker).toBe('Nuevo trabajador')
-      expect(T.stayHere).toBe(en.stayHere)
       expect(T.statusError('x')).toBe('error — x')
     },
     { newWorker: 'Nuevo trabajador' },
