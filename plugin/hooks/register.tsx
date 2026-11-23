@@ -1475,8 +1475,8 @@ export const register: Register = (on, options) => {
       return (
         <Box gap={1}>
           <Text color={r.tone} wrap="truncate-end">{r.text}</Text>
-          <Box flexGrow={1} />
-          <Button key="bg-remove" label="×" onPress={remove} />
+          {/* right after the text, not at the row's end: a desktop button is taller than a line and would sit on Details below */}
+          <Button key="bg-remove" label="×" dimColor onPress={remove} />
         </Box>
       )
     })()
