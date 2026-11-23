@@ -198,11 +198,26 @@ const bgPatch = async ($: EngineInterface, key: string, patch: object, open = fa
 }
 
 let bgWatching = false // one watch at a time: two at once would each toast the same ended run
+let bgAgain = false // a call that came meanwhile: the running watch makes one more pass, its keys and view may be stale
 
 const watchBg = async ($: EngineInterface) => {
-  if (bgWatching) return
+  if (bgWatching) {
+    bgAgain = true
+    return
+  }
   bgWatching = true
   try {
+    do {
+      bgAgain = false
+      await watchBgOnce($)
+    } while (bgAgain)
+  } finally {
+    bgWatching = false
+  }
+}
+
+const watchBgOnce = async ($: EngineInterface) => {
+  {
     const [id, now] = [await $.session.id(), await $.clock.now()]
     let view = null
     for (const key of (await $.store.keys()).filter(k => k.startsWith('bg:'))) {
@@ -231,8 +246,6 @@ const watchBg = async ($: EngineInterface) => {
       }
     }
     await update($, bgView, () => view)
-  } finally {
-    bgWatching = false
   }
 }
 
@@ -694,7 +707,8 @@ export const register: Register = (on, options) => {
         if (typeof at === 'number' && at < loadedAt - 86_400_000) await $.store.delete(k)
       }
       for (const k of (await $.store.keys()).filter(k => k.startsWith('bg:'))) {
-        if (((await $.store.get(k)) as BgRun | undefined)?.started! <loadedAt - 7 * 86_400_000) await $.store.delete(k)
+        const started = ((await $.store.get(k)) as BgRun | undefined)?.started
+        if (typeof started !== 'number' || started < loadedAt - 7 * 86_400_000) await $.store.delete(k) // an empty or garbled record goes too
       }
       await watchBg($)
       void guarded($, 'bg', () => bgCheck($, python)) // never awaited: a slow Python must not hold session.start
@@ -1352,7 +1366,7 @@ export const register: Register = (on, options) => {
     const bgLine = (() => {
       if (bg === null) return null
       const r = bgRow(bg.run, bg.last, s.now)
-      const remove = () => guarded($, 'band', async () => (await $.store.delete(`bg:${await $.session.id()}`), await update($, bgView, () => null)))
+      const remove = () => guarded($, 'band', async () => (await $.store.delete(`bg:${await $.session.id()}`), await update($, bgView, () => null), await watchBg($))) // a watch in flight may hold the removed row: it passes again
       return (
         <Box gap={1}>
           <Text color={r.tone} wrap="truncate-end">{r.text}</Text>

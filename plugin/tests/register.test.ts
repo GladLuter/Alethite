@@ -2905,9 +2905,9 @@ const bgCall = ($: any, over: object = {}) => $.tool.call({ tool: 'mcp__alethite
 const bgVerbs = (m: { runs: { argv: string[] }[] }) => m.runs.filter(r => verb(r.argv)[0]!.startsWith('bg-'))
 const norm = (p: string) => p.replace(/\\/g, '/') // the engine may hand paths back with backslashes
 const runRig = async ($: any, on: any, store = new Map<string, unknown>(), files: Record<string, string> = {}) => {
-  const fs = { files, readError: undefined as string | undefined, alive: true, startError: undefined as string | undefined, onAlive: undefined as (() => void) | undefined }
+  const fs = { files, readError: undefined as string | undefined, alive: true, startError: undefined as string | undefined, onAlive: undefined as (() => void) | undefined, gate: undefined as Promise<void> | undefined }
   on('fs.exists', (_: unknown, e: { path: string }) => ({ value: norm(e.path) in fs.files }))
-  on('fs.read', (_: unknown, e: { path: string }) => (fs.readError ? { deny: fs.readError } : norm(e.path) in fs.files ? { value: fs.files[norm(e.path)] } : { deny: 'ENOENT' }))
+  on('fs.read', async (_: unknown, e: { path: string }) => (await fs.gate, fs.readError ? { deny: fs.readError } : norm(e.path) in fs.files ? { value: fs.files[norm(e.path)] } : { deny: 'ENOENT' }))
   const answer = (a: string[]) => (a[0] === 'bg-alive' ? (fs.onAlive?.(), ran(JSON.stringify({ alive: fs.alive }))) : a[0] === 'bg-start' ? (fs.startError ? failed(fs.startError) : ran(JSON.stringify({ dir: BG_DIR, pid: 7, log: `${BG_DIR}/log.txt` }))) : a[0] === 'index' ? indexed() : a[0] === 'embed' ? embedded() : ran('{}'))
   const m = await started($, on, answer, [], () => ({ value: usage }), {}, noTurn, store)
   return { m, fs, ui: await $.ui.mount(UI) }
@@ -3063,6 +3063,40 @@ test("another chat's run ends: one toast ever, no prompt", async ($, on) => {
   expect(m.toasts[0]).toContain('far')
   expect((m.store.get('bg:other') as { toasted?: true }).toasted).toBe(true)
   expect(log).toEqual([])
+})
+
+test('a watch asked meanwhile: one toast, one more pass shows the run started meanwhile', async ($, on) => {
+  const { m, fs, ui } = await runRig($, on, new Map([['bg:other', bgRun({ name: 'far' })]]))
+  fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 0, ended: '2026-11-23T10:00:00Z' })
+  let release!: () => void
+  fs.gate = new Promise<void>(r => (release = r))
+  const first = m.clock.advance(30_000) // its watch blocks on the read of exit.json
+  await new Promise(r => setTimeout(r, 50))
+  await bgCall($, { name: 'late' }) // asks for a watch while the first is blocked
+  release()
+  await first
+  await new Promise(r => setTimeout(r, 50))
+  expect(m.toasts.filter(t => t.includes('far'))).toHaveLength(1)
+  expect((await texts(ui)).filter((t: string) => t.includes('late'))).toHaveLength(1)
+})
+
+test('[x] while a watch is in flight: the removed row does not come back', async ($, on) => {
+  const { m, fs, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]), { [BG_STATUS]: 'x' })
+  await m.clock.advance(30_000)
+  let release!: () => void
+  fs.gate = new Promise<void>(r => (release = r))
+  const tick = m.clock.advance(30_000) // the watch blocks on the status file, holding the row
+  await new Promise(r => setTimeout(r, 50))
+  await ui.press({ key: 'bg-remove' })
+  release()
+  await tick
+  await new Promise(r => setTimeout(r, 50))
+  expect(await bgTexts(ui)).toEqual([])
+})
+
+test('session.start drops an empty or garbled bg record too', async ($, on) => {
+  const { m } = await runRig($, on, new Map<string, unknown>([['bg:empty', {}], ['bg:bad', { started: 'x' }], ['bg:new', bgRun()]]))
+  expect([...m.store.keys()].filter(k => k.startsWith('bg:'))).toEqual(['bg:new'])
 })
 
 test('session.start drops runs started over 7 days ago', async ($, on) => {
