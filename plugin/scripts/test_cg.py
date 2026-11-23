@@ -1643,6 +1643,8 @@ class BgCommandsTest(unittest.TestCase):
         end = time.monotonic() + 15
         while not os.path.exists(os.path.join(r['dir'], 'exit.json')) and time.monotonic() < end:
             time.sleep(0.1)
+        while call('bg-alive', '--dir', r['dir'])[1]['alive'] and time.monotonic() < end:  # the lock goes when the wrapper process exits
+            time.sleep(0.05)
         self.assertEqual(call('bg-alive', '--dir', r['dir']), (0, {'alive': False}))
 
 

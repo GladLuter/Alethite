@@ -48,8 +48,11 @@ def _prune(base):
     old = time.time() - DAYS * 86400
     for n in os.listdir(root):
         d = os.path.join(root, n)
-        if os.path.getmtime(d) < old and not alive(d):
-            shutil.rmtree(d, ignore_errors=True)
+        try:
+            if os.path.getmtime(d) < old and not alive(d):
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:  # another start pruned it just now
+            continue
 
 
 def start(base, session, name, command, cwd, status_file, if_cold):
@@ -69,14 +72,16 @@ def start(base, session, name, command, cwd, status_file, if_cold):
     end = time.monotonic() + 5  # the wrapper takes its lock a moment after the start: wait, so alive() is True when we return
     while not alive(d) and not os.path.exists(os.path.join(d, 'exit.json')) and time.monotonic() < end:
         time.sleep(0.02)
+    if not alive(d) and not os.path.exists(os.path.join(d, 'exit.json')):
+        raise RuntimeError(texts.t('bg_not_started', dir=d))
     return {'dir': d, 'pid': pid, 'log': os.path.join(d, 'log.txt')}
 
 
 def wrap(dir):
-    fd = os.open(os.path.join(dir, LOCK), os.O_RDWR | os.O_CREAT)
-    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
     out = {'code': None}
     try:
+        fd = os.open(os.path.join(dir, LOCK), os.O_RDWR | os.O_CREAT)
+        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # retries for a while: alive() holds the same byte for a moment
         with open(os.path.join(dir, 'run.json'), encoding='utf-8') as f:
             run = json.load(f)
         # shortcut: cmd's own echo of non-ASCII into log.txt goes through the OEM code page; the mod shows only the log's path

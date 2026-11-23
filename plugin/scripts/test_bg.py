@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 import bg
 
 
@@ -23,8 +24,15 @@ class BgTest(unittest.TestCase):
         end = time.monotonic() + 15
         while not os.path.exists(path) and time.monotonic() < end:
             time.sleep(0.1)
+        while bg.alive(d) and time.monotonic() < end:  # the wrapper drops its lock when the process exits, after exit.json
+            time.sleep(0.05)
         with open(path, encoding='utf-8') as f:
             return json.load(f)
+
+    def test_start_fails_when_the_wrapper_does_not_start(self):
+        with mock.patch('bg.spawn_detached', return_value=1):
+            with self.assertRaises(RuntimeError):
+                self.start('echo ok')
 
     def test_start_returns_at_once(self):
         t0 = time.monotonic()

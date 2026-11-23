@@ -177,6 +177,7 @@ EN = {
     'bg_bad_if_cold': 'the background run was not started: if_cold must be show or new_worker',
     'bg_empty': 'the background run was not started: the name and the command must not be empty',
     'bg_bad_status_file': 'the background run was not started: the status file must be an absolute path',
+    'bg_not_started': 'the background run failed: the wrapper did not start, run folder {dir}',
 }
 
 RU = {
@@ -346,6 +347,7 @@ RU = {
     'bg_bad_if_cold': 'фоновый запуск не начат: if_cold должен быть show или new_worker',
     'bg_empty': 'фоновый запуск не начат: имя и команда не должны быть пустыми',
     'bg_bad_status_file': 'фоновый запуск не начат: файл статуса должен быть абсолютным путём',
+    'bg_not_started': 'фоновый запуск не удался: обёртка не стартовала, папка запуска {dir}',
 }
 
 UK = {
@@ -515,6 +517,7 @@ UK = {
     'bg_bad_if_cold': 'фоновий запуск не розпочато: if_cold має бути show або new_worker',
     'bg_empty': 'фоновий запуск не розпочато: назва і команда не повинні бути порожніми',
     'bg_bad_status_file': 'фоновий запуск не розпочато: файл статусу має бути абсолютним шляхом',
+    'bg_not_started': 'фоновий запуск не вдався: обгортка не стартувала, тека запуску {dir}',
 }
 
 TABLES = {'en': EN, 'ru': RU, 'uk': UK}
