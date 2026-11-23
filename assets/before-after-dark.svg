@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="460" viewBox="0 0 880 460" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-label="Five weeks with Alethite. One message cost 56% less. The first message after an hour-long pause fell from 32% to 3% of all spend, cache rewrites from 41% to 4%. Since Nov 15, 219 of 277 subagent starts used lean agents and cost $27 less than general-purpose starts.">
-<rect x="0.5" y="0.5" width="879" height="459" rx="12" fill="#1a1a19" stroke="rgba(255,255,255,0.10)"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="580" viewBox="0 0 880 580" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-label="Five weeks with Alethite. One message cost 56% less. The first message after an hour-long pause fell from 32% to 3% of all spend, cache rewrites from 41% to 4%. Lean helper agents start 4 to 13 times smaller than the general-purpose agent. Subagents took 45% of all spend before them and 34% in the week after. From Nov 16 to 23, 214 of 231 subagent starts were lean, which cut subagent spend by 16%.">
+<rect x="0.5" y="0.5" width="879" height="579" rx="12" fill="#1a1a19" stroke="rgba(255,255,255,0.10)"/>
 <text x="32" y="48" font-size="22" font-weight="600" fill="#f0efec">Five weeks with Alethite</text>
 <text x="32" y="74" font-size="14" fill="#c3c2b7">My own Claude Code work on one computer, at API prices. Without Alethite: May 25 to Oct 13. With it: Oct 19 to Nov 23.</text>
 <text x="32" y="210" font-size="64" font-weight="600" fill="#f0efec">&#8722;56%</text>
@@ -36,8 +36,22 @@
 <text x="380" y="357" font-size="13" fill="#c3c2b7">Without Alethite</text>
 <circle cx="520" cy="352" r="6" fill="#4a94ee"/>
 <text x="534" y="357" font-size="13" fill="#c3c2b7">With Alethite</text>
-<line x1="32" y1="378" x2="848" y2="378" stroke="#2c2c2a"/>
-<text x="32" y="404" font-size="14" fill="#f0efec"><tspan font-weight="600">Lean helper agents.</tspan> Since Nov 15, 219 of 277 subagent starts used them.</text>
-<text x="32" y="424" font-size="13" fill="#c3c2b7">Their starts cost $27 less than the same starts of the built-in general-purpose agent.</text>
-<text x="32" y="446" font-size="12" fill="#898781">A before-and-after count on one person's work, not a controlled test.</text>
+<line x1="32" y1="380" x2="848" y2="380" stroke="#2c2c2a"/>
+<text x="32" y="414" font-size="18" font-weight="600" fill="#f0efec">Lean helper agents</text>
+<text x="32" y="478" font-size="52" font-weight="600" fill="#f0efec">4-13&#215;</text>
+<text x="32" y="504" font-size="14" fill="#c3c2b7">smaller start of a helper agent</text>
+<text x="32" y="522" font-size="13" fill="#898781">5-16k tokens, general-purpose 64k</text>
+<line x1="300" y1="400" x2="300" y2="530" stroke="#2c2c2a"/>
+<text x="360" y="440" font-size="14" fill="#f0efec">Subagents' share of all spend</text>
+<line x1="683.52" y1="468" x2="788.1600000000001" y2="468" stroke="#383835" stroke-width="2"/>
+<circle cx="788.1600000000001" cy="468" r="7" fill="#1a1a19" stroke="#2e5ca3" stroke-width="3"/>
+<circle cx="683.52" cy="468" r="7" fill="#4a94ee" stroke="#1a1a19" stroke-width="2"/>
+<text x="804.1600000000001" y="473" font-size="14" font-weight="600" fill="#f0efec">45%</text>
+<text x="669.52" y="473" font-size="14" font-weight="600" text-anchor="end" fill="#f0efec">34%</text>
+<circle cx="366" cy="498" r="6" fill="#1a1a19" stroke="#2e5ca3" stroke-width="3"/>
+<text x="380" y="503" font-size="13" fill="#c3c2b7">Oct 19 to Nov 15</text>
+<circle cx="520" cy="498" r="6" fill="#4a94ee"/>
+<text x="534" y="503" font-size="13" fill="#c3c2b7">Nov 16 to 23, with lean agents</text>
+<text x="360" y="528" font-size="13" fill="#c3c2b7">214 of 231 subagent starts were lean. That cut subagent spend by 16%.</text>
+<text x="32" y="562" font-size="12" fill="#898781">A before-and-after count on one person's work, not a controlled test.</text>
 </svg>
