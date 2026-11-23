@@ -34,7 +34,7 @@ const wire = (on: any, statuses: (string | undefined)[], answerUsage: () => unkn
   on('session.version', () => ({ value: { version: '2.1.295' } }))
   on('process.run', answerRun)
   on('ui.status', (_: unknown, e: { text?: string }) => (statuses.push(e.text), { value: undefined }))
-  on('ui.render', () => ({ type: 'Text', children: ['no band'] }))
+  on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'Text', children: ['no band'] }))
   on('turn.complete', () => ({ text: '' }))
   return clock
 }
@@ -157,14 +157,14 @@ const mountBand = async ($: any) => {
 
 type Drawn = { type: string; props?: Record<string, unknown>; children: Drawn[] }
 
-const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text)
+const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text).filter((t: string) => t !== 'no band') // the stand-in for another mod's band is not ours
 const UI = { plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props } as never
 
 test('the band is always one row: the title first, no frame', async ($, on) => {
   wire(on, [], () => ({ value: usage }))
   const ui = await mountBand($)
   const band = (await ui.drawn()) as unknown as Drawn
-  expect(band.children[0]!.props?.borderStyle).toBeUndefined()
+  expect(band.children[1]!.props?.borderStyle).toBeUndefined()
   expect(await buttons(ui)).toEqual(['launch', 'details'])
   expect((await texts(ui))[0]).toBe(T.bandTitle)
 })
@@ -186,14 +186,14 @@ test('Details opens the columns in a frame, remembers it, and the next press bri
   wire(on, [], () => ({ value: usage }), undefined, store)
   const ui = await mountBand($)
   await ui.press({ key: 'details' })
-  const frame = ((await ui.drawn()) as unknown as Drawn).children[0]!.children[0]! // the engine wraps the part of the mod: [part: [frame, the engine's slot for what is beneath]]
+  const frame = ((await ui.drawn()) as unknown as Drawn).children[1]!.children[0]! // the engine wraps the part of the mod: [part: [frame, the engine's slot for what is beneath]]
   expect(frame).toMatchObject({ type: 'Box', props: { borderStyle: 'round' } })
   expect(frame.children[0]).toMatchObject({ type: 'Text', props: { bold: true }, children: [T.bandTitle] })
   expect(await texts(ui)).toContain(T.col.chat)
   expect(store.get('details')).toBe(true)
   await ui.press({ key: 'details' })
   expect(store.get('details')).toBe(false)
-  expect(((await ui.drawn()) as unknown as Drawn).children[0]!.children[0]!.props?.borderStyle).toBeUndefined()
+  expect(((await ui.drawn()) as unknown as Drawn).children[1]!.children[0]!.props?.borderStyle).toBeUndefined()
 })
 
 test('Details stays open after a restart of the mod', async ($, on) => {
@@ -213,7 +213,7 @@ test('desktop Details draws the columns as Text, with the rule Svg first; the te
   const term = await mountBand($)
   expect(await term.findAll({ type: 'Svg' })).toHaveLength(0)
   const ui = await $.ui.mount({ plugin: 'alethite', surface: 'desktop', component: 'AbovePrompt', props } as never)
-  expect(((await ui.drawn()) as unknown as Drawn).children[0]!.children[0]).toMatchObject({ type: 'Svg' })
+  expect(((await ui.drawn()) as unknown as Drawn).children[1]!.children[0]).toMatchObject({ type: 'Svg' })
   await ui.press({ key: 'details' })
   expect(await ui.findAll({ type: 'Svg' })).toHaveLength(1)
   expect(await texts(ui)).toContain(T.col.chat)
@@ -228,11 +228,11 @@ test('/al-band off hides the band in this chat, /al-band brings it back', async 
   expect(await buttons(ui)).toEqual(['launch', 'details'])
 })
 
-test("another mod's band beneath ours is not covered: it stays, under our frame", async ($, on) => {
+test("another mod's band is not covered: it stays, and ours goes last, right above the prompt", async ($, on) => {
   wire(on, [], () => ({ value: usage })) // what is drawn beneath the plugin under test: the text 'no band', standing for another mod's band
   const band = (await (await mountBand($)).drawn()) as unknown as Drawn
   expect(band.children).toHaveLength(2)
-  expect(band.children[1]).toMatchObject({ type: 'Text', children: ['no band'] })
+  expect(band.children[0]).toMatchObject({ type: 'Text', children: ['no band'] })
 })
 
 test('new worker: the first press arms the band: two ways to go, cancel and the @files hint; cancel disarms', async ($, on) => {
@@ -2865,4 +2865,30 @@ test('the cache clock is the start of the last request of the turn, not its end'
   await m.clock.advance(5_000)
   await ($ as any).turn.complete(turn)
   expect(m.store.get('turn:id')).toMatchObject({ at: 10_000_000_000 })
+})
+
+// the band's rows come in the order the plugins loaded: our row goes last, right above the prompt
+const bandRow = (plugin: string) => ({ plugin, tree: { type: 'Text', children: [plugin] } })
+const bandRows = async ($: any, on: any, rows: unknown[]) => {
+  let got: any
+  on('ui.render', { component: 'AbovePromptList' }, (_: unknown, e: any) => ((got = e), { type: 'Text', children: ['x'] }))
+  await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePromptList', props: { ...props, rows } } as never)
+  return got
+}
+
+test('the Alethite row moves to the end of the band', async ($, on) => {
+  const [a, p, o] = [bandRow('alethite'), bandRow('ponytail'), bandRow('other')]
+  const got = await bandRows($, on, [a, p, o])
+  expect(got.props.rows).toEqual([p, o, a])
+  expect(got.props.maxRows).toBe(10)
+})
+
+test('the band keeps its order when our row is already last', async ($, on) => {
+  const [a, p] = [bandRow('alethite'), bandRow('ponytail')]
+  expect((await bandRows($, on, [p, a])).props.rows).toEqual([p, a])
+})
+
+test('the band keeps its order when we have no row', async ($, on) => {
+  const [p, o] = [bandRow('ponytail'), bandRow('other')]
+  expect((await bandRows($, on, [p, o])).props.rows).toEqual([p, o])
 })

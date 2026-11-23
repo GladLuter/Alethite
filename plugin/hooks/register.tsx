@@ -1099,6 +1099,16 @@ export const register: Register = (on, options) => {
     return ran
   })
 
+  // The engine stacks the rows in the order the plugins loaded: ours goes last, right above the prompt. Any failure leaves the band as it was.
+  on('ui.render', { component: 'AbovePromptList' }, (_, e, next) => {
+    let sorted = e
+    try {
+      const { rows } = e.props
+      sorted = { ...e, props: { ...e.props, rows: [...rows.filter(r => r.plugin !== 'alethite'), ...rows.filter(r => r.plugin === 'alethite')] } }
+    } catch {} // a bad shape: the band as it came
+    return next(sorted)
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     // every read first, so the band is subscribed to all of them even when it draws nothing
     const s = await read($, snap)
