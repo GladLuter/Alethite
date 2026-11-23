@@ -386,7 +386,10 @@ class CleanupTest(unittest.TestCase):
     def maintain(self):
         self.addCleanup(gc.collect)  # maintain never closes its connection
         a = cg._parser().parse_args(['--db', self.db, '--projects', self.projects, 'maintain'])
-        return cg.maintain(a, battery=lambda: True, digest=lambda m: None)
+        try:
+            return cg.maintain(a, battery=lambda: True, digest=lambda m: None)
+        finally:
+            gc.collect()  # maintain's lock is freed with its frame, which a cycle keeps until a collection: a second call in one test saw it busy
 
     def test_maintain_skips_cleanup_when_off(self):
         self.ready()

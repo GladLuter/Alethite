@@ -20,7 +20,7 @@ from compress import LEVELS, compress
 from transcripts import find_session, last_usage, project_key, project_keys
 
 
-INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings', 'agent-age', 'review-hint', 'settings-fill')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
+INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings', 'agent-age', 'review-hint', 'settings-fill', 'bg-start', 'bg-alive')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
 SHORT = (*INDEX_FREE, 'lessons-match')  # the runs that do not merge, nor open the index again to keep forgets (lessons-match reads it and writes no forget)
 
 
@@ -449,6 +449,16 @@ def _stats(a):
             'errors': errors}
 
 
+def _bg_start(a):
+    import bg
+    return bg.start(os.path.dirname(a.db), a.session, a.name, a.command, a.cwd, a.status_file, a.if_cold)
+
+
+def _bg_alive(a):
+    import bg
+    return {'alive': bg.alive(a.dir)}
+
+
 def _parser():
     p = _Parser(prog='cg.py')
     p.add_argument('--db')  # the index file; without it `main` asks indexdir.resolve (the home settings), with it they are not read at all
@@ -546,6 +556,11 @@ def _parser():
     s.add_argument('--minutes', type=int, default=None)  # job.MINUTES
     add('cleanup', _cleanup).add_argument('action', choices=('on', 'off', 'status'))
     add('settings-fill', _settings_fill).add_argument('--values', required=True)  # JSON object
+    s = add('bg-start', _bg_start)
+    for flag in ('session', 'name', 'cwd', 'if-cold', 'command'):
+        s.add_argument('--' + flag, required=True)
+    s.add_argument('--status-file')
+    add('bg-alive', _bg_alive).add_argument('--dir', required=True)
     s = add('forget', _forget)
     s.add_argument('--conv', required=True)
     s.add_argument('--pos', type=int, required=True)

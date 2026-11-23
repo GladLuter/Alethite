@@ -5,6 +5,7 @@ import io
 import json
 import os
 import secrets
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -1619,6 +1620,30 @@ class DialogsTest(unittest.TestCase):
                 mock.patch.object(sys, 'executable', 'C:\\Py\\Pythonw.exe'):
             dialogs.WindowsUI().ask_code()
         self.assertEqual(run.call_args[0][0][0], 'C:\\Py\\python.exe')
+
+
+class BgCommandsTest(unittest.TestCase):
+    def test_bg_start_and_alive(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        db = os.path.join(tmp, 'index.db')
+        out = io.TextIOWrapper(io.BytesIO(), encoding='utf-8')
+
+        def call(*args):
+            out.buffer.seek(0)
+            out.buffer.truncate()
+            with mock.patch.object(sys, 'stdout', out):
+                code = cg.main(['--db', db, *args])
+            out.flush()
+            return code, json.loads(out.buffer.getvalue().decode('utf-8'))
+
+        code, r = call('bg-start', '--session', 's', '--name', 'n', '--cwd', tmp, '--if-cold', 'show', '--command', 'echo ok')
+        self.assertEqual((code, sorted(r)), (0, ['dir', 'log', 'pid']))
+        self.assertEqual(os.path.dirname(os.path.dirname(r['dir'])), tmp)
+        end = time.monotonic() + 15
+        while not os.path.exists(os.path.join(r['dir'], 'exit.json')) and time.monotonic() < end:
+            time.sleep(0.1)
+        self.assertEqual(call('bg-alive', '--dir', r['dir']), (0, {'alive': False}))
 
 
 if __name__ == '__main__':
