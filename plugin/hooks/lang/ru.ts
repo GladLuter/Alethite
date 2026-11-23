@@ -276,7 +276,12 @@ export const ru: Partial<Texts> = {
   bgRunning: 'идёт',
   bgExit: (code: number) => `код ${code}`,
   bgLost: 'потерян, кода нет',
-  bgTooBig: 'Чат слишком большой, чтобы будить его дёшево.',
+  bgTooBig: 'Файл статуса больше 4 МиБ: его последнюю строку показать нельзя.',
+  bgDescription: 'Запускает команду, которая идёт дольше примерно 10 минут, фоновым процессом, который переживает ход. Перед вызовом спроси владельца, что делать, если кэш остынет к концу (if_cold: "show" покажет итог, "new_worker" продолжит новый работник). После вызова закончи ход и не опрашивай файлы лога и статуса: Alethite следит за процессом и напишет, когда он закончится. Для таких прогонов используй его вместо run_in_background, Monitor и ScheduleWakeup. Необязательно: cwd, status_file (файл, последнюю строку которого видит владелец).',
+  bgSubagent: 'Alethite: фоновые прогоны запускаются только из основного чата, не из субагента.',
+  bgBusy: (name: string, since: string) => `Alethite: в этом чате уже идёт фоновый прогон «${name}», запущен ${since}. Дождись конца или пусть владелец уберёт его кнопкой [×] на полосе.`,
+  bgStarted: (name: string, log: string) => `Фоновый процесс «${name}» запущен. Лог: ${log}. Alethite напишет, когда он закончится: закончи ход и не опрашивай файлы.`,
+  bgBadInput: 'Alethite: background_run нужны name, command и if_cold ("show" или "new_worker").',
   bgElapsed: (min: number) => (min >= 60 ? `${Math.floor(min / 60)} ч ${min % 60} мин` : `${min} мин`),
   bgFinish: (name: string, code: string, end: string, duration: string, tail: string, log: string) =>
     `Фоновый процесс «${name}» закончился: код ${code}, конец ${end}, шёл ${duration}.${tail ? `\nПоследние строки статуса:\n${tail}` : ''}\nПолный лог: ${log}\nПроверь результат и продолжай работу.`,

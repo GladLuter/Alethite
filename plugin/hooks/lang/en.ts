@@ -278,7 +278,12 @@ export const en = {
   bgRunning: 'running',
   bgExit: (code: number) => `exit ${code}`,
   bgLost: 'lost, no exit code',
-  bgTooBig: 'This chat is too big to wake up cheaply.',
+  bgTooBig: 'The status file is over 4 MiB: its last line cannot be shown.',
+  bgDescription: 'Starts a command that runs longer than about 10 minutes as a background process that outlives the turn. Before the call, ask the owner what to do if the cache is cold when it ends (if_cold: "show" shows the result, "new_worker" goes on in a new worker). After the call, end your turn and do not poll the log or status files: Alethite watches the process and writes when it ends. For such runs use this instead of run_in_background, Monitor and ScheduleWakeup. Optional: cwd, status_file (a file whose last line the owner sees).',
+  bgSubagent: 'Alethite: background runs start from the main chat only, not from a subagent.',
+  bgBusy: (name: string, since: string) => `Alethite: this chat already has the background run "${name}", started ${since}. Wait until it ends, or the owner removes it with [×] in the band.`,
+  bgStarted: (name: string, log: string) => `Background process "${name}" started. Log: ${log}. Alethite will write when it ends: end your turn and do not poll the files.`,
+  bgBadInput: 'Alethite: background_run needs name, command and if_cold ("show" or "new_worker").',
   bgElapsed: (min: number) => (min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`),
   bgFinish: (name: string, code: string, end: string, duration: string, tail: string, log: string) =>
     `Background process "${name}" finished: exit code ${code}, ended ${end}, ran ${duration}.${tail ? `\nLast status lines:\n${tail}` : ''}\nFull log: ${log}\nCheck the result and continue the work.`,

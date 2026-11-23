@@ -4,6 +4,8 @@ import { ru } from '../hooks/lang/ru'
 import { uk } from '../hooks/lang/uk'
 import { notePath, summaryPath } from '../hooks/notes'
 import { when } from '../hooks/band'
+import { bgRow } from '../hooks/bg'
+import type { BgRun } from '../hooks/bg'
 import { price } from '../hooks/guard'
 import { T } from '../hooks/text'
 
@@ -233,6 +235,7 @@ test("another mod's band is not covered: it stays, and ours goes last, right abo
   const band = (await (await mountBand($)).drawn()) as unknown as Drawn
   expect(band.children).toHaveLength(2)
   expect(band.children[0]).toMatchObject({ type: 'Text', children: ['no band'] })
+  expect(JSON.stringify(band.children[1])).toContain(T.bandTitle) // the second child is the part of Alethite
 })
 
 test('new worker: the first press arms the band: two ways to go, cancel and the @files hint; cancel disarms', async ($, on) => {
@@ -374,6 +377,7 @@ test('memory tools: all in the prompt, not behind ToolSearch', async ($, on) => 
     ['recall', false, T.recallDescription],
     ['recall_more', false, T.recallMoreDescription],
     ['lesson_save', false, T.lessonSaveDescription],
+    ['background_run', false, T.bgDescription],
   ])
   // stage 4: how to search for an error is told by the parameters, the description stays short
   expect(m.specs[0].inputSchema.properties.query.description).toBe(T.recallQuery)
@@ -561,7 +565,7 @@ test('session.start: a refused registration leaves the status line, the timers a
   expect(statuses.at(-1)!.startsWith(T.statusError(''))).toBe(true) // ...and the refusal is the last word
   expect(statuses.at(-1)).toContain('schema refused')
   expect(store.get('lastError')).toMatchObject({ where: 'register', msg: expect.stringContaining('schema refused') })
-  expect(names).toEqual({ commands: ['al-band', 'al-health', 'al-index', 'al-stats', 'al-sync', 'al-lessons', 'al-job', 'al-encrypt', 'al-index-dir', 'al-cleanup'], tools: ['recall', 'recall_more', 'lesson_save'] }) // every tool was tried, the commands went through
+  expect(names).toEqual({ commands: ['al-band', 'al-health', 'al-index', 'al-stats', 'al-sync', 'al-lessons', 'al-job', 'al-encrypt', 'al-index-dir', 'al-cleanup'], tools: ['recall', 'recall_more', 'lesson_save', 'background_run'] }) // every tool was tried, the commands went through
   await clock.advance(30_000) // the timers run
   expect(statuses.at(-1)).toMatch(/^ctx /)
 })
@@ -844,7 +848,7 @@ test('language ru: the mod speaks Russian to the owner and to the model, and so 
   await m.clock.advance(3_000)
   for (const lang of m.langs) expect(lang).toEqual(['--lang', 'ru'])
   expect((await ($ as any).command.run({ command: 'al-band', args: '' })).text).toBe(ru.cgBandOn)
-  expect(m.specs.map(s => s.description)).toEqual([ru.recallDescription, ru.recallMoreDescription, ru.lessonSaveDescription])
+  expect(m.specs.map(s => s.description)).toEqual([ru.recallDescription, ru.recallMoreDescription, ru.lessonSaveDescription, ru.bgDescription])
   expect((await ($ as any).prompt.compose(facts)).sections).toEqual([{ id: 'alethite:lean-agents', text: ru.leanRule, scope: 'session' }, { id: 'alethite:memory-rule', text: ru.memoryRule, scope: 'session' }])
 })
 
@@ -860,7 +864,7 @@ test('language uk: Ukrainian to the owner and to the model, and to cg.py', { opt
   await m.clock.advance(3_000)
   for (const lang of m.langs) expect(lang).toEqual(['--lang', 'uk'])
   expect((await ($ as any).command.run({ command: 'al-band', args: '' })).text).toBe(uk.cgBandOn)
-  expect(m.specs.map(s => s.description)).toEqual([uk.recallDescription, uk.recallMoreDescription, uk.lessonSaveDescription])
+  expect(m.specs.map(s => s.description)).toEqual([uk.recallDescription, uk.recallMoreDescription, uk.lessonSaveDescription, uk.bgDescription])
 })
 
 test('a language the mod does not know is English', { options: { language: 'xx' } }, async ($, on) => {
@@ -2891,4 +2895,140 @@ test('the band keeps its order when our row is already last', async ($, on) => {
 test('the band keeps its order when we have no row', async ($, on) => {
   const [p, o] = [bandRow('ponytail'), bandRow('other')]
   expect((await bandRows($, on, [p, o])).props.rows).toEqual([p, o])
+})
+
+// background runs: the tool, the token-free watch, the band row
+const BG_DIR = 'C:/bg/r1'
+const BG_STATUS = 'C:/w/status.txt'
+const bgRun = (over: object = {}) => ({ dir: BG_DIR, name: 'train', pid: 7, started: NOW - 5 * 60_000, log: `${BG_DIR}/log.txt`, statusFile: BG_STATUS, ifCold: 'show', ...over })
+const bgCall = ($: any, over: object = {}) => $.tool.call({ tool: 'mcp__alethite__background_run', name: 'train', command: 'python train.py', if_cold: 'show', ...over })
+const bgVerbs = (m: { runs: { argv: string[] }[] }) => m.runs.filter(r => verb(r.argv)[0]!.startsWith('bg-'))
+const norm = (p: string) => p.replace(/\\/g, '/') // the engine may hand paths back with backslashes
+const runRig = async ($: any, on: any, store = new Map<string, unknown>(), files: Record<string, string> = {}) => {
+  const fs = { files, readError: undefined as string | undefined, alive: true, startError: undefined as string | undefined }
+  on('fs.exists', (_: unknown, e: { path: string }) => ({ value: norm(e.path) in fs.files }))
+  on('fs.read', (_: unknown, e: { path: string }) => (fs.readError ? { deny: fs.readError } : norm(e.path) in fs.files ? { value: fs.files[norm(e.path)] } : { deny: 'ENOENT' }))
+  const answer = (a: string[]) => (a[0] === 'bg-alive' ? ran(JSON.stringify({ alive: fs.alive })) : a[0] === 'bg-start' ? (fs.startError ? failed(fs.startError) : ran(JSON.stringify({ dir: BG_DIR, pid: 7, log: `${BG_DIR}/log.txt` }))) : a[0] === 'index' ? indexed() : a[0] === 'embed' ? embedded() : ran('{}'))
+  const m = await started($, on, answer, [], () => ({ value: usage }), {}, noTurn, store)
+  return { m, fs, ui: await $.ui.mount(UI) }
+}
+const bgTexts = async (ui: any) => (await texts(ui)).filter((t: string) => t.includes('train') || t.includes('far'))
+
+test('background_run: a subagent is refused, nothing is started', async ($, on) => {
+  const { m } = await runRig($, on)
+  expect(await bgCall($, { agentId: AG })).toEqual({ deny: T.bgSubagent })
+  expect(bgVerbs(m)).toEqual([])
+})
+
+test('background_run: a run that has not ended refuses a second one, with its name', async ($, on) => {
+  const { m } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  expect(await bgCall($, { name: 'other' })).toEqual({ deny: T.bgBusy('train', when(new Date(NOW - 5 * 60_000).toISOString(), NOW)) })
+  expect(bgVerbs(m).filter(r => r.argv[0] === 'bg-start')).toEqual([])
+})
+
+test('background_run: starts through cg.py, keeps the record, tells the model the log', async ($, on) => {
+  const { m, ui } = await runRig($, on)
+  const r = await bgCall($, { status_file: BG_STATUS, cwd: 'C:/x' })
+  expect(r).toEqual({ result: T.bgStarted('train', `${BG_DIR}/log.txt`) })
+  const a = bgVerbs(m)[0]!.argv
+  expect(a[0]).toBe('bg-start')
+  expect(a).toEqual(expect.arrayContaining(['--session=id', '--name=train', '--cwd=C:/x', '--if-cold=show', '--command=python train.py', `--status-file=${BG_STATUS}`]))
+  expect(m.store.get('bg:id')).toEqual({ dir: BG_DIR, name: 'train', pid: 7, started: NOW, log: `${BG_DIR}/log.txt`, statusFile: BG_STATUS, ifCold: 'show' })
+  expect(await bgTexts(ui)).toHaveLength(1) // the row is there at once
+})
+
+test('background_run: a bad input starts nothing', async ($, on) => {
+  const { m } = await runRig($, on)
+  expect(await bgCall($, { if_cold: 'later' })).toEqual({ deny: T.bgBadInput })
+  expect(bgVerbs(m)).toEqual([])
+})
+
+test('background_run: a refusal of cg.py goes to the model, a toast and /al-health', async ($, on) => {
+  const { m, fs } = await runRig($, on)
+  fs.startError = 'no lock'
+  expect(await bgCall($)).toEqual({ deny: 'no lock' })
+  expect(m.toasts).toEqual([T.toast(T.failed('background_run', 'no lock'))])
+  expect(m.store.has('bg:id')).toBe(false)
+})
+
+test('the 30 s tick starts no process; the row shows the last full line of the status file', async ($, on) => {
+  const { m, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]), { [BG_STATUS]: 'a\nepoch 3 loss 0.4\nepo' })
+  const before = bgVerbs(m).length
+  await m.clock.advance(30_000)
+  expect(bgVerbs(m).length).toBe(before)
+  expect(await bgTexts(ui)).toEqual([bgRow(bgRun() as BgRun, 'epoch 3 loss 0.4', NOW + 30_000).text])
+})
+
+test('the row says a dash when there is no status file', async ($, on) => {
+  const { m, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  await m.clock.advance(30_000)
+  expect((await bgTexts(ui))[0]).toContain(' · — · ')
+  expect(m.store.has('lastError')).toBe(false)
+})
+
+test('a status file over 4 MiB: the row says so, no toast in 3 ticks', async ($, on) => {
+  const { m, fs, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]), { [BG_STATUS]: 'x' })
+  fs.readError = 'file is over 4 MiB'
+  await m.clock.advance(3 * 30_000)
+  expect((await bgTexts(ui))[0]).toContain(T.bgTooBig)
+  expect(m.toasts).toEqual([])
+})
+
+test('another read error: a dash in the row, a note for /al-health, no toast', async ($, on) => {
+  const { m, fs, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]), { [BG_STATUS]: 'x' })
+  fs.readError = 'EACCES'
+  await m.clock.advance(3 * 30_000)
+  expect((await bgTexts(ui))[0]).toContain(' · — · ')
+  expect(m.store.get('lastError')).toMatchObject({ where: 'bg' })
+  expect(m.toasts).toEqual([])
+})
+
+test('exit.json appears: the record gets the end with the code from the file', async ($, on) => {
+  const { m, fs, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 3, ended: '2026-11-23T10:00:00Z' })
+  await m.clock.advance(30_000)
+  expect((m.store.get('bg:id') as BgRun).ended).toEqual({ code: 3, at: Date.parse('2026-11-23T10:00:00Z') })
+  expect((await bgTexts(ui))[0]).toContain(T.bgExit(3))
+})
+
+test('the 600 s tick asks bg-alive; dead and no exit.json means lost', async ($, on) => {
+  const { m, fs } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  fs.alive = false
+  await m.clock.advance(600_000)
+  expect(bgVerbs(m).some(r => r.argv[0] === 'bg-alive' && r.argv.includes(`--dir=${BG_DIR}`))).toBe(true)
+  expect((m.store.get('bg:id') as BgRun).ended).toMatchObject({ code: null, lost: true })
+})
+
+test('dead but exit.json is there: the code from the file wins over lost', async ($, on) => {
+  const { m, fs } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  fs.alive = false
+  fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 0, ended: '2026-11-23T10:00:00Z' })
+  await m.clock.advance(600_000)
+  expect((m.store.get('bg:id') as BgRun).ended).toEqual({ code: 0, at: Date.parse('2026-11-23T10:00:00Z') })
+})
+
+test('[x] removes the record and the row', async ($, on) => {
+  const { m, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  await m.clock.advance(30_000)
+  expect(await buttons(ui)).toContain('bg-remove')
+  await ui.press({ key: 'bg-remove' })
+  expect(m.store.has('bg:id')).toBe(false)
+  expect(await bgTexts(ui)).toEqual([])
+})
+
+test("another chat's run ends: one toast ever, no prompt", async ($, on) => {
+  const log: string[] = []
+  box(on, '', log)
+  const { m, fs } = await runRig($, on, new Map([['bg:other', bgRun({ name: 'far' })]]))
+  fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 0, ended: '2026-11-23T10:00:00Z' })
+  await m.clock.advance(3 * 30_000)
+  expect(m.toasts).toHaveLength(1)
+  expect(m.toasts[0]).toContain('far')
+  expect((m.store.get('bg:other') as { toasted?: true }).toasted).toBe(true)
+  expect(log).toEqual([])
+})
+
+test('session.start drops runs started over 7 days ago', async ($, on) => {
+  const { m } = await runRig($, on, new Map([['bg:old', bgRun({ started: NOW - 8 * 86_400_000 })], ['bg:new', bgRun({ started: NOW - 6 * 86_400_000 })]]))
+  expect([...m.store.keys()].filter(k => k.startsWith('bg:'))).toEqual(['bg:new'])
 })
