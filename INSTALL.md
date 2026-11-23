@@ -338,7 +338,7 @@ Off by default. `/al-cleanup on` turns it on, `/al-cleanup off` turns it off, `/
 ### Background runs
 
 - For a run longer than 10 minutes the agent calls `background_run`. Before the call it asks what to do if the cache is cold when the run ends: only show the result, or start a New worker in this chat.
-- The mod starts the command detached through a `cg.py` wrapper, with no console window. Output goes to `log.txt` in `%USERPROFILE%\.claude\alethite\bg\<chat>-<time>\`, and the exit code to `exit.json`.
+- The mod starts the command detached through a `cg.py` wrapper, with no console window. Output goes to `log.txt` in the run folder `<chat>-<time>-<random>`, and the exit code to `exit.json`. The run folders are next to the index, by default `%USERPROFILE%\.claude\alethite\bg\`.
 - While the run goes, a row above the band shows its name, how long it has run, the last line of the status file the agent named, and your cold-cache choice. Waiting costs no tokens. Every 30 seconds the mod only reads files. Every 10 minutes it checks that the wrapper is alive (a lock file). A run that has vanished (reboot, killed process) is shown as lost.
 - `[×]` stops the watching. It does not stop the process.
 - Warm cache: the mod sends a message as yours with the exit code, the end time, the last status lines and the log path, and the agent goes on. If the agent is busy, the mod waits for the end of its turn. Your draft in the box is never touched.

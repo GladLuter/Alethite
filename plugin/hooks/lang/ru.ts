@@ -273,7 +273,7 @@ export const ru: Partial<Texts> = {
 
   // background runs
   bgCold: { show: 'итог покажу', new_worker: 'продолжит новый работник' },
-  bgRunning: 'идёт',
+  bgEndedAt: (time: string) => `завершён в ${time}`,
   bgExit: (code: number) => `код ${code}`,
   bgLost: 'потерян, кода нет',
   bgTooBig: 'Файл статуса больше 4 МиБ: его последнюю строку показать нельзя.',
@@ -290,4 +290,5 @@ export const ru: Partial<Texts> = {
   bgUnknown: 'неизвестно',
   bgFinishFailed: (name: string, why: string) => `Фоновый процесс «${name}» закончился, но Alethite не смог передать это дальше (${why}). Результат остаётся в строке полосы.`,
   bgNotLaunched: 'новый работник не запущен',
+  turnStarted: 'тем временем начался ход, новый работник не запущен',
 }

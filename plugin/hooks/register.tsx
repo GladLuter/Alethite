@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Review, Savings, Snap } from '../types'
+import type { BgRun, Review, Savings, Snap } from '../types'
 import { columns, delayTimes, money, newerLimits, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
 import { isStale, shouldDenyBackground, shouldStop, size, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
@@ -23,7 +23,6 @@ import type { Found, Lesson } from './lessons'
 import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
 import { bgRow, endNote, finishAction, finishText, lastLine } from './bg'
-import type { BgRun } from './bg'
 import { skipArgs, syncArgs, syncReport } from './sync'
 import type { SyncResult } from './sync'
 import { oldSettingsPath, settingsPath, withFile } from './settings'
@@ -250,8 +249,8 @@ const watchBgOnce = async ($: EngineInterface) => {
 // A run whose wrapper is gone and left no exit.json is lost.
 const bgCheck = async ($: EngineInterface, python: string) => {
   for (const key of (await $.store.keys()).filter(k => k.startsWith('bg:'))) {
-    const run = (await $.store.get(key)) as BgRun
-    if (run.ended) continue
+    const run = (await $.store.get(key)) as BgRun | undefined // it may be gone since keys() was read
+    if (!run || run.ended) continue
     await guarded($, 'bg', async () => {
       const { alive } = await runCg($, python, ['bg-alive', `--dir=${run.dir}`], 20_000)
       if (alive !== false) return
@@ -294,6 +293,7 @@ const finishBg = async ($: EngineInterface, python: string, compression: string)
     const key = `bg:${id}`
     const run = (await $.store.get(key)) as BgRun | undefined
     if (!run?.ended) return
+    if (await read($, isBusy)) return // a launch in flight: a wake now would be cut by its /clear
     const [now, turn, s] = await Promise.all([$.clock.now(), $.store.get(`turn:${id}`), read($, snap)])
     const action = finishAction({ ifCold: run.ifCold, at: (turn as { at: number | null } | undefined)?.at ?? null, now, limits: s?.limits ?? [], isWorking })
     if (action === 'wait' || action === 'show') return // show: the band row says it, the owner's next message carries the note
@@ -653,7 +653,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
         const args = ['handoff', '--session', id, '--today', calendarDay(now), ...(dir ? ['--memory-dir', dir] : []), '--compress', compression, ...note]
         return (await runCg($, python, args)) as { text: string; path: string }
       },
-      clear: () => ((isCleared = true), $.command.run({ command: 'clear' })),
+      clear: () => (isWorking ? Promise.reject(new Error(T.turnStarted)) : ((isCleared = true), $.command.run({ command: 'clear' }))), // the handoff took seconds: a turn may have started
       submit: text => $.prompt.submit({ text, asUser: true }),
       fill: async text => {
         const r = await $.prompt.fill({ text })
@@ -1138,7 +1138,7 @@ export const register: Register = (on, options) => {
       const r = await runCg($, python, args, 40_000) // the wrapper may wait up to 15 s for its lock
       await $.store.set(`bg:${id}`, { dir: r.dir, name, pid: r.pid, started: await $.clock.now(), log: r.log, statusFile, ifCold })
       await guarded($, 'bg', () => watchBg($)) // the run has started: a failed first look is the next tick's to report
-      return T.bgStarted(name, String(r.log))
+      return T.bgStarted(name, String(r.log)) + (old?.ended ? `\n${endNote(old, await $.clock.now())}` : '') // the new record replaces an ended run nobody was told of
     }, msg => msg)
   })
 
@@ -1464,7 +1464,13 @@ export const register: Register = (on, options) => {
     const bgLine = (() => {
       if (bg === null) return null
       const r = bgRow(bg.run, bg.last, s.now)
-      const remove = () => guarded($, 'band', async () => (await $.store.delete(`bg:${await $.session.id()}`), await update($, bgView, () => null), await watchBg($))) // a watch in flight may hold the removed row: it passes again
+      const remove = () => guarded($, 'band', async () => {
+        const key = `bg:${await $.session.id()}`
+        const cur = (await $.store.get(key)) as BgRun | undefined
+        if (cur) await bgDone($, key, cur) // also drops the finish wait that holds the result
+        await update($, bgView, () => null)
+        await watchBg($)
+      }) // a watch in flight may hold the removed row: it passes again
       return (
         <Box gap={1}>
           <Text color={r.tone} wrap="truncate-end">{r.text}</Text>

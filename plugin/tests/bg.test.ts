@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 import { delayTimes, when } from '../hooks/band'
 import { bgRow, endNote, finishAction, finishText, lastLine } from '../hooks/bg'
-import type { BgRun } from '../hooks/bg'
-import { setLanguage } from '../hooks/text'
+import type { BgRun } from '../types'
+import { setLanguage, T } from '../hooks/text'
 
 setLanguage('ru')
 
@@ -41,7 +41,10 @@ test('bgRow: running, failed, lost', () => {
   expect(r.text).toContain('1 ч 42 мин')
   expect(r.text).toContain('rerun exit 0')
   expect(r.tone).toBeUndefined()
-  expect(bgRow(run({ ended: { code: 0, at: now } }), 'x', now).text).toContain('код 0')
+  const done = bgRow(run({ ended: { code: 0, at: now - 60_000 } }), 'x', now).text
+  expect(done).toContain('код 0')
+  expect(done).toContain(T.bgEndedAt(when(new Date(now - 60_000).toISOString(), now)))
+  expect(done).not.toContain('1 ч 41 мин') // the ended row says when it ended, not how long it ran
   const bad = bgRow(run({ ended: { code: 1, at: now } }), 'x', now)
   expect([bad.tone, bad.text.startsWith('✗')]).toEqual(['error', true])
   expect(bgRow(run({ ended: { code: null, at: now, lost: true } }), 'x', now).tone).toBe('warning')

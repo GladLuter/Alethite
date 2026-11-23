@@ -4,8 +4,6 @@ import { delayTimes, when } from './band'
 import { CACHE_MS } from './guard'
 import { T } from './text'
 
-export type { BgRun }
-
 // A cache with under 2 minutes left is treated as cold: the wake-up would arrive after it expired.
 export const finishAction = (i: { ifCold: BgRun['ifCold']; at: number | null; now: number; limits: Snap['limits']; isWorking: boolean }) => {
   if (i.isWorking) return 'wait'
@@ -30,8 +28,8 @@ const minutes = (from: number, to: number) => Math.max(0, Math.floor((to - from)
 
 export const bgRow = (run: BgRun, last: string, now: number): { text: string; tone?: 'error' | 'warning' } => {
   const e = run.ended
-  const dur = T.bgElapsed(minutes(run.started, e?.at ?? now))
-  if (!e) return { text: `⏳ ${run.name} · ${dur} · ${last} · ${T.bgCold[run.ifCold]}` }
+  if (!e) return { text: `⏳ ${run.name} · ${T.bgElapsed(minutes(run.started, now))} · ${last} · ${T.bgCold[run.ifCold]}` }
+  const dur = T.bgEndedAt(when(new Date(e.at).toISOString(), now))
   // code null without `lost` is shown as lost too: exit.json with an error means the command did not start; the watcher sets `lost` when the wrapper vanished
   if (e.lost || e.code === null) return { text: `? ${run.name} · ${dur} · ${last} · ${T.bgLost}`, tone: 'warning' }
   return e.code === 0 ? { text: `✓ ${run.name} · ${dur} · ${last} · ${T.bgExit(0)}` } : { text: `✗ ${run.name} · ${dur} · ${last} · ${T.bgExit(e.code)}`, tone: 'error' }

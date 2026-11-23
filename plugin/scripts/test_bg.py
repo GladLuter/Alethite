@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import signal
 import sys
 import tempfile
 import time
@@ -31,8 +32,9 @@ class BgTest(unittest.TestCase):
 
     def test_start_fails_when_the_wrapper_does_not_start(self):
         with mock.patch('bg.spawn_detached', return_value=1):
-            with self.assertRaises(RuntimeError):
+            with mock.patch('bg.os.kill') as kill, self.assertRaises(RuntimeError):
                 self.start('echo ok')
+        kill.assert_called_once_with(1, signal.SIGTERM)  # an ended wrapper never started the command
 
     def test_start_returns_at_once(self):
         t0 = time.monotonic()
@@ -70,6 +72,8 @@ class BgTest(unittest.TestCase):
             r = json.load(f)
         self.assertIsNone(r['code'])
         self.assertIn('busy', r['error'])
+        with open(os.path.join(d, 'log.txt'), encoding='utf-8') as f:
+            self.assertIn('busy', f.read())
         self.assertFalse(bg.alive(d))
 
     def test_prune_old(self):

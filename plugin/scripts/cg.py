@@ -467,7 +467,7 @@ def _maintain_detached(a):
     import bg
     if not _cleanup_on(a):
         return {'started': False}
-    bg.spawn_detached([sys.executable, os.path.abspath(__file__), '--db', a.db, 'maintain'])  # maintain's own lock (wait 0) turns away a second run
+    bg.spawn_detached([sys.executable, os.path.abspath(__file__), 'maintain'])  # maintain's own lock (wait 0) turns away a second run
     return {'started': True}
 
 

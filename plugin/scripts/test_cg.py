@@ -1671,7 +1671,7 @@ class BgCommandsTest(unittest.TestCase):
             out.flush()
             self.assertEqual((code, json.loads(out.buffer.getvalue().decode('utf-8'))), (0, want))
             self.assertEqual([c[0][0] for c in spawn.call_args_list],
-                             [[sys.executable, os.path.abspath(cg.__file__), '--db', db, 'maintain']] if on else [])
+                             [[sys.executable, os.path.abspath(cg.__file__), 'maintain']] if on else [])
 
 
 if __name__ == '__main__':

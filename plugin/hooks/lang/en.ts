@@ -275,7 +275,7 @@ export const en = {
 
   // background runs
   bgCold: { show: 'result will be shown', new_worker: 'a new worker continues' },
-  bgRunning: 'running',
+  bgEndedAt: (time: string) => `ended ${time}`,
   bgExit: (code: number) => `exit ${code}`,
   bgLost: 'lost, no exit code',
   bgTooBig: 'The status file is over 4 MiB: its last line cannot be shown.',
@@ -292,6 +292,7 @@ export const en = {
   bgUnknown: 'unknown',
   bgFinishFailed: (name: string, why: string) => `Background process "${name}" ended, but Alethite could not pass it on (${why}). The result stays in the band row.`,
   bgNotLaunched: 'a New worker was not started',
+  turnStarted: 'a turn started meanwhile, a New worker was not started',
 }
 
 export type Texts = typeof en

@@ -1,9 +1,11 @@
 """Long background runs: a detached wrapper runs the command, keeps a lock while alive and writes exit.json at the end (Windows only)."""
+import contextlib
 import datetime
 import json
 import msvcrt
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -73,6 +75,8 @@ def start(base, session, name, command, cwd, status_file, if_cold):
     while not alive(d) and not os.path.exists(os.path.join(d, 'exit.json')) and time.monotonic() < end:
         time.sleep(0.02)
     if not alive(d) and not os.path.exists(os.path.join(d, 'exit.json')):
+        with contextlib.suppress(OSError):  # the command starts only after the lock, so an ended wrapper never started it
+            os.kill(pid, signal.SIGTERM)
         raise RuntimeError(texts.t('bg_not_started', dir=d))
     return {'dir': d, 'pid': pid, 'log': os.path.join(d, 'log.txt')}
 
@@ -94,6 +98,8 @@ def wrap(dir):
                                          stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW).returncode
     except Exception as e:
         out['error'] = '%s: %s' % (type(e).__name__, e)
+        with contextlib.suppress(OSError), open(os.path.join(dir, 'log.txt'), 'a', encoding='utf-8') as log:  # the file the model and the owner are sent to
+            log.write(out['error'] + '\n')
     out['ended'] = _now()
     tmp = os.path.join(dir, 'exit.json.tmp')
     with open(tmp, 'w', encoding='utf-8') as f:

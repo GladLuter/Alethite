@@ -276,7 +276,7 @@ export const uk: Partial<Texts> = {
 
   // background runs
   bgCold: { show: 'підсумок покажу', new_worker: 'продовжить новий працівник' },
-  bgRunning: 'триває',
+  bgEndedAt: (time: string) => `завершено о ${time}`,
   bgExit: (code: number) => `код ${code}`,
   bgLost: 'загублено, коду немає',
   bgTooBig: 'Файл статусу більший за 4 МіБ: його останній рядок показати не можна.',
@@ -293,4 +293,5 @@ export const uk: Partial<Texts> = {
   bgUnknown: 'невідомо',
   bgFinishFailed: (name: string, why: string) => `Фоновий процес «${name}» завершився, але Alethite не зміг передати це далі (${why}). Результат лишається в рядку смуги.`,
   bgNotLaunched: 'новий працівник не запущений',
+  turnStarted: 'тим часом почався хід, новий працівник не запущений',
 }
