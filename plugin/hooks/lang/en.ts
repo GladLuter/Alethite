@@ -272,6 +272,19 @@ export const en = {
     `${on ? 'Deleting old chats: on' : 'Deleting old chats: off'}. Waiting for deletion now: ${chats} (${mb} MB). The background job (/al-job) does the deleting. A chat is deleted only after a New worker handoff. All of it must be in the index (and in the shared folder, if sync is on), and nobody must have touched it for 60 minutes. The current chat is never deleted. Deletion is permanent. The text stays in the long memory.`,
   cleanupNoPreview: (on: boolean) => `${on ? 'Deleting old chats: on' : 'Deleting old chats: off'}. cg.py gave no count of the chats waiting for deletion.`,
   healthCleanup: (on: boolean, removed: number) => (on ? `Deleting old chats: on, deleted ${removed}` : `Deleting old chats: off (deleted ${removed})`),
+
+  // background runs
+  bgCold: { show: 'result will be shown', new_worker: 'a new worker continues' },
+  bgRunning: 'running',
+  bgDone: (code: number) => `exit ${code}`,
+  bgFailed: (code: number) => `exit ${code}`,
+  bgLost: 'lost, no exit code',
+  bgTooBig: 'This chat is too big to wake up cheaply.',
+  bgElapsed: (min: number) => (min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`),
+  bgFinish: (name: string, code: string, end: string, duration: string, tail: string, log: string) =>
+    `Background process "${name}" finished: exit code ${code}, ended ${end}, ran ${duration}.\nLast status lines:\n${tail}\nFull log: ${log}\nCheck the result and continue the work.`,
+  bgNote: (name: string, log: string) => `Background process "${name}" is running. Log: ${log}. Alethite will report when it ends.`,
+  bgUnknown: 'unknown',
 }
 
 export type Texts = typeof en
