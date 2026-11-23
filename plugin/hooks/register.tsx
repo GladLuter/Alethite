@@ -1136,6 +1136,7 @@ export const register: Register = (on, options) => {
       const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : await $.session.cwd()
       const args = ['bg-start', `--session=${id}`, `--name=${name}`, `--cwd=${cwd}`, `--if-cold=${ifCold}`, `--command=${command}`, ...(statusFile ? [`--status-file=${statusFile}`] : [])]
       const r = await runCg($, python, args, 40_000) // the wrapper may wait up to 15 s for its lock
+      if (old?.ended) await bgDone($, `bg:${id}`, old) // its result goes in this answer: a finish wait holding it must not tell it again
       await $.store.set(`bg:${id}`, { dir: r.dir, name, pid: r.pid, started: await $.clock.now(), log: r.log, statusFile, ifCold })
       await guarded($, 'bg', () => watchBg($)) // the run has started: a failed first look is the next tick's to report
       return T.bgStarted(name, String(r.log)) + (old?.ended ? `\n${endNote(old, await $.clock.now())}` : '') // the new record replaces an ended run nobody was told of

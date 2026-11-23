@@ -3460,7 +3460,9 @@ test('a turn that starts during the handoff of a due wait: no /clear, the wait i
 })
 
 test('background_run: an ended run that nobody was told of is reported with the next start', async ($, on) => {
-  await runRig($, on, new Map([['bg:id', bgRun({ ended: ENDED })]]))
+  const { m } = await runRig($, on, new Map<string, unknown>([['bg:id', bgRun({ ended: ENDED })], ['delayed:id', { at: AT, text: 'финиш' }]]))
   const r = await bgCall($)
   expect(r).toEqual({ result: `${T.bgStarted('train', `${BG_DIR}/log.txt`)}\n${T.bgNote('train', when(new Date(ENDED.at).toISOString(), NOW), '0', `${BG_DIR}/log.txt`)}` })
+  expect(m.store.has('delayed:id')).toBe(false) // the finish wait would tell the same result again
+  expect(m.store.get('bg:id')).toMatchObject({ pid: 7 })
 })
