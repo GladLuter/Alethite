@@ -265,12 +265,27 @@ const bgCheck = async ($: EngineInterface, python: string) => {
 
 // A watched run that ended: only the open chat's record is acted on, one finish at a time (a wake-up that hangs must not go out twice).
 // Wake the agent on a warm cache, else the owner's choice; a spent limit waits for the reset (`delayed:<id>` with the text).
+// shortcut: no timeout on a finish, a submit that never answers blocks later finishes until the engine restarts; add one when that is seen
 let isFinishing = false
-const bgFailed = new Set<string>() // runs whose finish failed: one toast per run, not per tick
+const bgFailed = new Set<string>() // runs whose finish failed: one toast and one /al-health line per run, not per tick
+
+const bgFailure = async ($: EngineInterface, run: BgRun, why: string) => {
+  if (bgFailed.has(run.dir)) return
+  bgFailed.add(run.dir)
+  toast($, T.bgFinishFailed(run.name, why))
+  await noteError($, 'bg', why)
+}
 
 // Deletes the record unless a newer run took its key meanwhile.
 const bgDone = async ($: EngineInterface, key: string, run: BgRun) => {
   if (((await $.store.get(key)) as BgRun | undefined)?.dir === run.dir) await $.store.delete(key)
+}
+
+// What the model is told of a run that ended; a garbled end time shows as "?", it must not throw.
+const endNote = (run: BgRun, now: number) => {
+  const { code, at } = run.ended!
+  const d = new Date(at)
+  return T.bgNote(run.name, Number.isNaN(+d) ? '?' : when(d.toISOString(), now), code === null ? T.bgUnknown : String(code), run.log)
 }
 
 const finishBg = async ($: EngineInterface, python: string, compression: string) => {
@@ -298,18 +313,21 @@ const finishBg = async ($: EngineInterface, python: string, compression: string)
       } catch (err) {
         why = message(err)
       }
-      if (why && !bgFailed.has(run.dir)) (bgFailed.add(run.dir), toast($, T.bgFinishFailed(run.name, why))) // the record stays: the next tick tries again
+      if (why) await bgFailure($, run, why) // the record stays: the next tick tries again
     } else if (action === 'newWorker') {
-      await $.store.delete(key) // like fireDue: gone before the launch, back when nothing was launched
+      // the record is the state: startWorker deletes it once launched (or moves it as show when the send failed after /clear), a launch that did not happen turns it into show
       const r = await startWorker($, python, 'send', compression, undefined, text) // startWorker tells the owner what failed
-      if (!r && !(r === null && bgFailed.has(run.dir))) await $.store.set(key, run)
-      if (r === null) bgFailed.add(run.dir) // a step before /clear keeps throwing: one put-back per run
+      if (!r) {
+        await bgPatch($, key, { ifCold: 'show' })
+        await bgFailure($, run, T.bgNotLaunched)
+      }
     } else {
-      const { at, model } = await waitOf($, id) // a wait the owner set keeps its time and model
-      const due = at ?? action.afterReset
-      await $.store.set(`delayed:${id}`, { at: due, ...(model ? { model } : {}), text })
-      await $.store.delete(key)
-      await update($, delayedAt, () => due)
+      // the record stays as show until the launch carries it; a wait the owner set is never overwritten (the show note covers it)
+      await bgPatch($, key, { ifCold: 'show' })
+      if ((await $.store.get(`delayed:${id}`)) === undefined) {
+        await $.store.set(`delayed:${id}`, { at: action.afterReset, text })
+        await update($, delayedAt, () => action.afterReset)
+      }
     }
     await watchBg($) // the band row follows the record
   } finally {
@@ -620,7 +638,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
   if (wasBusy) return false
   let outcome: Awaited<ReturnType<typeof launch>> | undefined
   let isCleared = false
-  let from: string | undefined // the old chat's id when a run still goes on in it: its record moves to the new chat
+  let from: string | undefined // the old chat's id when it holds a run record: it is delivered, moved or deleted below
   try {
     await disarm($)
     let told = '' // the last thing launch told the owner; it is the reason when the launch did not go through
@@ -628,9 +646,10 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
       draft: async () => (await $.prompt.read()).text,
       handoff: async () => {
         const [id, now, dir] = await Promise.all([$.session.id(), $.clock.now(), memoryDir($)])
-        const run = finish === undefined ? ((await $.store.get(`bg:${id}`)) as BgRun | undefined) : undefined
-        if (run && !run.ended) from = id
-        const note = run && !run.ended ? [`--note=${T.bgHandoffNote(run.name, when(new Date(run.started).toISOString(), now), run.statusFile ?? '', run.log)}`] : []
+        const run = (await $.store.get(`bg:${id}`)) as BgRun | undefined
+        if (run) from = id
+        // a finish text carries its own result; otherwise the new chat is told what the run is (still going) or how it ended
+        const note = finish !== undefined || !run ? [] : [`--note=${run.ended ? endNote(run, now) : T.bgHandoffNote(run.name, when(new Date(run.started).toISOString(), now), run.statusFile ?? '', run.log)}`]
         const args = ['handoff', '--session', id, '--today', calendarDay(now), ...(dir ? ['--memory-dir', dir] : []), '--compress', compression, ...note]
         return (await runCg($, python, args)) as { text: string; path: string }
       },
@@ -652,9 +671,14 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
       switchModel: async m => (await $.command.run({ command: 'model', args: m }), (await $.session.model()).includes(m)),
     }
     outcome = await launch(io, mode, model, finish)
-    if (from !== undefined && (outcome === 'sent' || outcome === 'ready')) {
-      const [to, run] = await Promise.all([$.session.id(), $.store.get(`bg:${from}`)])
-      if (to !== from && run) (await $.store.set(`bg:${to}`, run), await $.store.delete(`bg:${from}`))
+    if (from !== undefined) {
+      const [to, run] = await Promise.all([$.session.id(), $.store.get(`bg:${from}`) as Promise<BgRun | undefined>])
+      if (run) {
+        // an ended run whose result went out is delivered; if the send failed after /clear it moves on as show, and a running one follows the owner
+        const isDelivered = run.ended && (outcome === 'sent' || outcome === 'ready')
+        if (to !== from && !isDelivered) await $.store.set(`bg:${to}`, run.ended ? { ...run, ifCold: 'show' } : run)
+        if (to !== from || isDelivered) await $.store.delete(`bg:${from}`)
+      }
     }
     if (outcome === 'ready') toast($, T.pickThenEnter)
     if (outcome === 'failed' || outcome === 'dropped') await noteError($, 'launch', told)
@@ -770,8 +794,7 @@ export const register: Register = (on, options) => {
         const started = ((await $.store.get(k)) as BgRun | undefined)?.started
         if (typeof started !== 'number' || started < loadedAt - 7 * 86_400_000) await $.store.delete(k) // an empty or garbled record goes too
       }
-      await watchBg($)
-      void guarded($, 'bg', () => finishBg($, python, compression)) // never awaited either: a hanging wake-up must not hold session.start
+      await watchBg($) // a finish waits for the first tick (30 s): no band render has told isWorking yet
       void guarded($, 'bg', () => bgCheck($, python)) // never awaited: a slow Python must not hold session.start
       const isOpen = (await $.store.get('details')) === true
       await update($, isDetails, () => isOpen)
@@ -1189,9 +1212,8 @@ export const register: Register = (on, options) => {
         const key = `bg:${await $.session.id()}`
         const run = (await $.store.get(key)) as BgRun | undefined
         if (run?.ended) {
-          ended = [key, run]
-          const end = when(new Date(run.ended.at).toISOString(), await $.clock.now())
-          blocks.push([START, T.bgNote(run.name, end, run.ended.code === null ? T.bgUnknown : String(run.ended.code), run.log), END].join('\n'))
+          blocks.push([START, endNote(run, await $.clock.now()), END].join('\n'))
+          ended = [key, run] // only once the note is in: a failure above must not delete a record whose note never went
         }
       } catch {}
     }
@@ -1213,7 +1235,7 @@ export const register: Register = (on, options) => {
       isLessonsNoted = true
     }
     const own = lessonList.filter(l => !l.global)
-    // only our New worker's first message gets here as 'plugin': the handoff first, then the owner's draft, which is what the lessons are searched by
+    // only our own messages get here as 'plugin' (New worker's first one, or a background run's wake-up): the handoff first, then the owner's draft (or the finish text), which is what the lessons are searched by
     const words = kind === 'plugin' ? e.text.split('[/al-handoff]').pop()! : e.text
     if (own.length && words.trim().length >= 12) {
       try {

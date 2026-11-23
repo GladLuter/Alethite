@@ -227,6 +227,7 @@ class HandoffTest(unittest.TestCase):
         self.assertTrue(noted.endswith(transcripts.HANDOFF_END))
         self.assertIn(t('handoff_note') + '\nпроцесс train идёт', noted)
         self.assertNotIn('train', plain)
+        self.assertLess(noted.index(t('handoff_note')), noted.index(t('handoff_stopped')))  # right after the head: the cap cuts the end first
 
     def test_cli_note(self):
         self.write('P/S.jsonl', [u('вопрос'), a([text('ответ')])])

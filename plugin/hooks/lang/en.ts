@@ -291,6 +291,7 @@ export const en = {
   bgHandoffNote: (name: string, started: string, status: string, log: string) => `The background process "${name}" is still running in the old chat (started ${started}).${status ? ` Status file: ${status}.` : ''} Log: ${log}. When it ends, Alethite reports here. Check the log if needed.`,
   bgUnknown: 'unknown',
   bgFinishFailed: (name: string, why: string) => `Background process "${name}" ended, but Alethite could not pass it on (${why}). The result stays in the band row.`,
+  bgNotLaunched: 'a New worker was not started',
 }
 
 export type Texts = typeof en

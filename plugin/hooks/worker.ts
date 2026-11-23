@@ -57,6 +57,7 @@ export const launch = async (io: LaunchIO, mode: 'send' | 'fill', model?: Model,
   const text = `${handoff.text}\n\n${message ?? draft}`
   // every failure from here on names the saved file; if even the box refuses the text, the draft is most likely still there
   const back = async (why: string) => {
+    if (message !== undefined) return (io.toast(T.dropped(why, handoff.path)), false) // no draft to protect: the box is never touched
     try {
       await io.fill(text)
       return true
@@ -71,8 +72,7 @@ export const launch = async (io: LaunchIO, mode: 'send' | 'fill', model?: Model,
     sent = await io.submit(text)
   } catch (err) {
     const why = errorText(err)
-    if (message !== undefined) io.toast(T.dropped(why, handoff.path)) // no draft to protect: the box stays as it is
-    else if (await back(why)) io.toast(T.submitFailed(why, handoff.path))
+    if (await back(why)) io.toast(T.submitFailed(why, handoff.path))
     return 'failed'
   }
   if (sent.drop !== undefined) {

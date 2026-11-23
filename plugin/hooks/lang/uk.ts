@@ -292,4 +292,5 @@ export const uk: Partial<Texts> = {
   bgHandoffNote: (name: string, started: string, status: string, log: string) => `Фоновий процес «${name}» ще триває в старому чаті (запущено ${started}).${status ? ` Файл статусу: ${status}.` : ''} Лог: ${log}. Коли він завершиться, Alethite повідомить тут. За потреби зазирни в лог.`,
   bgUnknown: 'невідомо',
   bgFinishFailed: (name: string, why: string) => `Фоновий процес «${name}» завершився, але Alethite не зміг передати це далі (${why}). Результат лишається в рядку смуги.`,
+  bgNotLaunched: 'новий працівник не запущений',
 }

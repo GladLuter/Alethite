@@ -159,6 +159,13 @@ test('message: a failed submit after /clear never fills the box, the toast names
   expect(toasts.join()).toContain('C:/h/old.md')
 })
 
+test('message in fill mode: the box is never filled either, the toast names the file', async () => {
+  const { io, calls, toasts } = fake()
+  expect(await launch(io, 'fill', undefined, 'm')).toBe('failed')
+  expect(calls).not.toContain('fill')
+  expect(toasts.join()).toContain('C:/h/old.md')
+})
+
 test('message: a dropped submit keeps the box as it is', async () => {
   const { io, calls, toasts } = fake({ drop: 'policy' })
   expect(await launch(io, 'send', undefined, 'm')).toBe('dropped')
