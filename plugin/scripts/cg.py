@@ -331,7 +331,7 @@ def _settings_fill(a):
 
 def _handoff(a):
     from handoff import build_handoff
-    text = build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress, _cleanup_on(a))
+    text = build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress, _cleanup_on(a), a.note)
     folder = os.path.join(os.path.dirname(a.db), 'handoffs')  # next to the index: ~/.claude/alethite/handoffs by default
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, a.session + '.md')
@@ -510,6 +510,7 @@ def _parser():
     s.add_argument('--today', required=True)
     s.add_argument('--memory-dir')
     s.add_argument('--compress', choices=LEVELS, default='off')
+    s.add_argument('--note')  # a background run goes on in this chat: its own section at the end
     s = add('savings', _savings)
     s.add_argument('--session', required=True)
     s.add_argument('--cwd', required=True)

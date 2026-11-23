@@ -60,7 +60,7 @@ def changed_files(recs, subs):
     return list(dict.fromkeys(r['edit'] for r in reversed(edits)))[:30]
 
 
-def build_handoff(projects, session_id, today, memory_dir=None, level='off', cleanup=False):
+def build_handoff(projects, session_id, today, memory_dir=None, level='off', cleanup=False, note=None):
     """The handoff text; the quotes of the conversation are compressed at `level` (stage 3), the rest is left as it is. With `cleanup`
     the old chat is going to be removed from the disk: the text says so instead of how to resume it."""
     main, subs = find_session(projects, session_id)
@@ -108,7 +108,7 @@ def build_handoff(projects, session_id, today, memory_dir=None, level='off', cle
              t('handoff_removed') if cleanup else t('handoff_resume', cwd=next((r['cwd'] for r in recs if r['cwd']), ''), id=session_id)]
 
     def render():
-        parts = ['\n'.join(head), stopped(fixed + early)] + ([t('handoff_state') + '\n' + '\n\n'.join(git)] if git else [])
+        parts = ['\n'.join(head), stopped(fixed + early)] + ([t('handoff_state') + '\n' + '\n\n'.join(git)] if git else []) + ([t('handoff_note') + '\n' + note] if note else [])
         # a marker quoted inside the text, of either name, would end the block early for strip_handoff
         body = HANDOFF_MARK.sub(lambda m: m.group()[:-1] + ' ]', '\n\n'.join(parts))
         return HANDOFF_START + '\n' + body + '\n' + HANDOFF_END

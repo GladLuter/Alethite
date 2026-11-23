@@ -220,6 +220,23 @@ class HandoffTest(unittest.TestCase):
         self.assertEqual(files, [f])
         self.assertEqual(len(seen), 1)  # only the tool_use line
 
+    def test_note_is_its_own_section_inside_the_block(self):
+        self.write('P/S.jsonl', [u('вопрос'), a([text('ответ')])])
+        plain = self.build()
+        noted = build_handoff(self.projects, 'S', '2026-10-13', note='процесс train идёт')
+        self.assertTrue(noted.endswith(transcripts.HANDOFF_END))
+        self.assertIn(t('handoff_note') + '\nпроцесс train идёт', noted)
+        self.assertNotIn('train', plain)
+
+    def test_cli_note(self):
+        self.write('P/S.jsonl', [u('вопрос'), a([text('ответ')])])
+        db = os.path.join(self.tmp, 'db', 'index.db')
+        p = subprocess.run([sys.executable, CG, '--db', db, '--projects', self.projects, 'handoff', '--session', 'S', '--today', '2026-10-13', '--note', 'заметка X'], capture_output=True)
+        out = json.loads(p.stdout.decode('utf-8'))
+        self.assertIn('заметка X', out['text'])
+        with open(out['path'], 'rb') as f:
+            self.assertIn('заметка X', f.read().decode('utf-8'))
+
     def test_cli_saves_text_before_answering(self):
         self.write('P/S.jsonl', [u('вопрос про ёжика'), a([text('ответ')])])
         db = os.path.join(self.tmp, 'db', 'index.db')
