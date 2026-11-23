@@ -43,7 +43,7 @@ export const endNote = (run: BgRun, now: number) => {
   return T.bgNote(run.name, when(new Date(at).toISOString(), now), code === null ? T.bgUnknown : String(code), run.log)
 }
 
-export const finishText =(run: BgRun, tail: string[], now: number) => {
+export const finishText = (run: BgRun, tail: string[], now: number) => {
   const at = run.ended?.at ?? now
   const code = run.ended?.code
   return T.bgFinish(run.name, code === null || code === undefined ? T.bgUnknown : String(code), when(new Date(at).toISOString(), now), T.bgElapsed(minutes(run.started, at)), tail.slice(-5).join('\n'), run.log)
