@@ -37,7 +37,13 @@ export const bgRow = (run: BgRun, last: string, now: number): { text: string; to
   return e.code === 0 ? { text: `✓ ${run.name} · ${dur} · ${last} · ${T.bgExit(0)}` } : { text: `✗ ${run.name} · ${dur} · ${last} · ${T.bgExit(e.code)}`, tone: 'error' }
 }
 
-export const finishText = (run: BgRun, tail: string[], now: number) => {
+// What the model is told of a run that ended.
+export const endNote = (run: BgRun, now: number) => {
+  const { code, at } = run.ended!
+  return T.bgNote(run.name, when(new Date(at).toISOString(), now), code === null ? T.bgUnknown : String(code), run.log)
+}
+
+export const finishText =(run: BgRun, tail: string[], now: number) => {
   const at = run.ended?.at ?? now
   const code = run.ended?.code
   return T.bgFinish(run.name, code === null || code === undefined ? T.bgUnknown : String(code), when(new Date(at).toISOString(), now), T.bgElapsed(minutes(run.started, at)), tail.slice(-5).join('\n'), run.log)

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { delayTimes } from '../hooks/band'
-import { bgRow, finishAction, finishText, lastLine } from '../hooks/bg'
+import { delayTimes, when } from '../hooks/band'
+import { bgRow, endNote, finishAction, finishText, lastLine } from '../hooks/bg'
 import type { BgRun } from '../hooks/bg'
 import { setLanguage } from '../hooks/text'
 
@@ -57,4 +57,9 @@ test('finishText: name, code, log, at most 5 tail lines', () => {
   expect(unknown).toContain('код неизвестно')
   expect(unknown).not.toContain('Последние строки')
   expect(unknown).not.toContain('\n\n')
+})
+test('endNote: name, code, unknown code, time, log', () => {
+  const t = endNote(run({ ended: { code: 3, at: now } }), now)
+  expect([t.includes('job'), t.includes('3'), t.includes('C:/l.log'), t.includes(when(new Date(now).toISOString(), now))]).toEqual([true, true, true, true])
+  expect(endNote(run({ ended: { code: null, at: now } }), now)).toContain('неизвестно')
 })

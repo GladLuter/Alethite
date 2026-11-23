@@ -22,7 +22,7 @@ import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, 
 import type { Found, Lesson } from './lessons'
 import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
-import { bgRow, finishAction, finishText, lastLine } from './bg'
+import { bgRow, endNote, finishAction, finishText, lastLine } from './bg'
 import type { BgRun } from './bg'
 import { skipArgs, syncArgs, syncReport } from './sync'
 import type { SyncResult } from './sync'
@@ -228,7 +228,7 @@ const watchBgOnce = async ($: EngineInterface) => {
         let ended: NonNullable<BgRun['ended']>
         try {
           const x = JSON.parse(await $.fs.read(exit)) as { code: number | null; ended: string }
-          ended = { code: x.code, at: Date.parse(x.ended) }
+          ended = { code: x.code, at: Date.parse(x.ended) || now } // no valid end time: the tick time, so nothing downstream sees NaN
         } catch {
           ended = { code: null, at: now, lost: true } // a file that cannot be read is no code: the run is told as lost
         }
@@ -276,16 +276,14 @@ const bgFailure = async ($: EngineInterface, run: BgRun, why: string) => {
   await noteError($, 'bg', why)
 }
 
-// Deletes the record unless a newer run took its key meanwhile.
+// Deletes the record unless a newer run took its key meanwhile, and the finish wait of that chat with it (only a finish writes `text`): one delivery per finish.
 const bgDone = async ($: EngineInterface, key: string, run: BgRun) => {
-  if (((await $.store.get(key)) as BgRun | undefined)?.dir === run.dir) await $.store.delete(key)
-}
-
-// What the model is told of a run that ended; a garbled end time shows as "?", it must not throw.
-const endNote = (run: BgRun, now: number) => {
-  const { code, at } = run.ended!
-  const d = new Date(at)
-  return T.bgNote(run.name, Number.isNaN(+d) ? '?' : when(d.toISOString(), now), code === null ? T.bgUnknown : String(code), run.log)
+  if (((await $.store.get(key)) as BgRun | undefined)?.dir !== run.dir) return
+  await $.store.delete(key)
+  const wait = `delayed:${key.slice(3)}`
+  if (typeof ((await $.store.get(wait)) as { text?: unknown } | undefined)?.text !== 'string') return
+  await $.store.delete(wait)
+  await update($, delayedAt, () => null)
 }
 
 const finishBg = async ($: EngineInterface, python: string, compression: string) => {
@@ -317,10 +315,8 @@ const finishBg = async ($: EngineInterface, python: string, compression: string)
     } else if (action === 'newWorker') {
       // the record is the state: startWorker deletes it once launched (or moves it as show when the send failed after /clear), a launch that did not happen turns it into show
       const r = await startWorker($, python, 'send', compression, undefined, text) // startWorker tells the owner what failed
-      if (!r) {
-        await bgPatch($, key, { ifCold: 'show' })
-        await bgFailure($, run, T.bgNotLaunched)
-      }
+      // false: another launch is in flight, the record waits for the next tick; bgPatch finds nothing when the launch delivered or moved it
+      if (r !== false && (await bgPatch($, key, { ifCold: 'show' }))) await bgFailure($, run, T.bgNotLaunched)
     } else {
       // the record stays as show until the launch carries it; a wait the owner set is never overwritten (the show note covers it)
       await bgPatch($, key, { ifCold: 'show' })
@@ -639,6 +635,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
   let outcome: Awaited<ReturnType<typeof launch>> | undefined
   let isCleared = false
   let from: string | undefined // the old chat's id when it holds a run record: it is delivered, moved or deleted below
+  let isTold = false // the handoff said the run ended: only then does a send deliver its result
   try {
     await disarm($)
     let told = '' // the last thing launch told the owner; it is the reason when the launch did not go through
@@ -647,9 +644,12 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
       handoff: async () => {
         const [id, now, dir] = await Promise.all([$.session.id(), $.clock.now(), memoryDir($)])
         const run = (await $.store.get(`bg:${id}`)) as BgRun | undefined
-        if (run) from = id
+        if (run) {
+          from = id
+          isTold = !!run.ended
+        }
         // a finish text carries its own result; otherwise the new chat is told what the run is (still going) or how it ended
-        const note = finish !== undefined || !run ? [] : [`--note=${run.ended ? endNote(run, now) : T.bgHandoffNote(run.name, when(new Date(run.started).toISOString(), now), run.statusFile ?? '', run.log)}`]
+        const note = !run || (finish !== undefined && run.ended) ? [] : [`--note=${run.ended ? endNote(run, now) : T.bgHandoffNote(run.name, when(new Date(run.started).toISOString(), now), run.statusFile ?? '', run.log)}`]
         const args = ['handoff', '--session', id, '--today', calendarDay(now), ...(dir ? ['--memory-dir', dir] : []), '--compress', compression, ...note]
         return (await runCg($, python, args)) as { text: string; path: string }
       },
@@ -674,10 +674,11 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
     if (from !== undefined) {
       const [to, run] = await Promise.all([$.session.id(), $.store.get(`bg:${from}`) as Promise<BgRun | undefined>])
       if (run) {
-        // an ended run whose result went out is delivered; if the send failed after /clear it moves on as show, and a running one follows the owner
-        const isDelivered = run.ended && (outcome === 'sent' || outcome === 'ready')
+        // a run whose end the handoff told, sent out, is delivered; if the send failed after /clear, or the run ended during the launch, it moves on as show, and a running one follows the owner
+        const isDelivered = isTold && (outcome === 'sent' || outcome === 'ready')
         if (to !== from && !isDelivered) await $.store.set(`bg:${to}`, run.ended ? { ...run, ifCold: 'show' } : run)
-        if (to !== from || isDelivered) await $.store.delete(`bg:${from}`)
+        if (isDelivered) await bgDone($, `bg:${from}`, run)
+        else if (to !== from) await $.store.delete(`bg:${from}`)
       }
     }
     if (outcome === 'ready') toast($, T.pickThenEnter)

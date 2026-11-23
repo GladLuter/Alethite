@@ -144,11 +144,11 @@ test('/al-health: a project that matches no conversation is said so', async ($, 
 
 // The engine beneath a launch: the prompt box (`refuse` makes a fill fail), /clear, and the first message. `gate` holds the submit until released.
 const box = (on: any, draft: string, log: string[], gate: Promise<unknown> = Promise.resolve()) => {
-  const state = { text: draft, refuse: undefined as string | undefined, broken: false, drop: undefined as string | undefined, nextId: undefined as string | undefined, contexts: [] as string[][], asUser: [] as unknown[] }
+  const state = { text: draft, refuse: undefined as string | undefined, broken: false, drop: undefined as string | undefined, nextId: undefined as string | undefined, clearFail: false, contexts: [] as string[][], asUser: [] as unknown[] }
   on('prompt.read', () => (state.broken ? { deny: 'boom' } : { value: { text: state.text, cursor: 0 } }))
   on('prompt.fill', (_: unknown, e: { text: string }) => (state.refuse ? { isFilled: false, refusal: state.refuse } : ((state.text = e.text), { isFilled: true })))
   on('prompt.submit', async (_: unknown, e: { text: string; origin?: { asUser?: boolean }; context?: readonly string[] }) => (log.push(`submit ${e.text}`), state.contexts.push([...(e.context ?? [])]), state.asUser.push(e.origin?.asUser), await gate, state.drop === undefined ? { text: e.text } : { drop: state.drop }))
-  on('command.run', (_: unknown, e: { command: string; args: string }) => (log.push(`/${e.command} ${e.args}`.trim()), e.command === 'clear' && state.nextId && (ids.now = state.nextId), e.command === 'model' && chat.switches && (chat.model = `claude-${e.args}-5-5`), { text: '' }))
+  on('command.run', (_: unknown, e: { command: string; args: string }) => (log.push(`/${e.command} ${e.args}`.trim()), e.command === 'clear' && state.clearFail ? (() => { throw new Error('no clear') })() : (e.command === 'clear' && state.nextId && (ids.now = state.nextId), e.command === 'model' && chat.switches && (chat.model = `claude-${e.args}-5-5`), { text: '' })))
   return state
 }
 const withMemory = { value: { ...usage, context: { ...usage.context, breakdown: { memoryFiles: [{ path: 'C:/mem/memory/MEMORY.md', type: 'AutoMem', tokens: 1 }] } } } }
@@ -2906,10 +2906,10 @@ const bgCall = ($: any, over: object = {}) => $.tool.call({ tool: 'mcp__alethite
 const bgVerbs = (m: { runs: { argv: string[] }[] }) => m.runs.filter(r => verb(r.argv)[0]!.startsWith('bg-'))
 const norm = (p: string) => p.replace(/\\/g, '/') // the engine may hand paths back with backslashes
 const runRig = async ($: any, on: any, store = new Map<string, unknown>(), files: Record<string, string> = {}, answerUsage: () => unknown = () => ({ value: usage }), init: object = {}) => {
-  const fs = { files, readError: undefined as string | undefined, alive: true, startError: undefined as string | undefined, handoffError: undefined as string | undefined, onAlive: undefined as (() => void) | undefined, gate: undefined as Promise<void> | undefined, ...init }
+  const fs = { files, readError: undefined as string | undefined, alive: true, startError: undefined as string | undefined, handoffError: undefined as string | undefined, onAlive: undefined as (() => void) | undefined, onHandoff: undefined as (() => void) | undefined, gate: undefined as Promise<void> | undefined, ...init }
   on('fs.exists', (_: unknown, e: { path: string }) => ({ value: norm(e.path) in fs.files }))
   on('fs.read', async (_: unknown, e: { path: string }) => (await fs.gate, fs.readError ? { deny: fs.readError } : norm(e.path) in fs.files ? { value: fs.files[norm(e.path)] } : { deny: 'ENOENT' }))
-  const answer = (a: string[]) => (a[0] === 'bg-alive' ? (fs.onAlive?.(), ran(JSON.stringify({ alive: fs.alive }))) : a[0] === 'bg-start' ? (fs.startError ? failed(fs.startError) : ran(JSON.stringify({ dir: BG_DIR, pid: 7, log: `${BG_DIR}/log.txt` }))) : a[0] === 'handoff' ? (fs.handoffError ? failed(fs.handoffError) : ran(JSON.stringify({ text: 'h', path: 'C:/h/id.md' }))) : a[0] === 'index' ? indexed() : a[0] === 'embed' ? embedded() : ran('{}'))
+  const answer = (a: string[]) => (a[0] === 'bg-alive' ? (fs.onAlive?.(), ran(JSON.stringify({ alive: fs.alive }))) : a[0] === 'bg-start' ? (fs.startError ? failed(fs.startError) : ran(JSON.stringify({ dir: BG_DIR, pid: 7, log: `${BG_DIR}/log.txt` }))) : a[0] === 'handoff' ? (fs.onHandoff?.(), fs.handoffError ? failed(fs.handoffError) : ran(JSON.stringify({ text: 'h', path: 'C:/h/id.md' }))) : a[0] === 'index' ? indexed() : a[0] === 'embed' ? embedded() : ran('{}'))
   const m = await started($, on, answer, [], answerUsage, {}, noTurn, store)
   return { m, fs, ui: await $.ui.mount(UI) }
 }
@@ -3220,11 +3220,13 @@ test('the note rides no command, no meta message and no message of ours', async 
   expect(store.has('bg:id')).toBe(true)
 })
 
-test('a garbled end time does not throw: the note says ? and still goes once', async ($, on) => {
-  const { m, store, state } = await finRig($, on, { at: COLD, run: { ended: { code: 0, at: Number.NaN } } })
+test('exit.json without an end time: the run ends at the tick time, the note shows it', async ($, on) => {
+  const { m, fs, store, state } = await finRig($, on, { at: COLD, run: { ended: undefined } })
+  fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 0 })
   await m.clock.advance(30_000)
+  expect((store.get('bg:id') as { ended: object }).ended).toEqual({ code: 0, at: NOW + 30_000 })
   await typed($, 'привет')
-  expect(state.contexts[0]).toEqual([[START, T.bgNote('train', '?', '0', `${BG_DIR}/log.txt`), END].join('\n')])
+  expect(state.contexts[0]).toEqual([[START, T.bgNote('train', when(new Date(NOW + 30_000).toISOString(), NOW + 30_000), '0', `${BG_DIR}/log.txt`), END].join('\n')])
   expect(store.has('bg:id')).toBe(false)
 })
 
@@ -3283,4 +3285,80 @@ test('a manual New worker with an ended run: the handoff gets the run\'s result 
   expect(ofCg(m, 'handoff')[0]!.argv).toContain(`--note=${note}`)
   expect(store.has('bg:id')).toBe(false)
   expect(store.has('bg:new')).toBe(false)
+})
+
+const RESET_SOON = new Date(NOW + 600_000).toISOString()
+
+test('a spent-limit finish on a warm cache: the wake after the reset delivers once, the finish wait goes with it', async ($, on) => {
+  const { m, log, store } = await finRig($, on, { at: WARM, run: { ifCold: 'new_worker' }, limit: nearLimit(RESET_SOON, 100) })
+  await m.clock.advance(30_000)
+  expect(store.get('delayed:id')).toMatchObject({ at: NOW + 900_000 })
+  await m.clock.advance(11 * 60_000) // past the reset, the cache is still warm
+  expect(bgSent(log)).toHaveLength(1)
+  expect(store.has('bg:id')).toBe(false)
+  expect(store.has('delayed:id')).toBe(false)
+  await m.clock.advance(10 * 60_000)
+  expect(log.filter(l => l === '/clear')).toEqual([])
+  expect(bgSent(log)).toHaveLength(1)
+})
+
+test('the owner message that carries the note takes the finish wait with it', async ($, on) => {
+  const { m, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' }, limit: nearLimit(undefined, 100) })
+  await m.clock.advance(30_000)
+  expect(store.get('delayed:id')).toHaveProperty('text')
+  await typed($, 'привет')
+  expect(store.has('bg:id')).toBe(false)
+  expect(store.has('delayed:id')).toBe(false)
+})
+
+test('the owner message that carries the note leaves an owner wait alone', async ($, on) => {
+  const { m, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' }, limit: nearLimit(undefined, 100) })
+  store.set('delayed:id', { at: AT + 86_400_000, model: 'opus' })
+  await m.clock.advance(30_000)
+  await typed($, 'привет')
+  expect(store.has('bg:id')).toBe(false)
+  expect(store.get('delayed:id')).toEqual({ at: AT + 86_400_000, model: 'opus' })
+})
+
+test('a /clear that throws without a new id: one attempt, the record turns to show, one toast', async ($, on) => {
+  const { m, log, state, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' } })
+  state.clearFail = true
+  await m.clock.advance(90_000)
+  expect(log.filter(l => l === '/clear')).toHaveLength(1)
+  expect(store.get('bg:id')).toMatchObject({ ifCold: 'show', ended: ENDED })
+  expect(m.toasts.filter(t => t.includes(T.bgFinishFailed('train', T.bgNotLaunched)))).toHaveLength(1)
+  expect(store.get('lastError')).toMatchObject({ where: 'bg' })
+})
+
+test('a run that ends during the launch moves to the new chat as show, its result is not lost', async ($, on) => {
+  const { m, ui, fs, state, store } = await finRig($, on, { run: { ended: undefined } })
+  fs.onHandoff = () => void store.set('bg:id', { ...(store.get('bg:id') as object), ended: ENDED })
+  state.nextId = 'new'
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'send' })
+  expect(store.has('bg:id')).toBe(false)
+  expect(store.get('bg:new')).toMatchObject({ name: 'train', ifCold: 'show', ended: ENDED })
+  expect(ofCg(m, 'handoff')).toHaveLength(1)
+})
+
+test('a finish wait that fires while the chat holds a different running run: the handoff still says it runs', async ($, on) => {
+  const { m, state, store } = await finRig($, on, { at: COLD, run: { ended: undefined } })
+  store.set('delayed:id', { at: NOW + 30_000, text: 'финиш' })
+  state.nextId = 'new'
+  await m.clock.advance(3 * 30_000)
+  const note = ofCg(m, 'handoff')[0]!.argv.find((a: string) => a.startsWith('--note='))
+  expect(note).toContain(BG_STATUS)
+})
+
+test('a launch in flight at the tick: the ended record is left alone, no failure toast', async ($, on) => {
+  let release!: () => void
+  const { m, ui, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' }, gate: new Promise<void>(r => (release = r)) })
+  await ui.press({ key: 'launch' })
+  const sending = ui.press({ key: 'send' }) // its submit hangs on the gate: the launch is in flight
+  await new Promise(r => (globalThis as any).setTimeout(r, 50))
+  await m.clock.advance(30_000)
+  expect(store.get('bg:id')).toMatchObject({ ifCold: 'new_worker', ended: ENDED })
+  expect(m.toasts.filter(t => t.includes('train'))).toEqual([])
+  release()
+  await sending
 })
