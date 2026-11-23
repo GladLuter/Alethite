@@ -62,7 +62,7 @@ export const en = {
   submitFailed: (why: string, path: string) => `New worker: sending failed (${why}). The handoff and the draft are in the input box: press Enter. The handoff is saved: ${path}`,
   fillFailed: (why: string, fillWhy: string, path: string) =>
     `New worker: ${why}. The chat is cleared already, and the input box did not take the handoff (${fillWhy}). The handoff is saved: ${path}; the draft is most likely still in the input box.`,
-  fillRefused: { dialog: 'a dialog is open, the box is busy', no_composer: 'this window has no input box', other: 'the input box did not take the text' },
+  fillRefused: { dialog: 'a dialog is open, the box is busy', no_composer: 'this window has no input box', other: 'the input box did not take the text', unanswered: 'the previous question is still waiting for an answer' },
   dropped: (why: string, path: string) => `New worker: the send was refused (${why}). The handoff is saved: ${path}`,
 
   // refresh failed: the status line shows it until the next good refresh
@@ -272,6 +272,27 @@ export const en = {
     `${on ? 'Deleting old chats: on' : 'Deleting old chats: off'}. Waiting for deletion now: ${chats} (${mb} MB). The background job (/al-job) does the deleting. A chat is deleted only after a New worker handoff. All of it must be in the index (and in the shared folder, if sync is on), and nobody must have touched it for 60 minutes. The current chat is never deleted. Deletion is permanent. The text stays in the long memory.`,
   cleanupNoPreview: (on: boolean) => `${on ? 'Deleting old chats: on' : 'Deleting old chats: off'}. cg.py gave no count of the chats waiting for deletion.`,
   healthCleanup: (on: boolean, removed: number) => (on ? `Deleting old chats: on, deleted ${removed}` : `Deleting old chats: off (deleted ${removed})`),
+
+  // background runs
+  bgCold: { show: 'result will be shown', new_worker: 'a new worker continues' },
+  bgEndedAt: (time: string) => `ended ${time}`,
+  bgExit: (code: number) => `exit ${code}`,
+  bgLost: 'lost, no exit code',
+  bgTooBig: 'The status file is over 4 MiB: its last line cannot be shown.',
+  bgDescription: 'Starts a command that runs longer than about 10 minutes as a background process that outlives the turn. Before the call, ask the owner what to do if the cache is cold when it ends (if_cold: "show" shows the result, "new_worker" goes on in a new worker). After the call, end your turn and do not poll the log or status files: Alethite watches the process and writes when it ends. For such runs use this instead of run_in_background, Monitor and ScheduleWakeup. Optional: cwd, status_file (a file whose last line the owner sees).',
+  bgSubagent: 'Alethite: background runs start from the main chat only, not from a subagent.',
+  bgBusy: (name: string, since: string) => `Alethite: this chat already has the background run "${name}", started ${since}. Wait until it ends, or the owner removes it with [×] in the band.`,
+  bgStarted: (name: string, log: string) => `Background process "${name}" started. Log: ${log}. Alethite will write when it ends: end your turn and do not poll the files.`,
+  bgBadInput: 'Alethite: background_run needs name, command and if_cold ("show" or "new_worker").',
+  bgElapsed: (min: number) => (min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`),
+  bgFinish: (name: string, code: string, end: string, duration: string, tail: string, log: string) =>
+    `Background process "${name}" finished: exit code ${code}, ended ${end}, ran ${duration}.${tail ? `\nLast status lines:\n${tail}` : ''}\nFull log: ${log}\nCheck the result and continue the work.`,
+  bgNote: (name: string, end: string, code: string, log: string) => `Alethite: the background process "${name}" ended ${end} with exit code ${code}. Log: ${log}. Check the result.`,
+  bgHandoffNote: (name: string, started: string, status: string, log: string) => `The background process "${name}" is still running in the old chat (started ${started}).${status ? ` Status file: ${status}.` : ''} Log: ${log}. When it ends, Alethite reports here. Check the log if needed.`,
+  bgUnknown: 'unknown',
+  bgFinishFailed: (name: string, why: string) => `Background process "${name}" ended, but Alethite could not pass it on (${why}). The result stays in the band row.`,
+  bgNotLaunched: 'a New worker was not started',
+  turnStarted: 'a turn started meanwhile, a New worker was not started',
 }
 
 export type Texts = typeof en

@@ -62,7 +62,7 @@ export const ru: Partial<Texts> = {
   notSent: 'передача не отправлена',
   submitFailed: (why: string, path: string) => `Новый работник: отправка не удалась (${why}). Передача и черновик в поле ввода: нажми Enter. Передача сохранена: ${path}`,
   fillFailed: (why: string, fillWhy: string, path: string) => `Новый работник: ${why}. Чат уже очищен, а поле ввода не приняло передачу (${fillWhy}). Передача сохранена: ${path}; черновик, скорее всего, ещё в поле ввода.`,
-  fillRefused: { dialog: 'открыт диалог, поле занято', no_composer: 'в этом окне нет поля ввода', other: 'поле ввода не приняло текст' },
+  fillRefused: { dialog: 'открыт диалог, поле занято', no_composer: 'в этом окне нет поля ввода', other: 'поле ввода не приняло текст', unanswered: 'предыдущий вопрос ещё ждёт ответа' },
   dropped: (why: string, path: string) => `Новый работник: отправку отклонили (${why}). Передача сохранена: ${path}`,
 
   // refresh failed: the status line shows it until the next good refresh
@@ -270,4 +270,25 @@ export const ru: Partial<Texts> = {
     `${on ? 'Удаление старых чатов: включено' : 'Удаление старых чатов: выключено'}. Сейчас ждут удаления: ${chats} (${mb} МБ). Удаляет фоновая задача (/al-job). Чат удаляется только после передачи дел кнопкой «Новый работник». Всё из него должно быть в индексе (и в общей папке, если включена синхронизация), и его не должны трогать 60 минут. Текущий чат не удаляется никогда. Удаление необратимо. Текст останется в долгой памяти.`,
   cleanupNoPreview: (on: boolean) => `${on ? 'Удаление старых чатов: включено' : 'Удаление старых чатов: выключено'}. cg.py не дал числа чатов, ждущих удаления.`,
   healthCleanup: (on: boolean, removed: number) => (on ? `Удаление старых чатов: включено, удалено ${removed}` : `Удаление старых чатов: выключено (удалено ${removed})`),
+
+  // background runs
+  bgCold: { show: 'итог покажу', new_worker: 'продолжит новый работник' },
+  bgEndedAt: (time: string) => `завершён в ${time}`,
+  bgExit: (code: number) => `код ${code}`,
+  bgLost: 'потерян, кода нет',
+  bgTooBig: 'Файл статуса больше 4 МиБ: его последнюю строку показать нельзя.',
+  bgDescription: 'Запускает команду, которая идёт дольше примерно 10 минут, фоновым процессом, который переживает ход. Перед вызовом спроси владельца, что делать, если кэш остынет к концу (if_cold: "show" покажет итог, "new_worker" продолжит новый работник). После вызова закончи ход и не опрашивай файлы лога и статуса: Alethite следит за процессом и напишет, когда он закончится. Для таких прогонов используй его вместо run_in_background, Monitor и ScheduleWakeup. Необязательно: cwd, status_file (файл, последнюю строку которого видит владелец).',
+  bgSubagent: 'Alethite: фоновые прогоны запускаются только из основного чата, не из субагента.',
+  bgBusy: (name: string, since: string) => `Alethite: в этом чате уже идёт фоновый прогон «${name}», запущен ${since}. Дождись конца или пусть владелец уберёт его кнопкой [×] на полосе.`,
+  bgStarted: (name: string, log: string) => `Фоновый процесс «${name}» запущен. Лог: ${log}. Alethite напишет, когда он закончится: закончи ход и не опрашивай файлы.`,
+  bgBadInput: 'Alethite: background_run нужны name, command и if_cold ("show" или "new_worker").',
+  bgElapsed: (min: number) => (min >= 60 ? `${Math.floor(min / 60)} ч ${min % 60} мин` : `${min} мин`),
+  bgFinish: (name: string, code: string, end: string, duration: string, tail: string, log: string) =>
+    `Фоновый процесс «${name}» закончился: код ${code}, конец ${end}, шёл ${duration}.${tail ? `\nПоследние строки статуса:\n${tail}` : ''}\nПолный лог: ${log}\nПроверь результат и продолжай работу.`,
+  bgNote: (name: string, end: string, code: string, log: string) => `Alethite: фоновый процесс «${name}» закончился ${end}, код ${code}. Лог: ${log}. Проверь результат.`,
+  bgHandoffNote: (name: string, started: string, status: string, log: string) => `Фоновый процесс «${name}» ещё идёт в старом чате (запущен ${started}).${status ? ` Файл статуса: ${status}.` : ''} Лог: ${log}. Когда он закончится, Alethite сообщит здесь. При нужде загляни в лог.`,
+  bgUnknown: 'неизвестно',
+  bgFinishFailed: (name: string, why: string) => `Фоновый процесс «${name}» закончился, но Alethite не смог передать это дальше (${why}). Результат остаётся в строке полосы.`,
+  bgNotLaunched: 'новый работник не запущен',
+  turnStarted: 'тем временем начался ход, новый работник не запущен',
 }

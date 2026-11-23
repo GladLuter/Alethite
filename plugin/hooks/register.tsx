@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Review, Savings, Snap } from '../types'
+import type { BgRun, Review, Savings, Snap } from '../types'
 import { columns, delayTimes, money, newerLimits, RULE_SVG, fitTokens, lineTokens, SHIELD, tokensWidth, when } from './band'
 import { isStale, shouldDenyBackground, shouldStop, size, statusText } from './guard'
 import { autoMemDir, autoMemTokens, compressionLevel, isMemoryFact } from './memory'
@@ -22,6 +22,7 @@ import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, 
 import type { Found, Lesson } from './lessons'
 import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
+import { bgRow, endNote, finishAction, finishText, lastLine } from './bg'
 import { skipArgs, syncArgs, syncReport } from './sync'
 import type { SyncResult } from './sync'
 import { oldSettingsPath, settingsPath, withFile } from './settings'
@@ -37,6 +38,8 @@ const isBusy = atom({ plugin: 'alethite', key: 'isBusy' } as const, false)
 const info = atom({ plugin: 'alethite', key: 'info' } as const, null)
 const isDetails = atom({ plugin: 'alethite', key: 'isDetails' } as const, false)
 const delayedAt = atom({ plugin: 'alethite', key: 'delayedAt' } as const, null)
+// what the band shows of this chat's background run: { run: BgRun; last: string }
+const bgView = atom({ plugin: 'alethite', key: 'bgView' } as const, null)
 // the New worker picker closes and opens next time at its first level
 const disarm = ($: EngineInterface) => Promise.all([update($, isArmed, () => false), update($, afterLevel, () => null)])
 
@@ -160,6 +163,171 @@ const guarded = async ($: EngineInterface, where: string, work: () => Promise<un
     showStatus($, T.statusError(message(err)))
     await noteError($, where, err)
     return false
+  }
+}
+
+// Background runs. The watch below only reads (store, files), so the 30 s tick starts no process; `bgCheck` asks Python whether a run is alive.
+const bgWarned = new Set<string>() // runs whose files failed to read: /al-health hears of each once, never a toast per tick
+
+const bgOnce = async ($: EngineInterface, run: BgRun, err: unknown) => {
+  if (bgWarned.has(run.dir)) return
+  bgWarned.add(run.dir)
+  await noteError($, 'bg', err)
+}
+
+const bgLast = async ($: EngineInterface, run: BgRun) => {
+  if (!run.statusFile || !(await $.fs.exists(run.statusFile))) return '—'
+  try {
+    return lastLine(await $.fs.read(run.statusFile))
+  } catch (err) {
+    if (/4 MiB/.test(message(err))) return T.bgTooBig // the engine reads no file over 4 MiB
+    await bgOnce($, run, err)
+    return '—'
+  }
+}
+
+// Writes into the record as it is now (a read before an await may be stale: the owner may have removed it, another path may have ended it).
+// A record that is gone is never recreated; `open` also leaves an ended one alone.
+const bgPatch = async ($: EngineInterface, key: string, patch: object, open = false) => {
+  const cur = (await $.store.get(key)) as (BgRun & { toasted?: true }) | undefined
+  if (!cur || (open && cur.ended)) return undefined
+  const next = { ...cur, ...patch }
+  await $.store.set(key, next)
+  return next
+}
+
+let bgWatching = false // one watch at a time: two at once would each toast the same ended run
+let bgAgain = false // a call that came meanwhile: the running watch makes one more pass, its keys and view may be stale
+
+const watchBg = async ($: EngineInterface) => {
+  if (bgWatching) {
+    bgAgain = true
+    return
+  }
+  bgWatching = true
+  try {
+    do {
+      bgAgain = false
+      await watchBgOnce($)
+    } while (bgAgain)
+  } finally {
+    bgWatching = false
+  }
+}
+
+const watchBgOnce = async ($: EngineInterface) => {
+  const [id, now] = [await $.session.id(), await $.clock.now()]
+  let view = null
+  for (const key of (await $.store.keys()).filter(k => k.startsWith('bg:'))) {
+    let run = (await $.store.get(key)) as (BgRun & { toasted?: true }) | undefined
+    if (!run) continue
+    try {
+      const exit = `${run.dir}/exit.json`
+      if (!run.ended && (await $.fs.exists(exit))) {
+        let ended: NonNullable<BgRun['ended']>
+        try {
+          const x = JSON.parse(await $.fs.read(exit)) as { code: number | null; ended: string }
+          ended = { code: x.code, at: Date.parse(x.ended) || now } // no valid end time: the tick time, so nothing downstream sees NaN
+        } catch {
+          ended = { code: null, at: now, lost: true } // a file that cannot be read is no code: the run is told as lost
+        }
+        run = await bgPatch($, key, { ended }, true) ?? ((await $.store.get(key)) as typeof run)
+        if (!run) continue
+      }
+      if (key === `bg:${id}`) view = { run, last: await bgLast($, run) }
+      else if (run.ended && !run.toasted) {
+        toast($, bgRow(run, await bgLast($, run), now).text) // a run of another chat: told once, nothing else is done
+        await bgPatch($, key, { toasted: true })
+      }
+    } catch (err) {
+      await bgOnce($, run, err)
+    }
+  }
+  await update($, bgView, () => view)
+}
+
+// A run whose wrapper is gone and left no exit.json is lost.
+const bgCheck = async ($: EngineInterface, python: string) => {
+  for (const key of (await $.store.keys()).filter(k => k.startsWith('bg:'))) {
+    const run = (await $.store.get(key)) as BgRun | undefined // it may be gone since keys() was read
+    if (!run || run.ended) continue
+    await guarded($, 'bg', async () => {
+      const { alive } = await runCg($, python, ['bg-alive', `--dir=${run.dir}`], 20_000)
+      if (alive !== false) return
+      const at = await $.clock.now()
+      // checked last, right before the write: an exit.json that came during bg-alive keeps its real code for the watch
+      if (!(await $.fs.exists(`${run.dir}/exit.json`))) await bgPatch($, key, { ended: { code: null, at, lost: true } }, true)
+    })
+  }
+  await watchBg($)
+}
+
+// A watched run that ended: only the open chat's record is acted on, one finish at a time (a wake-up that hangs must not go out twice).
+// Wake the agent on a warm cache, else the owner's choice; a spent limit waits for the reset (`delayed:<id>` with the text).
+// shortcut: no timeout on a finish, a submit that never answers blocks later finishes until the engine restarts; add one when that is seen
+let isFinishing = false
+const bgFailed = new Set<string>() // runs whose finish failed: one toast and one /al-health line per run, not per tick
+
+const bgFailure = async ($: EngineInterface, run: BgRun, why: string) => {
+  if (bgFailed.has(run.dir)) return
+  bgFailed.add(run.dir)
+  toast($, T.bgFinishFailed(run.name, why))
+  await noteError($, 'bg', why)
+}
+
+// Deletes the record unless a newer run took its key meanwhile, and the finish wait of that chat with it (only a finish writes `text`): one delivery per finish.
+const bgDone = async ($: EngineInterface, key: string, run: BgRun) => {
+  if (((await $.store.get(key)) as BgRun | undefined)?.dir !== run.dir) return
+  await $.store.delete(key)
+  const wait = `delayed:${key.slice(3)}`
+  if (typeof ((await $.store.get(wait)) as { text?: unknown } | undefined)?.text !== 'string') return
+  await $.store.delete(wait)
+  await update($, delayedAt, () => null)
+}
+
+const finishBg = async ($: EngineInterface, python: string, compression: string) => {
+  if (isFinishing) return
+  isFinishing = true
+  try {
+    const id = await $.session.id()
+    const key = `bg:${id}`
+    const run = (await $.store.get(key)) as BgRun | undefined
+    if (!run?.ended) return
+    if (await read($, isBusy)) return // a launch in flight: a wake now would be cut by its /clear
+    const [now, turn, s] = await Promise.all([$.clock.now(), $.store.get(`turn:${id}`), read($, snap)])
+    const action = finishAction({ ifCold: run.ifCold, at: (turn as { at: number | null } | undefined)?.at ?? null, now, limits: s?.limits ?? [], isWorking })
+    if (action === 'wait' || action === 'show') return // show: the band row says it, the owner's next message carries the note
+    let tail: string[] = []
+    try {
+      if (run.statusFile) tail = (await $.fs.read(run.statusFile)).split('\n').map(l => l.trim()).filter(Boolean).slice(-5)
+    } catch {} // the text goes without the tail
+    const text = finishText(run, tail, now)
+    if (action === 'wake') {
+      let why: string
+      try {
+        const r = await $.prompt.submit({ text, asUser: true })
+        if (r.drop === undefined) await bgDone($, key, run)
+        why = r.drop ?? ''
+      } catch (err) {
+        why = message(err)
+      }
+      if (why) await bgFailure($, run, why) // the record stays: the next tick tries again
+    } else if (action === 'newWorker') {
+      // the record is the state: startWorker deletes it once launched (or moves it as show when the send failed after /clear), a launch that did not happen turns it into show
+      const r = await startWorker($, python, 'send', compression, undefined, text) // startWorker tells the owner what failed
+      // false: another launch is in flight, the record waits for the next tick; bgPatch finds nothing when the launch delivered or moved it
+      if (r !== false && (await bgPatch($, key, { ifCold: 'show' }))) await bgFailure($, run, T.bgNotLaunched)
+    } else {
+      // the record stays as show until the launch carries it; a wait the owner set is never overwritten (the show note covers it)
+      await bgPatch($, key, { ifCold: 'show' })
+      if ((await $.store.get(`delayed:${id}`)) === undefined) {
+        await $.store.set(`delayed:${id}`, { at: action.afterReset, text })
+        await update($, delayedAt, () => action.afterReset)
+      }
+    }
+    await watchBg($) // the band row follows the record
+  } finally {
+    isFinishing = false
   }
 }
 
@@ -425,10 +593,10 @@ let isWorking = false
 
 // When this chat's wait comes due and the model it asks for (an old wait has none: the current one); a stored value that is not a time the clock can show counts as no wait.
 const waitOf = async ($: EngineInterface, id: string) => {
-  const wait = (await $.store.get(`delayed:${id}`)) as { at?: unknown; model?: unknown } | undefined
+  const wait = (await $.store.get(`delayed:${id}`)) as { at?: unknown; model?: unknown; text?: unknown } | undefined
   const at = typeof wait?.at === 'number' && !Number.isNaN(new Date(wait.at).getTime()) ? wait.at : null
   const model: Model | undefined = wait?.model === 'opus' || wait?.model === 'sonnet' ? wait.model : undefined
-  return { at, model }
+  return { at, model, text: typeof wait?.text === 'string' ? wait.text : undefined }
 }
 
 // The delayed New worker: the wait is a store key of its chat; the 30 s tick starts it once due. The key goes first, so it never fires twice.
@@ -437,25 +605,25 @@ const waitOf = async ($: EngineInterface, id: string) => {
 let threwAt = 0
 const fireDue = async ($: EngineInterface, python: string, compression: string) => {
   const [id, now] = await Promise.all([$.session.id(), $.clock.now()])
-  const { at, model } = await waitOf($, id)
+  const { at, model, text } = await waitOf($, id)
   let shown: number | null = null
   await update($, delayedAt, v => ((shown = v), at))
   if (at === null || at > now || isWorking || shown !== at) return
   await $.store.delete(`delayed:${id}`)
   await update($, delayedAt, () => null)
   // false = nothing was launched (busy, the busy flag could not be set, or a step before /clear threw or failed): the wait goes back. A throw from startWorker's tail comes after the launch: no put-back.
-  const r = await startWorker($, python, 'send', compression, model)
+  const r = await startWorker($, python, 'send', compression, model, text)
   if (r) return
   if (r === null) {
     if (threwAt === at) return // a step before /clear keeps throwing: one put-back per wait, not a toast every tick
     threwAt = at
   }
-  await $.store.set(`delayed:${id}`, model ? { at, model } : { at })
+  await $.store.set(`delayed:${id}`, { at, ...(model ? { model } : {}), ...(text !== undefined ? { text } : {}) })
   await update($, delayedAt, () => at)
 }
 
 // "Новый работник": binds launch() to the engine through closures made here. One launch at a time.
-const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill', compression: string, model?: Model) => {
+const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill', compression: string, model?: Model, finish?: string) => {
   let wasBusy = false
   try {
     await update($, isBusy, busy => ((wasBusy = busy), true)) // atomic: a second press before the redraw is refused here
@@ -466,6 +634,8 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
   if (wasBusy) return false
   let outcome: Awaited<ReturnType<typeof launch>> | undefined
   let isCleared = false
+  let from: string | undefined // the old chat's id when it holds a run record: it is delivered, moved or deleted below
+  let isTold = false // the handoff said the run ended: only then does a send deliver its result
   try {
     await disarm($)
     let told = '' // the last thing launch told the owner; it is the reason when the launch did not go through
@@ -473,10 +643,17 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
       draft: async () => (await $.prompt.read()).text,
       handoff: async () => {
         const [id, now, dir] = await Promise.all([$.session.id(), $.clock.now(), memoryDir($)])
-        const args = ['handoff', '--session', id, '--today', calendarDay(now), ...(dir ? ['--memory-dir', dir] : []), '--compress', compression]
+        const run = (await $.store.get(`bg:${id}`)) as BgRun | undefined
+        if (run) {
+          from = id
+          isTold = !!run.ended
+        }
+        // a finish text carries its own result; otherwise the new chat is told what the run is (still going) or how it ended
+        const note = !run || (finish !== undefined && run.ended) ? [] : [`--note=${run.ended ? endNote(run, now) : T.bgHandoffNote(run.name, when(new Date(run.started).toISOString(), now), run.statusFile ?? '', run.log)}`]
+        const args = ['handoff', '--session', id, '--today', calendarDay(now), ...(dir ? ['--memory-dir', dir] : []), '--compress', compression, ...note]
         return (await runCg($, python, args)) as { text: string; path: string }
       },
-      clear: () => ((isCleared = true), $.command.run({ command: 'clear' })),
+      clear: () => (isWorking ? Promise.reject(new Error(T.turnStarted)) : ((isCleared = true), $.command.run({ command: 'clear' }))), // the handoff took seconds: a turn may have started
       submit: text => $.prompt.submit({ text, asUser: true }),
       fill: async text => {
         const r = await $.prompt.fill({ text })
@@ -493,9 +670,20 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
       currentModel: () => $.session.model(),
       switchModel: async m => (await $.command.run({ command: 'model', args: m }), (await $.session.model()).includes(m)),
     }
-    outcome = await launch(io, mode, model)
+    outcome = await launch(io, mode, model, finish)
+    if (from !== undefined) {
+      const [to, run] = await Promise.all([$.session.id(), $.store.get(`bg:${from}`) as Promise<BgRun | undefined>])
+      if (run) {
+        // a run whose end the handoff told, sent out, is delivered; if the send failed after /clear, or the run ended during the launch, it moves on as show, and a running one follows the owner
+        const isDelivered = isTold && (outcome === 'sent' || outcome === 'ready')
+        if (to !== from && !isDelivered) await $.store.set(`bg:${to}`, run.ended ? { ...run, ifCold: 'show' } : run)
+        if (isDelivered) await bgDone($, `bg:${from}`, run)
+        else if (to !== from) await $.store.delete(`bg:${from}`)
+      }
+    }
     if (outcome === 'ready') toast($, T.pickThenEnter)
     if (outcome === 'failed' || outcome === 'dropped') await noteError($, 'launch', told)
+    if (outcome === 'sent' || outcome === 'ready') await runCg($, python, ['maintain-detached'], 20_000).catch(err => noteError($, 'cleanup', err)) // after the toast: Python's start must not hold it
   } catch (err) {
     await fail($, 'launch', err)
   } finally {
@@ -577,12 +765,14 @@ export const register: Register = (on, options) => {
     $.clock.every(30_000, () => {
       void guarded($, 'timer', () => refresh($, python))
       void guarded($, 'delayed', () => fireDue($, python, compression))
+      void guarded($, 'bg', async () => (await watchBg($), await finishBg($, python, compression)))
     })
     // a chat open for hours learns of a lesson saved in another chat or brought by the job's sync
     // and the band's data (never awaited together: one slow answer must not hold the other)
     $.clock.every(600_000, () => {
       void reloadLessons($, python, lessonList, isLessonsOn).then(l => void (lessonList = l))
       void refreshInfo($, python)
+      void guarded($, 'bg', () => bgCheck($, python))
     })
     // session.end has 1.5 s, too little to index: a closed chat is picked up here, or by the next recall. Never awaited, so session.start is not held.
     $.clock.after(
@@ -602,6 +792,12 @@ export const register: Register = (on, options) => {
         const at = ((await $.store.get(k)) as { at?: unknown } | undefined)?.at
         if (typeof at === 'number' && at < loadedAt - 86_400_000) await $.store.delete(k)
       }
+      for (const k of (await $.store.keys()).filter(k => k.startsWith('bg:'))) {
+        const started = ((await $.store.get(k)) as BgRun | undefined)?.started
+        if (typeof started !== 'number' || started < loadedAt - 7 * 86_400_000) await $.store.delete(k) // an empty or garbled record goes too
+      }
+      await watchBg($) // a finish waits for the first tick (30 s): no band render has told isWorking yet
+      void guarded($, 'bg', () => bgCheck($, python)) // never awaited: a slow Python must not hold session.start
       const isOpen = (await $.store.get('details')) === true
       await update($, isDetails, () => isOpen)
       const { at } = await waitOf($, await $.session.id()) // a wait outlives a restart
@@ -659,6 +855,23 @@ export const register: Register = (on, options) => {
               scope: { type: 'string', enum: ['project', 'all'], description: T.lessonScope },
             },
             required: ['action', 'symptom', 'cause'],
+          },
+          isDeferred: false,
+        }),
+      () =>
+        $.tool.register({
+          name: 'background_run',
+          description: T.bgDescription,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              command: { type: 'string' },
+              cwd: { type: 'string' },
+              status_file: { type: 'string' },
+              if_cold: { type: 'string', enum: ['show', 'new_worker'] },
+            },
+            required: ['name', 'command', 'if_cold'],
           },
           isDeferred: false,
         }),
@@ -910,6 +1123,26 @@ export const register: Register = (on, options) => {
     }, T.lessonSaveFailed),
   )
 
+  on('tool.call', { tool: 'mcp__alethite__background_run' }, async ($, e) => {
+    const input = e as unknown as { agentId?: string; name?: unknown; command?: unknown; cwd?: unknown; status_file?: unknown; if_cold?: unknown }
+    if (input.agentId !== undefined) return { deny: T.bgSubagent }
+    const id = await $.session.id()
+    const old = (await $.store.get(`bg:${id}`)) as BgRun | undefined
+    if (old && !old.ended) return { deny: T.bgBusy(old.name, when(new Date(old.started).toISOString(), await $.clock.now())) }
+    const { name, command, if_cold: ifCold } = input
+    if (typeof name !== 'string' || !name.trim() || typeof command !== 'string' || !command.trim() || (ifCold !== 'show' && ifCold !== 'new_worker')) return { deny: T.bgBadInput }
+    const statusFile = typeof input.status_file === 'string' && input.status_file ? input.status_file : undefined
+    return served($, 'background_run', async () => {
+      const cwd = typeof input.cwd === 'string' && input.cwd ? input.cwd : await $.session.cwd()
+      const args = ['bg-start', `--session=${id}`, `--name=${name}`, `--cwd=${cwd}`, `--if-cold=${ifCold}`, `--command=${command}`, ...(statusFile ? [`--status-file=${statusFile}`] : [])]
+      const r = await runCg($, python, args, 40_000) // the wrapper may wait up to 15 s for its lock
+      if (old?.ended) await bgDone($, `bg:${id}`, old) // its result goes in this answer: a finish wait holding it must not tell it again
+      await $.store.set(`bg:${id}`, { dir: r.dir, name, pid: r.pid, started: await $.clock.now(), log: r.log, statusFile, ifCold })
+      await guarded($, 'bg', () => watchBg($)) // the run has started: a failed first look is the next tick's to report
+      return T.bgStarted(name, String(r.log)) + (old?.ended ? `\n${endNote(old, await $.clock.now())}` : '') // the new record replaces an ended run nobody was told of
+    }, msg => msg)
+  })
+
   on('command.run', { command: 'al-job' }, async ($, e) => {
     const args = jobArgs(e.args)
     if (args === null) return { text: T.cgJobUsage }
@@ -952,11 +1185,13 @@ export const register: Register = (on, options) => {
     // the review hint rides the owner's next message once; a failure here costs nothing but the hint
     const blocks: string[] = []
     let hint: [id: string, edits: number] | undefined
+    let ended: [key: string, run: BgRun] | undefined // the owner's next message carries the note of a run that ended (cold cache, "show")
     // a dropped prompt never reached the model: the hint comes back for the next one
     const pass = async () => {
       try {
         const r = await next(blocks.length ? { ...e, context: [...(e.context ?? []), ...blocks] } : e)
         if (hint && r.drop !== undefined) (reviewDue.set(hint[0], hint[1]), reviewSaid.delete(hint[0]))
+        if (ended && r.drop === undefined) await bgDone($, ended[0], ended[1]).catch(() => {}) // a dropped message leaves the note for the next one
         return r
       } catch (err) {
         if (hint) (reviewDue.set(hint[0], hint[1]), reviewSaid.delete(hint[0]))
@@ -972,6 +1207,16 @@ export const register: Register = (on, options) => {
           reviewSaid.add(id)
           hint = [id, edits]
           blocks.push([START, T.reviewHint(edits), END].join('\n'))
+        }
+      } catch {}
+    }
+    if (isOwners && !e.isMeta && e.command === undefined && kind !== 'plugin') {
+      try {
+        const key = `bg:${await $.session.id()}`
+        const run = (await $.store.get(key)) as BgRun | undefined
+        if (run?.ended) {
+          blocks.push([START, endNote(run, await $.clock.now()), END].join('\n'))
+          ended = [key, run] // only once the note is in: a failure above must not delete a record whose note never went
         }
       } catch {}
     }
@@ -993,7 +1238,7 @@ export const register: Register = (on, options) => {
       isLessonsNoted = true
     }
     const own = lessonList.filter(l => !l.global)
-    // only our New worker's first message gets here as 'plugin': the handoff first, then the owner's draft, which is what the lessons are searched by
+    // only our own messages get here as 'plugin' (New worker's first one, or a background run's wake-up): the handoff first, then the owner's draft (or the finish text), which is what the lessons are searched by
     const words = kind === 'plugin' ? e.text.split('[/al-handoff]').pop()! : e.text
     if (own.length && words.trim().length >= 12) {
       try {
@@ -1099,6 +1344,16 @@ export const register: Register = (on, options) => {
     return ran
   })
 
+  // The engine stacks the rows in the order the plugins loaded: ours goes last, right above the prompt. Any failure leaves the band as it was.
+  on('ui.render', { component: 'AbovePromptList' }, (_, e, next) => {
+    let sorted = e
+    try {
+      const { rows } = e.props
+      sorted = { ...e, props: { ...e.props, rows: [...rows.filter(r => r.plugin !== 'alethite'), ...rows.filter(r => r.plugin === 'alethite')] } }
+    } catch {} // a bad shape: the band as it came
+    return next(sorted) // outside the try: a failure of the band beneath is not ours to hide
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     // every read first, so the band is subscribed to all of them even when it draws nothing
     const s = await read($, snap)
@@ -1109,6 +1364,7 @@ export const register: Register = (on, options) => {
     const data = await read($, info)
     const isOpen = await read($, isDetails)
     const rawLevel = await read($, afterLevel)
+    const bg = await read($, bgView)
 
     isWorking = e.props.isWorking // /clear in the middle of a turn is dangerous: no New worker then, and no waiting one either
     if (s === null || e.props.hasSurvey || s.id === hidden) return next(e)
@@ -1205,6 +1461,25 @@ export const register: Register = (on, options) => {
     const toggle = () => guarded($, 'band', async () => (await update($, isDetails, () => !isOpen), await $.store.set('details', !isOpen)))
     const waitText = wait === null ? '' : T.waitingAt(when(new Date(wait).toISOString(), s.now))
     const cancelWait = () => guarded($, 'band', async () => (await Promise.all([$.store.delete(`delayed:${s.id}`), $.store.delete(`delayed:${await $.session.id()}`)]), await update($, delayedAt, () => null)))
+    // the run of this chat, a line of its own above the band row
+    const bgLine = (() => {
+      if (bg === null) return null
+      const r = bgRow(bg.run, bg.last, s.now)
+      const remove = () => guarded($, 'band', async () => {
+        const key = `bg:${await $.session.id()}`
+        const cur = (await $.store.get(key)) as BgRun | undefined
+        if (cur) await bgDone($, key, cur) // also drops the finish wait that holds the result
+        await update($, bgView, () => null)
+        await watchBg($)
+      }) // a watch in flight may hold the removed row: it passes again
+      return (
+        <Box gap={1}>
+          <Text color={r.tone} wrap="truncate-end">{r.text}</Text>
+          <Box flexGrow={1} />
+          <Button key="bg-remove" label="×" onPress={remove} />
+        </Box>
+      )
+    })()
     const actions = (wrap: boolean, hasDetails = true) => (
       <Box gap={1} flexWrap={wrap ? 'wrap' : undefined}>
         {wait !== null && <Text color="warning">{waitText}</Text>}
@@ -1228,6 +1503,7 @@ export const register: Register = (on, options) => {
       return (
         <Box flexDirection="column">
           {rule}
+          {bgLine}
           <Box gap={1}>
             <Text bold>{rowTitle}</Text>
             {tokens.map(t => (
@@ -1258,6 +1534,7 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column">
         {rule}
+        {bgLine}
         <Box borderStyle="round" borderDimColor flexDirection="column" paddingX={1}>
           {title}
           {body}

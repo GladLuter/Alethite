@@ -20,7 +20,7 @@ from compress import LEVELS, compress
 from transcripts import find_session, last_usage, project_key, project_keys
 
 
-INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings', 'agent-age', 'review-hint', 'settings-fill')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
+INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings', 'agent-age', 'review-hint', 'settings-fill', 'bg-start', 'bg-alive', 'maintain-detached')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
 SHORT = (*INDEX_FREE, 'lessons-match')  # the runs that do not merge, nor open the index again to keep forgets (lessons-match reads it and writes no forget)
 
 
@@ -178,18 +178,26 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
     is set). Each step under the lock a chat takes for it, so a chat and the job never do one thing twice at a time; a step that fails
     does not stop the next. The result is kept in meta.job_last for /al-health. The short memory waits for a chat: only a chat knows its
     project's auto-memory folder."""
-    import cleanup, job, sync
+    import job, sync
     battery, digest = battery or job.on_battery, digest or sync.ollama_digest
     try:
         conn = memdb.connect(a.db)  # first: it also makes the folder the lock files lie in
     except ValueError as e:  # an encrypted index and no key that opens it: nowhere to keep the run, /al-health tells the same from `status`
         return {'errors': [{'where': 'index', 'error': '%s: %s' % (type(e).__name__, e)}]}
     try:
-        lock = memdb.lock(a.db, 'maintain', 0)  # noqa: F841 (held until the return)
+        lock = memdb.lock(a.db, 'maintain', 0)  # held until the return
     except sqlite3.OperationalError as e:
         if 'locked' not in str(e):
             raise
         return {'busy': True}
+    try:
+        return _maintain_steps(a, conn, embed_fn, battery, digest)
+    finally:
+        lock.close()  # not left to the garbage collector: a reference cycle would keep the lock past the return
+
+
+def _maintain_steps(a, conn, embed_fn, battery, digest):
+    import cleanup, sync
     s, broken = _settings(a.settings or crypto.settings_path(a.db))
     if isinstance(s.get('language'), str) and s['language'] in texts.TABLES:
         texts.lang = s['language']
@@ -323,7 +331,8 @@ def _settings_fill(a):
 
 def _handoff(a):
     from handoff import build_handoff
-    text = build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress, _cleanup_on(a))
+    from redact import redact
+    text = redact(build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress, _cleanup_on(a), a.note))
     folder = os.path.join(os.path.dirname(a.db), 'handoffs')  # next to the index: ~/.claude/alethite/handoffs by default
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, a.session + '.md')
@@ -449,6 +458,24 @@ def _stats(a):
             'errors': errors}
 
 
+def _bg_start(a):
+    import bg
+    return bg.start(os.path.dirname(a.db), a.session, a.name, a.command, a.cwd, a.status_file, a.if_cold)
+
+
+def _maintain_detached(a):
+    import bg
+    if not _cleanup_on(a):
+        return {'started': False}
+    bg.spawn_detached([sys.executable, os.path.abspath(__file__), 'maintain'])  # maintain's own lock (wait 0) turns away a second run
+    return {'started': True}
+
+
+def _bg_alive(a):
+    import bg
+    return {'alive': bg.alive(a.dir)}
+
+
 def _parser():
     p = _Parser(prog='cg.py')
     p.add_argument('--db')  # the index file; without it `main` asks indexdir.resolve (the home settings), with it they are not read at all
@@ -492,6 +519,7 @@ def _parser():
     s.add_argument('--today', required=True)
     s.add_argument('--memory-dir')
     s.add_argument('--compress', choices=LEVELS, default='off')
+    s.add_argument('--note')  # a background run goes on in this chat: its own section at the end
     s = add('savings', _savings)
     s.add_argument('--session', required=True)
     s.add_argument('--cwd', required=True)
@@ -546,6 +574,12 @@ def _parser():
     s.add_argument('--minutes', type=int, default=None)  # job.MINUTES
     add('cleanup', _cleanup).add_argument('action', choices=('on', 'off', 'status'))
     add('settings-fill', _settings_fill).add_argument('--values', required=True)  # JSON object
+    s = add('bg-start', _bg_start)
+    for flag in ('session', 'name', 'cwd', 'if-cold', 'command'):
+        s.add_argument('--' + flag, required=True)
+    s.add_argument('--status-file')
+    add('bg-alive', _bg_alive).add_argument('--dir', required=True)
+    add('maintain-detached', _maintain_detached)
     s = add('forget', _forget)
     s.add_argument('--conv', required=True)
     s.add_argument('--pos', type=int, required=True)

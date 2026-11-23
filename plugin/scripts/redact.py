@@ -4,8 +4,9 @@ H = '[скрыто]'
 # shortcut: `pass` counts only when no letter precedes it (DB_PASS, pass; bypass and compass stay), so dbPass is missed; add a case-sensitive camelCase branch if it shows up.
 # After a word and a space it is mostly the verb ("tests pass: all green"): there it counts only before a value with a digit or a sign
 # ("admin pass: hunter22"), so a password of letters alone written that way is missed.
-_NAME = (r'(?:password|passwd|pwd|(?<![a-z])(?:(?<![^\W\d_][ \t])pass'
-         r'|pass(?=["\']?[ \t]*[:=][ \t]*["\']?[^\s"\',;]*?(?![^\W\d_])[^\s"\',;]))|secret|token|passphrase|пароль'
+# Group `d` marks the names after which even a value of only digits is a password (a bare `pass: 12` is a test count, `token: "4096"` a size).
+_NAME = (r'(?:(?P<d>password|passwd|pwd|пароль|(?<=_)pass)|(?<![a-z])(?:(?<![^\W\d_][ \t])pass'
+         r'|pass(?=["\']?[ \t]*[:=][ \t]*["\']?[^\s"\',;]*?(?![^\W\d_])[^\s"\',;]))|secret|token|passphrase'
          r'|(?:api|access|secret|private|encryption|signing|session)[_-]?key\w*)')
 # a value after an opening quote runs to the closing quote, else to a separator
 _ANY = r'(?:(?<=["\'])[^"\'\n]+|[^\s"\',;]+)'
@@ -31,10 +32,10 @@ _RULES = [(re.compile(p), r) for p, r in [
     (r'(?i)\bCG1(?:[- ]?[A-Z2-7]{4}){14}\b', H),
     (r'(?i)(\bAuthorization["\']?[ \t]*[:=][ \t]*["\']?(?:\w+[ \t]+)?|\bBearer[ \t]+)[^\s"\',;]{16,}', r'\1' + H),
     (r'(?i)(\bAuthorization["\']?[ \t]*[:=][ \t]*["\']?Basic[ \t]+)[A-Za-z0-9+/=]{8,}', r'\1' + H),  # user:password in base64, short too
-    # value: after an opening quote it runs to the closing quote, else to a separator; a value of only digits stays.
+    # value: after an opening quote it runs to the closing quote, else to a separator; a value of only digits stays, except after the names of group `d`.
     # Quotes may come escaped (JSON inside a command: \"password\":\"x\"), and then the value ends before the backslash.
     (r'(?i)(' + _NAME + r'\\*["\']?[ \t]*[:=][ \t]*\\*["\']?)'
-     r'(?:(?<=["\'])(?!\d+(?![^"\'\n]))(?:[^"\'\n\\]|\\(?!["\']))+|(?!\d+(?![^\s"\',;]))(?:[^\s"\',;\\]|\\(?!["\']))+)', r'\1' + H),
+     r'(?:(?<=["\'])(?(d)|(?!\d+(?![^"\'\n])))(?:[^"\'\n\\]|\\(?!["\']))+|(?(d)|(?!\d+(?![^\s"\',;])))(?:[^\s"\',;\\]|\\(?!["\']))+)', r'\1' + H),
     # `--token <value>` (PowerShell: `-Password <value>`): a flag or a word of prose after it means there is no value; here digits
     # are hidden too. The lookbehind keeps a long run of dashes linear.
     (r'(?i)((?<![\w-])--?[\w-]*' + _NAME + r'[ \t]+(?!-|' + _PROSE + r')["\']?)' + _ANY, r'\1' + H),
@@ -45,6 +46,14 @@ _RULES = [(re.compile(p), r) for p, r in [
     # other commands that take a password as an argument: the search stops at the next such command, as for mysql
     (r'(?i)(\bcurl\b(?:(?!\bcurl\b)[^\n|;&])*?\s(?:-u|--user)[ =]+[^\s:]+:)\S+', r'\1' + H),
     (r'(?i)(\b(?:sshpass|docker\s+login)\b(?:(?!\b(?:sshpass|docker\s+login)\b)[^\n|;&])*?\s-p\s*)\S+', r'\1' + H),
+    # sqlcmd: -P is the password, -p is not (and ssh -P, mysql -P are ports: the rule fires after sqlcmd only)
+    (r'(\b(?i:sqlcmd)\b(?:(?!\b(?i:sqlcmd)\b)[^\n|;&])*?\s-P\s*)\S+', r'\1' + H),
+    (r'(?i)(\bConvertTo-SecureString[ \t]+(?:-String[ \t]+)?(["\']))(?:(?!\2)[^\n])*', r'\1' + H),
+    (r'(\b(?i:smbclient)\b(?:(?!\b(?i:smbclient)\b)[^\n|;&])*?\s-U[ \t]*[^\s%]+%)\S+', r'\1' + H),
+    (r'(\b(?i:redis-cli)\b(?:(?!\b(?i:redis-cli)\b)[^\n|;&])*?\s-a[ \t]+)\S+', r'\1' + H),
+    (r'(\b(?i:az[ \t]+login)\b(?:(?!\b(?i:az[ \t]+login)\b)[^\n|;&])*?\s-p[ \t]+)\S+', r'\1' + H),
+    # htpasswd -b: the password is the last of <file> <user> <password>; with -n there is no file
+    (r'(\b(?i:htpasswd)[ \t]+-(?=[A-Za-z]*b)(?=([A-Za-z]*n)?)[A-Za-z]+[ \t]+(?(2)|\S+[ \t]+)\S+[ \t]+)\S+', r'\1' + H),
     (r'(?i)(\bnet\s+use\s+(?:\S+\s+)?\\\\\S+\s+)(?!/)\S+', r'\1' + H),
 ]]
 

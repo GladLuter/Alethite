@@ -5,6 +5,7 @@ import io
 import json
 import os
 import secrets
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -196,6 +197,16 @@ class CgTest(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn('..', out['error'])
         self.assertFalse(os.path.exists(os.path.join(self.tmp, 'x.md')))
+
+    def test_the_handoff_has_no_password_in_the_answer_or_the_file(self):
+        self.write('P/S1.jsonl', [owner_line('деплой с password=hunter22'), claude_line('ок')])
+        code, out = self.run_cg('handoff', '--session', 'S1', '--today', '2026-10-19')
+        with open(out['path'], encoding='utf-8') as f:
+            saved = f.read()
+        self.assertEqual(code, 0)
+        for text in (out['text'], saved):
+            self.assertNotIn('hunter22', text)
+            self.assertTrue(text.startswith('[al-handoff]') and text.rstrip().endswith('[/al-handoff]'))
 
     def test_last_turn_unknown_session(self):
         self.assertEqual(self.run_cg('last-turn', '--session', 'nope'), (0, {'tokens': None, 'at': None, 'model': None}))
@@ -1619,6 +1630,48 @@ class DialogsTest(unittest.TestCase):
                 mock.patch.object(sys, 'executable', 'C:\\Py\\Pythonw.exe'):
             dialogs.WindowsUI().ask_code()
         self.assertEqual(run.call_args[0][0][0], 'C:\\Py\\python.exe')
+
+
+class BgCommandsTest(unittest.TestCase):
+    def test_bg_start_and_alive(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        db = os.path.join(tmp, 'index.db')
+        out = io.TextIOWrapper(io.BytesIO(), encoding='utf-8')
+
+        def call(*args):
+            out.buffer.seek(0)
+            out.buffer.truncate()
+            with mock.patch.object(sys, 'stdout', out):
+                code = cg.main(['--db', db, *args])
+            out.flush()
+            return code, json.loads(out.buffer.getvalue().decode('utf-8'))
+
+        code, r = call('bg-start', '--session', 's', '--name', 'n', '--cwd', tmp, '--if-cold', 'show', '--command', 'echo ok')
+        self.assertEqual((code, sorted(r)), (0, ['dir', 'log', 'pid']))
+        self.assertEqual(os.path.dirname(os.path.dirname(r['dir'])), tmp)
+        end = time.monotonic() + 15
+        while not os.path.exists(os.path.join(r['dir'], 'exit.json')) and time.monotonic() < end:
+            time.sleep(0.1)
+        while call('bg-alive', '--dir', r['dir'])[1]['alive'] and time.monotonic() < end:  # the lock goes when the wrapper process exits
+            time.sleep(0.05)
+        self.assertEqual(call('bg-alive', '--dir', r['dir']), (0, {'alive': False}))
+
+    def test_maintain_detached(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        db = os.path.join(tmp, 'index.db')
+        out = io.TextIOWrapper(io.BytesIO(), encoding='utf-8')
+        for on, want in ((False, {'started': False}), (True, {'started': True})):
+            crypto.set_fields(crypto.settings_path(db), {'deleteOldChats': True if on else None})
+            out.buffer.seek(0)
+            out.buffer.truncate()
+            with mock.patch('bg.spawn_detached', return_value=1) as spawn, mock.patch.object(sys, 'stdout', out):
+                code = cg.main(['--db', db, 'maintain-detached'])
+            out.flush()
+            self.assertEqual((code, json.loads(out.buffer.getvalue().decode('utf-8'))), (0, want))
+            self.assertEqual([c[0][0] for c in spawn.call_args_list],
+                             [[sys.executable, os.path.abspath(cg.__file__), 'maintain']] if on else [])
 
 
 if __name__ == '__main__':

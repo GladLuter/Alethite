@@ -12,6 +12,7 @@ A free, MIT-licensed plugin for the Claude Code desktop app on Windows.
 ![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-d97757?style=flat-square)
 ![Windows](https://img.shields.io/badge/Windows-0078d4?style=flat-square)
 ![Languages](https://img.shields.io/badge/EN%20%C2%B7%20RU%20%C2%B7%20UK-3fb68b?style=flat-square)
+[![XERJ Corpus Hub](https://hub.xerj.org/contributors/GladLuter/badge.svg)](https://hub.xerj.org/contributors/GladLuter)
 
 **English** · [Русский](README.ru.md) · [Українська](README.uk.md)
 
@@ -30,11 +31,11 @@ I audited my own Claude Code transcripts (May to October 2026, at API prices) to
 
 The money goes on coming back to a big idle chat. Alethite shows you the price before you pay it, and keeps a memory of your past chats so a fresh one starts informed.
 
-After four weeks with Alethite (October 19 to November 15, same computer, API prices) each message I sent cost about half as much, subagents included. The first message after a long pause went from 32% of all spend to 3%. This is a before-and-after count on one person's work, not a controlled test.
+After five weeks with Alethite (October 19 to November 23, same computer, API prices) each message I sent cost about half as much, subagents included. The first message after a long pause went from 32% of all spend to 3%. This is a before-and-after count on one person's work, not a controlled test.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="assets/before-after-dark.svg"><img src="assets/before-after-light.svg" alt="Before and after four weeks with Alethite: one message costs 54% less, the first message after a long pause falls from 32% to 3% of all spend, and cache rewrites from 41% to 4%." width="880"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="assets/before-after-dark.svg"><img src="assets/before-after-light.svg" alt="Before and after five weeks with Alethite: one message costs 56% less, the first message after a long pause falls from 32% to 3% of all spend, and cache rewrites from 41% to 4%. A lean agent starts about 4 times smaller. From November 16 to 23 subagents took 34% of all spend, 38% with general-purpose starts. Subagent spend was 16% lower." width="880"></picture>
 
-The same count showed where the money goes now. Subagents grew to 44% of all spend, and nearly half of their cost is the start every agent pays before it does any work. A general-purpose agent starts with about 64k tokens of tool descriptions, skill lists and instructions. Alethite now ships lean agent types that start with 5-16k.
+The same count showed where the money goes now. From October 19 to November 15 subagents grew to 44% of all spend, and nearly half of their cost is the start every agent pays before it does any work. A general-purpose agent starts with about 64k tokens of tool descriptions, skill lists and instructions. Alethite now ships lean agent types that start with 5-16k (a median of 17k at work, with the task). From November 16 to 23 subagents took 34% of spend, 38% with general-purpose starts. 214 of 231 starts were lean, and subagent spend was 16% lower.
 
 ---
 
@@ -44,6 +45,7 @@ The same count showed where the money goes now. Subagents grew to 44% of all spe
 |---|---|---|
 | 🛡️ **Cache guard** | The status line shows the context size and the minutes left in the cache. One row above the prompt is always there: chat size, cache, the price of a send here and how much the handoffs and the lean agents saved. The Details button opens it into columns. | `/al-band` |
 | 🆕 **New worker** | A button that starts a clean chat with a handoff of the old one (no model calls) and the message you already typed. The After reset button does the same once a limit resets. It shows up after you press New worker. It needs the reset time that Claude Code reports with every reply. The plugin keeps the last one, so the button is there in a new chat and after a restart too, until that time passes. When there is more than one time to pick (the 5-hour reset and the reset of each limit at 90% or more), it asks for the time first. Then it asks for the model: the current one, opus or sonnet. If the third-party plugin [ponytail](https://github.com/DietrichGebert/ponytail) is installed, the main chat is told once, when the chat has 5 unreviewed code edits, and asks you before the handoff whether to run `/ponytail-review`. The band shows nothing of it. | buttons in the band |
+| ⏳ **Background runs** | For a run longer than 10 minutes the agent calls `background_run`. A row above the box shows the run's name, how long it has gone and the last line of its status file. Waiting costs no tokens, the mod only reads files. When the run ends, the agent gets the result as your message and goes on. If the cache has gone cold, you chose beforehand: only show the result, or start a New worker. Windows only. | tool `background_run` |
 | 📝 **Short memory** | One short rule for Claude: write decisions down at once, save an understood error as a lesson, check memory before proposing. A toast shows each saved fact. | |
 | 🔎 **Long memory** | Every past conversation of every project, subagents included, in a local SQLite index with vectors from a local Ollama model. Claude searches it with `recall`, by words and by meaning. Secrets are hidden before indexing. Nothing that got into the index is ever lost, and tool errors are indexed too. | `/al-index` |
 | 🎓 **Lessons** | An understood error is saved as a lesson and comes back only where it fits. A command that holds a lesson's trigger is stopped once with it, and at most 2 lessons come per message. No fitting lesson, zero tokens. A lesson can also be for all projects (`scope: all`). That kind is the exception: it comes as a short reminder every ~20k tokens of chat and costs those tokens in every project. The reminder holds at most 1000 characters, newest first, and older rules that do not fit stay out of the reminder. They stay in `/al-lessons`, and their triggers still stop commands. | `/al-lessons` |

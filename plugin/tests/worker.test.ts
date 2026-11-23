@@ -143,3 +143,32 @@ test('a /model that throws keeps its reason in the toast', async () => {
   expect(await launch(f.io, 'send', 'sonnet')).toBe('failed')
   expect(f.toasts[0]).toContain('busy')
 })
+
+test('message: an empty draft is no refusal, the draft is never read, the text is handoff + message', async () => {
+  const { io, calls, sent } = fake({ draft: '  ' })
+  expect(await launch(io, 'send', undefined, 'процесс закончился')).toBe('sent')
+  expect(calls).toEqual(['handoff', 'clear', 'submit'])
+  expect(sent[0]!.endsWith('\n\nпроцесс закончился')).toBe(true)
+  expect(sent[0]!.startsWith('[al-handoff]')).toBe(true)
+})
+
+test('message: a failed submit after /clear never fills the box, the toast names the file', async () => {
+  const { io, calls, toasts } = fake({ submitError: 'offline' })
+  expect(await launch(io, 'send', undefined, 'm')).toBe('failed')
+  expect(calls).not.toContain('fill')
+  expect(toasts.join()).toContain('C:/h/old.md')
+})
+
+test('message in fill mode: the box is never filled either, the toast names the file', async () => {
+  const { io, calls, toasts } = fake()
+  expect(await launch(io, 'fill', undefined, 'm')).toBe('failed')
+  expect(calls).not.toContain('fill')
+  expect(toasts.join()).toContain('C:/h/old.md')
+})
+
+test('message: a dropped submit keeps the box as it is', async () => {
+  const { io, calls, toasts } = fake({ drop: 'policy' })
+  expect(await launch(io, 'send', undefined, 'm')).toBe('dropped')
+  expect(calls).not.toContain('fill')
+  expect(toasts[0]).toContain('C:/h/old.md')
+})

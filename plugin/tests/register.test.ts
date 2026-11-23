@@ -4,6 +4,9 @@ import { ru } from '../hooks/lang/ru'
 import { uk } from '../hooks/lang/uk'
 import { notePath, summaryPath } from '../hooks/notes'
 import { when } from '../hooks/band'
+import { END, START } from '../hooks/lessons'
+import { bgRow } from '../hooks/bg'
+import type { BgRun } from '../types'
 import { price } from '../hooks/guard'
 import { T } from '../hooks/text'
 
@@ -34,7 +37,7 @@ const wire = (on: any, statuses: (string | undefined)[], answerUsage: () => unkn
   on('session.version', () => ({ value: { version: '2.1.295' } }))
   on('process.run', answerRun)
   on('ui.status', (_: unknown, e: { text?: string }) => (statuses.push(e.text), { value: undefined }))
-  on('ui.render', () => ({ type: 'Text', children: ['no band'] }))
+  on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'Text', children: ['no band'] }))
   on('turn.complete', () => ({ text: '' }))
   return clock
 }
@@ -141,11 +144,11 @@ test('/al-health: a project that matches no conversation is said so', async ($, 
 
 // The engine beneath a launch: the prompt box (`refuse` makes a fill fail), /clear, and the first message. `gate` holds the submit until released.
 const box = (on: any, draft: string, log: string[], gate: Promise<unknown> = Promise.resolve()) => {
-  const state = { text: draft, refuse: undefined as string | undefined, broken: false }
+  const state = { text: draft, refuse: undefined as string | undefined, broken: false, drop: undefined as string | undefined, nextId: undefined as string | undefined, clearFail: false, contexts: [] as string[][], asUser: [] as unknown[] }
   on('prompt.read', () => (state.broken ? { deny: 'boom' } : { value: { text: state.text, cursor: 0 } }))
   on('prompt.fill', (_: unknown, e: { text: string }) => (state.refuse ? { isFilled: false, refusal: state.refuse } : ((state.text = e.text), { isFilled: true })))
-  on('prompt.submit', async (_: unknown, e: { text: string }) => (log.push(`submit ${e.text}`), await gate, { text: e.text }))
-  on('command.run', (_: unknown, e: { command: string; args: string }) => (log.push(`/${e.command} ${e.args}`.trim()), e.command === 'model' && chat.switches && (chat.model = `claude-${e.args}-5-5`), { text: '' }))
+  on('prompt.submit', async (_: unknown, e: { text: string; origin?: { asUser?: boolean }; context?: readonly string[] }) => (log.push(`submit ${e.text}`), state.contexts.push([...(e.context ?? [])]), state.asUser.push(e.origin?.asUser), await gate, state.drop === undefined ? { text: e.text } : { drop: state.drop }))
+  on('command.run', (_: unknown, e: { command: string; args: string }) => (log.push(`/${e.command} ${e.args}`.trim()), e.command === 'clear' && state.clearFail ? (() => { throw new Error('no clear') })() : (e.command === 'clear' && state.nextId && (ids.now = state.nextId), e.command === 'model' && chat.switches && (chat.model = `claude-${e.args}-5-5`), { text: '' })))
   return state
 }
 const withMemory = { value: { ...usage, context: { ...usage.context, breakdown: { memoryFiles: [{ path: 'C:/mem/memory/MEMORY.md', type: 'AutoMem', tokens: 1 }] } } } }
@@ -157,14 +160,14 @@ const mountBand = async ($: any) => {
 
 type Drawn = { type: string; props?: Record<string, unknown>; children: Drawn[] }
 
-const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text)
+const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: { text: string }) => t.text).filter((t: string) => t !== 'no band') // the stand-in for another mod's band is not ours
 const UI = { plugin: 'alethite', surface: 'terminal', component: 'AbovePrompt', props } as never
 
 test('the band is always one row: the title first, no frame', async ($, on) => {
   wire(on, [], () => ({ value: usage }))
   const ui = await mountBand($)
   const band = (await ui.drawn()) as unknown as Drawn
-  expect(band.children[0]!.props?.borderStyle).toBeUndefined()
+  expect(band.children[1]!.props?.borderStyle).toBeUndefined()
   expect(await buttons(ui)).toEqual(['launch', 'details'])
   expect((await texts(ui))[0]).toBe(T.bandTitle)
 })
@@ -186,14 +189,14 @@ test('Details opens the columns in a frame, remembers it, and the next press bri
   wire(on, [], () => ({ value: usage }), undefined, store)
   const ui = await mountBand($)
   await ui.press({ key: 'details' })
-  const frame = ((await ui.drawn()) as unknown as Drawn).children[0]!.children[0]! // the engine wraps the part of the mod: [part: [frame, the engine's slot for what is beneath]]
+  const frame = ((await ui.drawn()) as unknown as Drawn).children[1]!.children[0]! // the engine wraps the part of the mod: [part: [frame, the engine's slot for what is beneath]]
   expect(frame).toMatchObject({ type: 'Box', props: { borderStyle: 'round' } })
   expect(frame.children[0]).toMatchObject({ type: 'Text', props: { bold: true }, children: [T.bandTitle] })
   expect(await texts(ui)).toContain(T.col.chat)
   expect(store.get('details')).toBe(true)
   await ui.press({ key: 'details' })
   expect(store.get('details')).toBe(false)
-  expect(((await ui.drawn()) as unknown as Drawn).children[0]!.children[0]!.props?.borderStyle).toBeUndefined()
+  expect(((await ui.drawn()) as unknown as Drawn).children[1]!.children[0]!.props?.borderStyle).toBeUndefined()
 })
 
 test('Details stays open after a restart of the mod', async ($, on) => {
@@ -213,7 +216,7 @@ test('desktop Details draws the columns as Text, with the rule Svg first; the te
   const term = await mountBand($)
   expect(await term.findAll({ type: 'Svg' })).toHaveLength(0)
   const ui = await $.ui.mount({ plugin: 'alethite', surface: 'desktop', component: 'AbovePrompt', props } as never)
-  expect(((await ui.drawn()) as unknown as Drawn).children[0]!.children[0]).toMatchObject({ type: 'Svg' })
+  expect(((await ui.drawn()) as unknown as Drawn).children[1]!.children[0]).toMatchObject({ type: 'Svg' })
   await ui.press({ key: 'details' })
   expect(await ui.findAll({ type: 'Svg' })).toHaveLength(1)
   expect(await texts(ui)).toContain(T.col.chat)
@@ -228,11 +231,12 @@ test('/al-band off hides the band in this chat, /al-band brings it back', async 
   expect(await buttons(ui)).toEqual(['launch', 'details'])
 })
 
-test("another mod's band beneath ours is not covered: it stays, under our frame", async ($, on) => {
+test("another mod's band is not covered: it stays, and ours goes last, right above the prompt", async ($, on) => {
   wire(on, [], () => ({ value: usage })) // what is drawn beneath the plugin under test: the text 'no band', standing for another mod's band
   const band = (await (await mountBand($)).drawn()) as unknown as Drawn
   expect(band.children).toHaveLength(2)
-  expect(band.children[1]).toMatchObject({ type: 'Text', children: ['no band'] })
+  expect(band.children[0]).toMatchObject({ type: 'Text', children: ['no band'] })
+  expect(JSON.stringify(band.children[1])).toContain(T.bandTitle) // the second child is the part of Alethite
 })
 
 test('new worker: the first press arms the band: two ways to go, cancel and the @files hint; cancel disarms', async ($, on) => {
@@ -374,6 +378,7 @@ test('memory tools: all in the prompt, not behind ToolSearch', async ($, on) => 
     ['recall', false, T.recallDescription],
     ['recall_more', false, T.recallMoreDescription],
     ['lesson_save', false, T.lessonSaveDescription],
+    ['background_run', false, T.bgDescription],
   ])
   // stage 4: how to search for an error is told by the parameters, the description stays short
   expect(m.specs[0].inputSchema.properties.query.description).toBe(T.recallQuery)
@@ -561,7 +566,7 @@ test('session.start: a refused registration leaves the status line, the timers a
   expect(statuses.at(-1)!.startsWith(T.statusError(''))).toBe(true) // ...and the refusal is the last word
   expect(statuses.at(-1)).toContain('schema refused')
   expect(store.get('lastError')).toMatchObject({ where: 'register', msg: expect.stringContaining('schema refused') })
-  expect(names).toEqual({ commands: ['al-band', 'al-health', 'al-index', 'al-stats', 'al-sync', 'al-lessons', 'al-job', 'al-encrypt', 'al-index-dir', 'al-cleanup'], tools: ['recall', 'recall_more', 'lesson_save'] }) // every tool was tried, the commands went through
+  expect(names).toEqual({ commands: ['al-band', 'al-health', 'al-index', 'al-stats', 'al-sync', 'al-lessons', 'al-job', 'al-encrypt', 'al-index-dir', 'al-cleanup'], tools: ['recall', 'recall_more', 'lesson_save', 'background_run'] }) // every tool was tried, the commands went through
   await clock.advance(30_000) // the timers run
   expect(statuses.at(-1)).toMatch(/^ctx /)
 })
@@ -844,7 +849,7 @@ test('language ru: the mod speaks Russian to the owner and to the model, and so 
   await m.clock.advance(3_000)
   for (const lang of m.langs) expect(lang).toEqual(['--lang', 'ru'])
   expect((await ($ as any).command.run({ command: 'al-band', args: '' })).text).toBe(ru.cgBandOn)
-  expect(m.specs.map(s => s.description)).toEqual([ru.recallDescription, ru.recallMoreDescription, ru.lessonSaveDescription])
+  expect(m.specs.map(s => s.description)).toEqual([ru.recallDescription, ru.recallMoreDescription, ru.lessonSaveDescription, ru.bgDescription])
   expect((await ($ as any).prompt.compose(facts)).sections).toEqual([{ id: 'alethite:lean-agents', text: ru.leanRule, scope: 'session' }, { id: 'alethite:memory-rule', text: ru.memoryRule, scope: 'session' }])
 })
 
@@ -860,7 +865,7 @@ test('language uk: Ukrainian to the owner and to the model, and to cg.py', { opt
   await m.clock.advance(3_000)
   for (const lang of m.langs) expect(lang).toEqual(['--lang', 'uk'])
   expect((await ($ as any).command.run({ command: 'al-band', args: '' })).text).toBe(uk.cgBandOn)
-  expect(m.specs.map(s => s.description)).toEqual([uk.recallDescription, uk.recallMoreDescription, uk.lessonSaveDescription])
+  expect(m.specs.map(s => s.description)).toEqual([uk.recallDescription, uk.recallMoreDescription, uk.lessonSaveDescription, uk.bgDescription])
 })
 
 test('a language the mod does not know is English', { options: { language: 'xx' } }, async ($, on) => {
@@ -2865,4 +2870,599 @@ test('the cache clock is the start of the last request of the turn, not its end'
   await m.clock.advance(5_000)
   await ($ as any).turn.complete(turn)
   expect(m.store.get('turn:id')).toMatchObject({ at: 10_000_000_000 })
+})
+
+// the band's rows come in the order the plugins loaded: our row goes last, right above the prompt
+const bandRow = (plugin: string) => ({ plugin, tree: { type: 'Text', children: [plugin] } })
+const bandRows = async ($: any, on: any, rows: unknown[]) => {
+  let got: any
+  on('ui.render', { component: 'AbovePromptList' }, (_: unknown, e: any) => ((got = e), { type: 'Text', children: ['x'] }))
+  await $.ui.mount({ plugin: 'alethite', surface: 'terminal', component: 'AbovePromptList', props: { ...props, rows } } as never)
+  return got
+}
+
+test('the Alethite row moves to the end of the band', async ($, on) => {
+  const [a, p, o] = [bandRow('alethite'), bandRow('ponytail'), bandRow('other')]
+  const got = await bandRows($, on, [a, p, o])
+  expect(got.props.rows).toEqual([p, o, a])
+  expect(got.props.maxRows).toBe(10)
+})
+
+test('the band keeps its order when our row is already last', async ($, on) => {
+  const [a, p] = [bandRow('alethite'), bandRow('ponytail')]
+  expect((await bandRows($, on, [p, a])).props.rows).toEqual([p, a])
+})
+
+test('the band keeps its order when we have no row', async ($, on) => {
+  const [p, o] = [bandRow('ponytail'), bandRow('other')]
+  expect((await bandRows($, on, [p, o])).props.rows).toEqual([p, o])
+})
+
+// background runs: the tool, the token-free watch, the band row
+const BG_DIR = 'C:/bg/r1'
+const BG_STATUS = 'C:/w/status.txt'
+const bgRun = (over: object = {}) => ({ dir: BG_DIR, name: 'train', pid: 7, started: NOW - 5 * 60_000, log: `${BG_DIR}/log.txt`, statusFile: BG_STATUS, ifCold: 'show', ...over })
+const bgCall = ($: any, over: object = {}) => $.tool.call({ tool: 'mcp__alethite__background_run', name: 'train', command: 'python train.py', if_cold: 'show', ...over })
+const bgVerbs = (m: { runs: { argv: string[] }[] }) => m.runs.filter(r => verb(r.argv)[0]!.startsWith('bg-'))
+const norm = (p: string) => p.replace(/\\/g, '/') // the engine may hand paths back with backslashes
+const runRig = async ($: any, on: any, store = new Map<string, unknown>(), files: Record<string, string> = {}, answerUsage: () => unknown = () => ({ value: usage }), init: object = {}) => {
+  const fs = { files, readError: undefined as string | undefined, alive: true, startError: undefined as string | undefined, handoffError: undefined as string | undefined, maintainError: undefined as string | undefined, onAlive: undefined as (() => void) | undefined, onHandoff: undefined as (() => unknown) | undefined, gate: undefined as Promise<void> | undefined, ...init }
+  on('fs.exists', (_: unknown, e: { path: string }) => ({ value: norm(e.path) in fs.files }))
+  on('fs.read', async (_: unknown, e: { path: string }) => (await fs.gate, fs.readError ? { deny: fs.readError } : norm(e.path) in fs.files ? { value: fs.files[norm(e.path)] } : { deny: 'ENOENT' }))
+  const answer = (a: string[]) => (a[0] === 'maintain-detached' && fs.maintainError ? failed(fs.maintainError) : a[0] === 'bg-alive' ? (fs.onAlive?.(), ran(JSON.stringify({ alive: fs.alive }))) : a[0] === 'bg-start' ? (fs.startError ? failed(fs.startError) : ran(JSON.stringify({ dir: BG_DIR, pid: 7, log: `${BG_DIR}/log.txt` }))) : a[0] === 'handoff' ? Promise.resolve(fs.onHandoff?.()).then(() => (fs.handoffError ? failed(fs.handoffError) : ran(JSON.stringify({ text: 'h', path: 'C:/h/id.md' })))) : a[0] === 'index' ? indexed() : a[0] === 'embed' ? embedded() : ran('{}'))
+  const m = await started($, on, answer, [], answerUsage, {}, noTurn, store)
+  return { m, fs, ui: await $.ui.mount(UI) }
+}
+const bgTexts = async (ui: any) => (await texts(ui)).filter((t: string) => t.includes('train') || t.includes('far'))
+
+test('background_run: a subagent is refused, nothing is started', async ($, on) => {
+  const { m } = await runRig($, on)
+  expect(await bgCall($, { agentId: AG })).toEqual({ deny: T.bgSubagent })
+  expect(bgVerbs(m)).toEqual([])
+})
+
+test('background_run: a run that has not ended refuses a second one, with its name', async ($, on) => {
+  const { m } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  expect(await bgCall($, { name: 'other' })).toEqual({ deny: T.bgBusy('train', when(new Date(NOW - 5 * 60_000).toISOString(), NOW)) })
+  expect(bgVerbs(m).filter(r => r.argv[0] === 'bg-start')).toEqual([])
+})
+
+test('background_run: starts through cg.py, keeps the record, tells the model the log', async ($, on) => {
+  const { m, ui } = await runRig($, on)
+  const r = await bgCall($, { status_file: BG_STATUS, cwd: 'C:/x' })
+  expect(r).toEqual({ result: T.bgStarted('train', `${BG_DIR}/log.txt`) })
+  const a = bgVerbs(m)[0]!.argv
+  expect(a[0]).toBe('bg-start')
+  expect(a).toEqual(expect.arrayContaining(['--session=id', '--name=train', '--cwd=C:/x', '--if-cold=show', '--command=python train.py', `--status-file=${BG_STATUS}`]))
+  expect(m.store.get('bg:id')).toEqual({ dir: BG_DIR, name: 'train', pid: 7, started: NOW, log: `${BG_DIR}/log.txt`, statusFile: BG_STATUS, ifCold: 'show' })
+  expect(await bgTexts(ui)).toHaveLength(1) // the row is there at once
+})
+
+test('background_run: a bad input starts nothing', async ($, on) => {
+  const { m } = await runRig($, on)
+  expect(await bgCall($, { if_cold: 'later' })).toEqual({ deny: T.bgBadInput })
+  expect(bgVerbs(m)).toEqual([])
+})
+
+test('background_run: a refusal of cg.py goes to the model, a toast and /al-health', async ($, on) => {
+  const { m, fs } = await runRig($, on)
+  fs.startError = 'no lock'
+  expect(await bgCall($)).toEqual({ deny: 'no lock' })
+  expect(m.toasts).toEqual([T.toast(T.failed('background_run', 'no lock'))])
+  expect(m.store.has('bg:id')).toBe(false)
+})
+
+test('the 30 s tick starts no process; the row shows the last full line of the status file', async ($, on) => {
+  const { m, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]), { [BG_STATUS]: 'a\nepoch 3 loss 0.4\nepo' })
+  const before = bgVerbs(m).length
+  await m.clock.advance(30_000)
+  expect(bgVerbs(m).length).toBe(before)
+  expect(await bgTexts(ui)).toEqual([bgRow(bgRun() as BgRun, 'epoch 3 loss 0.4', NOW + 30_000).text])
+})
+
+test('the row says a dash when there is no status file', async ($, on) => {
+  const { m, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  await m.clock.advance(30_000)
+  expect((await bgTexts(ui))[0]).toContain(' · — · ')
+  expect(m.store.has('lastError')).toBe(false)
+})
+
+test('a status file over 4 MiB: the row says so, no toast in 3 ticks', async ($, on) => {
+  const { m, fs, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]), { [BG_STATUS]: 'x' })
+  fs.readError = 'file is over 4 MiB'
+  await m.clock.advance(3 * 30_000)
+  expect((await bgTexts(ui))[0]).toContain(T.bgTooBig)
+  expect(m.toasts).toEqual([])
+})
+
+test('another read error: a dash in the row, a note for /al-health, no toast', async ($, on) => {
+  const { m, fs, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]), { [BG_STATUS]: 'x' })
+  fs.readError = 'EACCES'
+  await m.clock.advance(3 * 30_000)
+  expect((await bgTexts(ui))[0]).toContain(' · — · ')
+  expect(m.store.get('lastError')).toMatchObject({ where: 'bg' })
+  expect(m.toasts).toEqual([])
+})
+
+test('exit.json appears: the record gets the end with the code from the file', async ($, on) => {
+  const { m, fs, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 3, ended: '2026-11-23T10:00:00Z' })
+  await m.clock.advance(30_000)
+  expect((m.store.get('bg:id') as BgRun).ended).toEqual({ code: 3, at: Date.parse('2026-11-23T10:00:00Z') })
+  expect((await bgTexts(ui))[0]).toContain(T.bgExit(3))
+})
+
+test('the 600 s tick asks bg-alive; dead and no exit.json means lost', async ($, on) => {
+  const { m, fs } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  fs.alive = false
+  await m.clock.advance(600_000)
+  expect(bgVerbs(m).some(r => r.argv[0] === 'bg-alive' && r.argv.includes(`--dir=${BG_DIR}`))).toBe(true)
+  expect((m.store.get('bg:id') as BgRun).ended).toMatchObject({ code: null, lost: true })
+})
+
+test('dead but exit.json is there: the code from the file wins over lost', async ($, on) => {
+  const { m, fs } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  fs.alive = false
+  fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 0, ended: '2026-11-23T10:00:00Z' })
+  await m.clock.advance(600_000)
+  expect((m.store.get('bg:id') as BgRun).ended).toEqual({ code: 0, at: Date.parse('2026-11-23T10:00:00Z') })
+})
+
+test('bg-alive: exit.json appears while it runs, the real code stays', async ($, on) => {
+  const { m, fs } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  fs.alive = false
+  fs.onAlive = () => { fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 5, ended: '2026-11-23T10:00:00Z' }) }
+  await m.clock.advance(600_000)
+  expect((m.store.get('bg:id') as BgRun).ended).toEqual({ code: 5, at: Date.parse('2026-11-23T10:00:00Z') })
+})
+
+test('bg-alive: the record is removed while it runs, it is not recreated', async ($, on) => {
+  const { m, fs } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  fs.alive = false
+  fs.onAlive = () => { m.store.delete('bg:id') }
+  await m.clock.advance(600_000)
+  expect(m.store.has('bg:id')).toBe(false)
+})
+
+test('exit.json that is not valid JSON: the run is lost, not running forever', async ($, on) => {
+  const { m, fs } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  fs.files[`${BG_DIR}/exit.json`] = '{broken'
+  await m.clock.advance(30_000)
+  expect((m.store.get('bg:id') as BgRun).ended).toMatchObject({ code: null, lost: true })
+})
+
+test('overlapping watches: one toast for another chat run', async ($, on) => {
+  const { m, fs } = await runRig($, on, new Map([['bg:other', bgRun({ name: 'far' })]]))
+  fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 0, ended: '2026-11-23T10:00:00Z' })
+  await Promise.all([m.clock.advance(30_000), m.clock.advance(30_000)])
+  expect(m.toasts.filter(t => t.includes('far'))).toHaveLength(1)
+})
+
+test('background_run: quotes, &, Cyrillic and a leading - stay one argv item', async ($, on) => {
+  const { m } = await runRig($, on)
+  const command = `-x "a b" & echo 'привіт' && dir`
+  await bgCall($, { command })
+  expect(bgVerbs(m)[0]!.argv).toContain(`--command=${command}`)
+})
+
+test('[x] removes the record and the row', async ($, on) => {
+  const { m, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  await m.clock.advance(30_000)
+  expect(await buttons(ui)).toContain('bg-remove')
+  await ui.press({ key: 'bg-remove' })
+  expect(m.store.has('bg:id')).toBe(false)
+  expect(await bgTexts(ui)).toEqual([])
+})
+
+test("another chat's run ends: one toast ever, no prompt", async ($, on) => {
+  const log: string[] = []
+  box(on, '', log)
+  const { m, fs } = await runRig($, on, new Map([['bg:other', bgRun({ name: 'far' })]]))
+  fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 0, ended: '2026-11-23T10:00:00Z' })
+  await m.clock.advance(3 * 30_000)
+  expect(m.toasts).toHaveLength(1)
+  expect(m.toasts[0]).toContain('far')
+  expect((m.store.get('bg:other') as { toasted?: true }).toasted).toBe(true)
+  expect(log).toEqual([])
+})
+
+test('a watch asked meanwhile: one toast, one more pass shows the run started meanwhile', async ($, on) => {
+  const { m, fs, ui } = await runRig($, on, new Map([['bg:other', bgRun({ name: 'far' })]]))
+  fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 0, ended: '2026-11-23T10:00:00Z' })
+  let release!: () => void
+  fs.gate = new Promise<void>(r => (release = r))
+  const first = m.clock.advance(30_000) // its watch blocks on the read of exit.json
+  await new Promise(r => (globalThis as any).setTimeout(r, 50))
+  await bgCall($, { name: 'late' }) // asks for a watch while the first is blocked
+  release()
+  await first
+  await new Promise(r => (globalThis as any).setTimeout(r, 50))
+  expect(m.toasts.filter(t => t.includes('far'))).toHaveLength(1)
+  expect((await texts(ui)).filter((t: string) => t.includes('late'))).toHaveLength(1)
+})
+
+test('[x] while a watch is in flight: the removed row does not come back', async ($, on) => {
+  const { m, fs, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]), { [BG_STATUS]: 'x' })
+  await m.clock.advance(30_000)
+  let release!: () => void
+  fs.gate = new Promise<void>(r => (release = r))
+  const tick = m.clock.advance(30_000) // the watch blocks on the status file, holding the row
+  await new Promise(r => (globalThis as any).setTimeout(r, 50))
+  await ui.press({ key: 'bg-remove' })
+  release()
+  await tick
+  await new Promise(r => (globalThis as any).setTimeout(r, 50))
+  expect(await bgTexts(ui)).toEqual([])
+})
+
+test('session.start drops an empty or garbled bg record too', async ($, on) => {
+  const { m } = await runRig($, on, new Map<string, unknown>([['bg:empty', {}], ['bg:bad', { started: 'x' }], ['bg:new', bgRun()]]))
+  expect([...m.store.keys()].filter(k => k.startsWith('bg:'))).toEqual(['bg:new'])
+})
+
+test('session.start drops runs started over 7 days ago', async ($, on) => {
+  const { m } = await runRig($, on, new Map([['bg:old', bgRun({ started: NOW - 8 * 86_400_000 })], ['bg:new', bgRun({ started: NOW - 6 * 86_400_000 })]]))
+  expect([...m.store.keys()].filter(k => k.startsWith('bg:'))).toEqual(['bg:new'])
+})
+
+// background runs: what happens when one ends (task 5)
+const WARM = NOW - 60_000
+const COLD = NOW - 2 * 3_600_000
+const ENDED = { code: 0, at: NOW - 60_000 }
+const finRig = async ($: any, on: any, o: { at?: number | null; run?: object; draft?: string; limit?: () => unknown; gate?: Promise<unknown>; drop?: string; handoffError?: string } = {}) => {
+  const log: string[] = []
+  const state = box(on, o.draft ?? 'мой текст', log, o.gate)
+  state.drop = o.drop
+  const store = new Map<string, unknown>([['bg:id', bgRun({ ended: ENDED, ...o.run })], ['turn:id', { at: o.at === undefined ? WARM : o.at, tokens: 1000 }]])
+  const r = await runRig($, on, store, { [BG_STATUS]: 'a\nepoch 3 done\n' }, o.limit, { handoffError: o.handoffError })
+  return { ...r, log, state, store }
+}
+const bgSent = (log: string[]) => log.filter(l => l.startsWith('submit'))
+
+test('a run that ended on a warm cache wakes the agent once and the record goes', async ($, on) => {
+  const { m, log, store, state } = await finRig($, on)
+  expect(bgSent(log)).toEqual([]) // session.start does not act: no band render has told isWorking yet
+  await m.clock.advance(30_000)
+  expect(bgSent(log)).toHaveLength(1)
+  expect(state.asUser).toEqual([true])
+  expect(bgSent(log)[0]).toContain('epoch 3 done')
+  expect(bgSent(log)[0]).toContain(`${BG_DIR}/log.txt`)
+  expect(store.has('bg:id')).toBe(false)
+})
+
+test('a wake that is dropped keeps the record and toasts once for two ticks', async ($, on) => {
+  const { m, log, store } = await finRig($, on, { drop: 'no' })
+  await m.clock.advance(60_000)
+  expect(store.has('bg:id')).toBe(true)
+  expect(bgSent(log).length).toBeGreaterThan(1)
+  expect(m.toasts.filter(t => t.includes(T.bgFinishFailed('train', 'no')))).toHaveLength(1)
+  expect(store.get('lastError')).toMatchObject({ where: 'bg', msg: 'no' })
+})
+
+test('a second tick while the wake-up submit hangs sends no second one', async ($, on) => {
+  let release!: () => void
+  const { m, log, store } = await finRig($, on, { gate: new Promise<void>(r => (release = r)) })
+  await m.clock.advance(60_000)
+  expect(bgSent(log)).toHaveLength(1)
+  release() // the finish ends inside the test: a submit left hanging is refused later and its error note would outlive the test
+  for (let i = 0; i < 100 && store.has('bg:id'); i++) await new Promise(r => (globalThis as any).setTimeout(r, 10))
+  expect(store.has('bg:id')).toBe(false)
+  expect(bgSent(log)).toHaveLength(1)
+})
+
+test('a cold cache with "show": nothing is sent, the row says it ended, the next message carries the note once', async ($, on) => {
+  const { m, log, store, ui, state } = await finRig($, on, { at: COLD })
+  const contexts = state.contexts
+  await m.clock.advance(30_000)
+  expect(bgSent(log)).toEqual([])
+  expect(await bgTexts(ui)).toEqual([bgRow(bgRun({ ended: ENDED }) as BgRun, 'epoch 3 done', NOW + 30_000).text])
+  await typed($, 'привет')
+  const note = [START, T.bgNote('train', when(new Date(ENDED.at).toISOString(), NOW + 30_000), '0', `${BG_DIR}/log.txt`), END].join('\n')
+  expect(contexts).toEqual([[note]])
+  expect(store.has('bg:id')).toBe(false)
+  await typed($, 'ещё')
+  expect(contexts[1]).toEqual([])
+})
+
+test('a dropped owner message leaves the note for the next one', async ($, on) => {
+  const { m, store, state } = await finRig($, on, { at: COLD })
+  const contexts = state.contexts
+  await m.clock.advance(30_000)
+  state.drop = 'no'
+  await typed($, 'drop')
+  state.drop = undefined
+  expect(store.has('bg:id')).toBe(true)
+  await typed($, 'again')
+  expect(contexts[1]).toEqual(contexts[0])
+  expect(contexts[0]).toHaveLength(1)
+  expect(store.has('bg:id')).toBe(false)
+})
+
+test('cold with new_worker: /clear and the finish text, the draft is not touched, the record goes after the launch', async ($, on) => {
+  const { m, log, state, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' } })
+  state.nextId = 'new'
+  await m.clock.advance(30_000)
+  expect(log[0]).toBe('/clear')
+  expect(bgSent(log)).toHaveLength(1)
+  expect(bgSent(log)[0]).toContain('submit h\n\n')
+  expect(bgSent(log)[0]).toContain('epoch 3 done')
+  expect(state.text).toBe('мой текст')
+  expect(store.has('bg:id')).toBe(false)
+  expect(store.has('bg:new')).toBe(false)
+})
+
+test('cold new_worker that is not launched: the record is patched to show, one toast and one /al-health line per run', async ($, on) => {
+  const { m, log, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker', dir: 'C:/bg/r2' }, handoffError: 'boom' })
+  await m.clock.advance(60_000)
+  expect(log).toEqual([])
+  expect(store.get('bg:id')).toMatchObject({ name: 'train', ifCold: 'show', ended: ENDED })
+  expect(m.toasts.filter(t => t.includes(T.bgFinishFailed('train', T.bgNotLaunched)))).toHaveLength(1)
+  expect(store.get('lastError')).toMatchObject({ where: 'bg' })
+})
+
+test('cold new_worker whose submit drops after /clear: the run moves to the new chat as show', async ($, on) => {
+  const { m, log, state, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' }, drop: 'no' })
+  state.nextId = 'new'
+  await m.clock.advance(30_000)
+  expect(store.has('bg:id')).toBe(false)
+  expect(store.get('bg:new')).toMatchObject({ name: 'train', ifCold: 'show', ended: ENDED })
+  await m.clock.advance(30_000) // the next tick in the new chat: show, no second launch
+  expect(bgSent(log)).toHaveLength(1)
+})
+
+test('the note rides no command, no meta message and no message of ours', async ($, on) => {
+  const { m, store, state } = await finRig($, on, { at: COLD })
+  await m.clock.advance(30_000)
+  await typed($, 'x', { command: 'foo' })
+  await typed($, 'x', { isMeta: true })
+  await typed($, 'x', { origin: { kind: 'plugin', name: 'alethite', asUser: true } })
+  expect(state.contexts.flat()).toEqual([])
+  expect(store.has('bg:id')).toBe(true)
+})
+
+test('exit.json without an end time: the run ends at the tick time, the note shows it', async ($, on) => {
+  const { m, fs, store, state } = await finRig($, on, { at: COLD, run: { ended: undefined } })
+  fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 0 })
+  await m.clock.advance(30_000)
+  expect((store.get('bg:id') as { ended: object }).ended).toEqual({ code: 0, at: NOW + 30_000 })
+  await typed($, 'привет')
+  expect(state.contexts[0]).toEqual([[START, T.bgNote('train', when(new Date(NOW + 30_000).toISOString(), NOW + 30_000), '0', `${BG_DIR}/log.txt`), END].join('\n')])
+  expect(store.has('bg:id')).toBe(false)
+})
+
+test('a spent limit with new_worker: the finish waits for the reset, then the worker starts with it', async ($, on) => {
+  const { m, log, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' }, limit: nearLimit(undefined, 100) })
+  await m.clock.advance(30_000)
+  expect(bgSent(log)).toEqual([])
+  expect(store.get('delayed:id')).toMatchObject({ at: AT })
+  const { text } = store.get('delayed:id') as { text: string }
+  expect(text).toContain('epoch 3 done')
+  expect(store.get('bg:id')).toMatchObject({ ifCold: 'show', ended: ENDED }) // the result stays until it has reached someone
+  await m.clock.advance(AT - NOW)
+  expect(log[0]).toBe('/clear')
+  expect(bgSent(log)[0]).toBe(`submit h\n\n${text}`)
+  expect(store.has('delayed:id')).toBe(false)
+  expect(store.has('bg:id')).toBe(false) // the launch carried it
+})
+
+test('After reset of a finish never overwrites the wait the owner set', async ($, on) => {
+  const { m, log, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' }, limit: nearLimit(undefined, 100) })
+  store.set('delayed:id', { at: AT + 86_400_000, model: 'opus' })
+  await m.clock.advance(30_000)
+  await m.clock.advance(30_000) // the next tick: show now, nothing launched, the owner's wait untouched
+  expect(store.get('delayed:id')).toEqual({ at: AT + 86_400_000, model: 'opus' })
+  expect(store.get('bg:id')).toMatchObject({ ifCold: 'show', ended: ENDED })
+  expect(log).toEqual([])
+})
+
+test('Cancel of the finish wait leaves the show record, so the result still reaches the owner', async ($, on) => {
+  const { m, store, ui } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' }, limit: nearLimit(undefined, 100) })
+  await m.clock.advance(30_000)
+  expect(store.get('delayed:id')).toMatchObject({ at: AT })
+  await ui.press({ key: 'cancel-delay' })
+  await m.clock.advance(30_000) // the next tick does not bring the wait back: the record is show now
+  expect(store.has('delayed:id')).toBe(false)
+  expect(store.get('bg:id')).toMatchObject({ ifCold: 'show', ended: ENDED })
+})
+
+test('a manual New worker while the run goes: the handoff gets the note, the record moves to the new chat', async ($, on) => {
+  const { m, ui, store, state } = await finRig($, on, { run: { ended: undefined } })
+  state.nextId = 'new'
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'send' })
+  const note = T.bgHandoffNote('train', when(new Date(NOW - 5 * 60_000).toISOString(), NOW), BG_STATUS, `${BG_DIR}/log.txt`)
+  expect(ofCg(m, 'handoff')[0]!.argv).toContain(`--note=${note}`)
+  expect(store.has('bg:id')).toBe(false)
+  expect(store.get('bg:new')).toMatchObject({ name: 'train', pid: 7 })
+})
+
+test('a manual New worker with an ended run: the handoff gets the run\'s result note, the old record goes', async ($, on) => {
+  const { m, ui, store, state } = await finRig($, on, { at: COLD })
+  state.nextId = 'new'
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'send' })
+  const note = T.bgNote('train', when(new Date(ENDED.at).toISOString(), NOW), '0', `${BG_DIR}/log.txt`)
+  expect(ofCg(m, 'handoff')[0]!.argv).toContain(`--note=${note}`)
+  expect(store.has('bg:id')).toBe(false)
+  expect(store.has('bg:new')).toBe(false)
+})
+
+// cleanup after a New worker (task 6): only a launch that went through asks cg.py to start it
+for (const key of ['send', 'pick']) {
+  test(`New worker, ${key}: maintain-detached is asked once`, async ($, on) => {
+    const { m, ui, state } = await finRig($, on, { at: COLD })
+    state.nextId = 'new'
+    await ui.press({ key: 'launch' })
+    await ui.press({ key })
+    expect(ofCg(m, 'maintain-detached')).toHaveLength(1)
+  })
+}
+
+test('New worker with an empty draft: no cleanup', async ($, on) => {
+  const { m, ui } = await finRig($, on, { draft: '' })
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'send' })
+  expect(ofCg(m, 'maintain-detached')).toEqual([])
+})
+
+test('New worker whose handoff fails: no cleanup', async ($, on) => {
+  const { m, ui } = await finRig($, on, { handoffError: 'boom' })
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'send' })
+  expect(ofCg(m, 'maintain-detached')).toEqual([])
+})
+
+test('a failing maintain-detached: a note for /al-health, no toast, the launch is as before', async ($, on) => {
+  const { m, ui, log, state, fs, store } = await finRig($, on, { at: COLD })
+  fs.maintainError = 'no spawn'
+  state.nextId = 'new'
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'send' })
+  expect(bgSent(log)).toHaveLength(1)
+  expect(store.get('lastError')).toMatchObject({ where: 'cleanup' })
+  expect(m.toasts).toEqual([])
+})
+
+const RESET_SOON = new Date(NOW + 600_000).toISOString()
+
+test('a spent-limit finish on a warm cache: the wake after the reset delivers once, the finish wait goes with it', async ($, on) => {
+  const { m, log, store } = await finRig($, on, { at: WARM, run: { ifCold: 'new_worker' }, limit: nearLimit(RESET_SOON, 100) })
+  await m.clock.advance(30_000)
+  expect(store.get('delayed:id')).toMatchObject({ at: NOW + 900_000 })
+  await m.clock.advance(11 * 60_000) // past the reset, the cache is still warm
+  expect(bgSent(log)).toHaveLength(1)
+  expect(store.has('bg:id')).toBe(false)
+  expect(store.has('delayed:id')).toBe(false)
+  await m.clock.advance(10 * 60_000)
+  expect(log.filter(l => l === '/clear')).toEqual([])
+  expect(bgSent(log)).toHaveLength(1)
+})
+
+test('the owner message that carries the note takes the finish wait with it', async ($, on) => {
+  const { m, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' }, limit: nearLimit(undefined, 100) })
+  await m.clock.advance(30_000)
+  expect(store.get('delayed:id')).toHaveProperty('text')
+  await typed($, 'привет')
+  expect(store.has('bg:id')).toBe(false)
+  expect(store.has('delayed:id')).toBe(false)
+})
+
+test('the owner message that carries the note leaves an owner wait alone', async ($, on) => {
+  const { m, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' }, limit: nearLimit(undefined, 100) })
+  store.set('delayed:id', { at: AT + 86_400_000, model: 'opus' })
+  await m.clock.advance(30_000)
+  await typed($, 'привет')
+  expect(store.has('bg:id')).toBe(false)
+  expect(store.get('delayed:id')).toEqual({ at: AT + 86_400_000, model: 'opus' })
+})
+
+test('a /clear that throws without a new id: one attempt, the record turns to show, one toast', async ($, on) => {
+  const { m, log, state, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' } })
+  state.clearFail = true
+  await m.clock.advance(90_000)
+  expect(log.filter(l => l === '/clear')).toHaveLength(1)
+  expect(store.get('bg:id')).toMatchObject({ ifCold: 'show', ended: ENDED })
+  expect(m.toasts.filter(t => t.includes(T.bgFinishFailed('train', T.bgNotLaunched)))).toHaveLength(1)
+  expect(store.get('lastError')).toMatchObject({ where: 'bg' })
+})
+
+test('a run that ends during the launch moves to the new chat as show, its result is not lost', async ($, on) => {
+  const { m, ui, fs, state, store } = await finRig($, on, { run: { ended: undefined } })
+  fs.onHandoff = () => void store.set('bg:id', { ...(store.get('bg:id') as object), ended: ENDED })
+  state.nextId = 'new'
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'send' })
+  expect(store.has('bg:id')).toBe(false)
+  expect(store.get('bg:new')).toMatchObject({ name: 'train', ifCold: 'show', ended: ENDED })
+  expect(ofCg(m, 'handoff')).toHaveLength(1)
+})
+
+test('a finish wait that fires while the chat holds a different running run: the handoff still says it runs', async ($, on) => {
+  const { m, state, store } = await finRig($, on, { at: COLD, run: { ended: undefined } })
+  store.set('delayed:id', { at: NOW + 30_000, text: 'финиш' })
+  state.nextId = 'new'
+  await m.clock.advance(3 * 30_000)
+  const note = ofCg(m, 'handoff')[0]!.argv.find((a: string) => a.startsWith('--note='))
+  expect(note).toContain(BG_STATUS)
+})
+
+test('a launch in flight at the tick: the ended record is left alone, no failure toast', async ($, on) => {
+  let release!: () => void
+  const { m, ui, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' }, gate: new Promise<void>(r => (release = r)) })
+  await ui.press({ key: 'launch' })
+  const sending = ui.press({ key: 'send' }) // its submit hangs on the gate: the launch is in flight
+  await new Promise(r => (globalThis as any).setTimeout(r, 50))
+  await m.clock.advance(30_000)
+  expect(store.get('bg:id')).toMatchObject({ ifCold: 'new_worker', ended: ENDED })
+  expect(m.toasts.filter(t => t.includes('train'))).toEqual([])
+  release()
+  await sending
+})
+
+// final review fixes
+const working = async ($: any, ui: any) => (await ui.unmount(), await $.ui.mount({ ...(UI as object), props: { ...props, isWorking: true } } as never), await new Promise(r => (globalThis as any).setTimeout(r, 50)))
+
+test('bgCheck: a record removed during bg-alive of an earlier one does not throw', async ($, on) => {
+  const { m, fs } = await runRig($, on, new Map([['bg:id', bgRun()], ['bg:other', bgRun({ dir: 'C:/bg/r2' })]]))
+  fs.alive = false
+  fs.onAlive = () => { m.store.delete('bg:other') }
+  await m.clock.advance(600_000)
+  expect(m.store.has('lastError')).toBe(false)
+})
+
+test('[x] after a spent-limit finish takes the finish wait with it: no New worker after the reset', async ($, on) => {
+  const { m, ui, log, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' }, limit: nearLimit(undefined, 100) })
+  await m.clock.advance(30_000)
+  expect(store.get('delayed:id')).toHaveProperty('text')
+  await ui.press({ key: 'bg-remove' })
+  expect(store.has('bg:id')).toBe(false)
+  expect(store.has('delayed:id')).toBe(false)
+  await m.clock.advance(AT - NOW + 60_000)
+  expect(log.filter(l => l === '/clear')).toEqual([])
+})
+
+test('a launch in flight at the tick: a warm finish does not wake the old chat, the next tick does once', async ($, on) => {
+  let release!: () => void
+  const { m, ui, log, state } = await finRig($, on, { gate: new Promise<void>(r => (release = r)) })
+  state.drop = 'no' // the launch ends dropped in the same chat: the record stays
+  await ui.press({ key: 'launch' })
+  const sending = ui.press({ key: 'send' })
+  await new Promise(r => (globalThis as any).setTimeout(r, 50))
+  await m.clock.advance(30_000)
+  expect(bgSent(log).filter(l => l.includes('epoch 3 done'))).toEqual([])
+  release()
+  await sending
+  state.drop = undefined
+  await m.clock.advance(30_000)
+  expect(bgSent(log).filter(l => l.includes('epoch 3 done'))).toHaveLength(1)
+})
+
+test('a turn that starts during the handoff of a finish launch: no /clear, the record turns to show', async ($, on) => {
+  const { m, log, fs, store, ui } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' } })
+  fs.onHandoff = () => working($, ui)
+  await m.clock.advance(30_000)
+  await new Promise(r => (globalThis as any).setTimeout(r, 300)) // the launch ends after the tick
+  expect(log).toEqual([])
+  expect(store.get('bg:id')).toMatchObject({ ifCold: 'show', ended: ENDED })
+})
+
+test('a turn that starts during the handoff of a due wait: no /clear, the wait is back', async ($, on) => {
+  const log: string[] = []
+  const store = dueSoon()
+  box(on, 'продолжаем', log)
+  let ui: any
+  const m = await started($, on, a => (a[0] === 'handoff' ? working($, ui).then(() => ran(JSON.stringify({ text: 'h', path: 'C:/h/id.md' }))) : ran('{}')), [], nearLimit(), {}, noTurn, store)
+  ui = await $.ui.mount(UI)
+  await m.clock.advance(SOON - NOW)
+  await new Promise(r => (globalThis as any).setTimeout(r, 300)) // the launch ends after the tick
+  expect(log).toEqual([])
+  expect(store.get('delayed:id')).toEqual({ at: SOON })
+})
+
+test('background_run: an ended run that nobody was told of is reported with the next start', async ($, on) => {
+  const { m } = await runRig($, on, new Map<string, unknown>([['bg:id', bgRun({ ended: ENDED })], ['delayed:id', { at: AT, text: 'финиш' }]]))
+  const r = await bgCall($)
+  expect(r).toEqual({ result: `${T.bgStarted('train', `${BG_DIR}/log.txt`)}\n${T.bgNote('train', when(new Date(ENDED.at).toISOString(), NOW), '0', `${BG_DIR}/log.txt`)}` })
+  expect(m.store.has('delayed:id')).toBe(false) // the finish wait would tell the same result again
+  expect(m.store.get('bg:id')).toMatchObject({ pid: 7 })
 })

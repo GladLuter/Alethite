@@ -26,6 +26,7 @@ EN = {
     'handoff_owner': '**You:** ',
     'handoff_claude': '**Claude:** ',
     'handoff_state': '## State of the work',
+    'handoff_note': '## Note',
     'handoff_commits': 'Latest commits:',
     'handoff_git_timeout': 'git did not answer in {s} s',
     'bad_session': 'not a session id: {id}',
@@ -173,6 +174,11 @@ EN = {
     'home_job_failed': 'the background job could not be updated: {e}. Check it with /al-health. If it is off, run /al-job on',
     'home_old_task_failed': 'the old background task «CacheGuard» could not be removed: {e}. Delete it in Task Scheduler, then run /al-job on',
     'home_move_waits': 'the mod does not move {old} to {new} while that task is there. The first run after it is gone moves it',
+    'bg_bad_cwd': 'the background run was not started: the working folder does not exist',
+    'bg_bad_if_cold': 'the background run was not started: if_cold must be show or new_worker',
+    'bg_empty': 'the background run was not started: the name and the command must not be empty',
+    'bg_bad_status_file': 'the background run was not started: the status file must be an absolute path',
+    'bg_not_started': 'the background run failed: the wrapper did not start, run folder {dir}',
 }
 
 RU = {
@@ -197,6 +203,7 @@ RU = {
     'handoff_owner': '**Ты:** ',
     'handoff_claude': '**Claude:** ',
     'handoff_state': '## Состояние работы',
+    'handoff_note': '## Заметка',
     'handoff_commits': 'Последние коммиты:',
     'handoff_git_timeout': 'git не ответил за {s} с',
     'bad_session': 'это не id сессии: {id}',
@@ -338,6 +345,11 @@ RU = {
     'home_job_failed': 'фоновую задачу не удалось обновить: {e}. Проверьте её в /al-health. Если она выключена, выполните /al-job on',
     'home_old_task_failed': 'старую фоновую задачу «CacheGuard» не удалось снять: {e}. Удалите её в Планировщике заданий, потом выполните /al-job on',
     'home_move_waits': 'пока эта задача есть, мод не переносит папку {old} в {new}. Первый запуск после её удаления перенесёт папку',
+    'bg_bad_cwd': 'фоновый запуск не начат: рабочей папки не существует',
+    'bg_bad_if_cold': 'фоновый запуск не начат: if_cold должен быть show или new_worker',
+    'bg_empty': 'фоновый запуск не начат: имя и команда не должны быть пустыми',
+    'bg_bad_status_file': 'фоновый запуск не начат: файл статуса должен быть абсолютным путём',
+    'bg_not_started': 'фоновый запуск не удался: обёртка не стартовала, папка запуска {dir}',
 }
 
 UK = {
@@ -362,6 +374,7 @@ UK = {
     'handoff_owner': '**Ти:** ',
     'handoff_claude': '**Claude:** ',
     'handoff_state': '## Стан роботи',
+    'handoff_note': '## Нотатка',
     'handoff_commits': 'Останні коміти:',
     'handoff_git_timeout': 'git не відповів за {s} с',
     'bad_session': 'це не id сесії: {id}',
@@ -503,6 +516,11 @@ UK = {
     'home_job_failed': 'фонове завдання не вдалося оновити: {e}. Перевірте його в /al-health. Якщо воно вимкнене, виконайте /al-job on',
     'home_old_task_failed': 'старе фонове завдання «CacheGuard» не вдалося зняти: {e}. Видаліть його в Планувальнику завдань, потім виконайте /al-job on',
     'home_move_waits': 'поки це завдання є, мод не переносить теку {old} у {new}. Перший запуск після його видалення перенесе теку',
+    'bg_bad_cwd': 'фоновий запуск не розпочато: робочої теки не існує',
+    'bg_bad_if_cold': 'фоновий запуск не розпочато: if_cold має бути show або new_worker',
+    'bg_empty': 'фоновий запуск не розпочато: назва і команда не повинні бути порожніми',
+    'bg_bad_status_file': 'фоновий запуск не розпочато: файл статусу має бути абсолютним шляхом',
+    'bg_not_started': 'фоновий запуск не вдався: обгортка не стартувала, тека запуску {dir}',
 }
 
 TABLES = {'en': EN, 'ru': RU, 'uk': UK}

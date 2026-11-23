@@ -1,3 +1,6 @@
+// The record `bg:<session id>` in the store: a background run of that chat.
+export type BgRun = { dir: string; name: string; pid: number; started: number; log: string; statusFile?: string; ifCold: 'show' | 'new_worker'; ended?: { code: number | null; at: number; lost?: true } }
+
 // What refresh() last measured, kept in $.state; the band draws from it and from Info.
 export type Snap = {
   id: string
@@ -37,6 +40,8 @@ declare module 'claude-code' {
       info: Info | null
       isDetails: boolean
       delayedAt: number | null
+      // this chat's background run as the band shows it
+      bgView: { run: BgRun; last: string } | null
     }
   }
 }
