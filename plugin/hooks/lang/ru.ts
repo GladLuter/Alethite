@@ -62,7 +62,7 @@ export const ru: Partial<Texts> = {
   notSent: 'передача не отправлена',
   submitFailed: (why: string, path: string) => `Новый работник: отправка не удалась (${why}). Передача и черновик в поле ввода: нажми Enter. Передача сохранена: ${path}`,
   fillFailed: (why: string, fillWhy: string, path: string) => `Новый работник: ${why}. Чат уже очищен, а поле ввода не приняло передачу (${fillWhy}). Передача сохранена: ${path}; черновик, скорее всего, ещё в поле ввода.`,
-  fillRefused: { dialog: 'открыт диалог, поле занято', no_composer: 'в этом окне нет поля ввода', other: 'поле ввода не приняло текст' },
+  fillRefused: { dialog: 'открыт диалог, поле занято', no_composer: 'в этом окне нет поля ввода', other: 'поле ввода не приняло текст', unanswered: 'предыдущий вопрос ещё ждёт ответа' },
   dropped: (why: string, path: string) => `Новый работник: отправку отклонили (${why}). Передача сохранена: ${path}`,
 
   // refresh failed: the status line shows it until the next good refresh
@@ -285,6 +285,8 @@ export const ru: Partial<Texts> = {
   bgElapsed: (min: number) => (min >= 60 ? `${Math.floor(min / 60)} ч ${min % 60} мин` : `${min} мин`),
   bgFinish: (name: string, code: string, end: string, duration: string, tail: string, log: string) =>
     `Фоновый процесс «${name}» закончился: код ${code}, конец ${end}, шёл ${duration}.${tail ? `\nПоследние строки статуса:\n${tail}` : ''}\nПолный лог: ${log}\nПроверь результат и продолжай работу.`,
-  bgNote: (name: string, log: string) => `Фоновый процесс «${name}» идёт. Лог: ${log}. Alethite сообщит, когда он закончится.`,
+  bgNote: (name: string, end: string, code: string, log: string) => `Alethite: фоновый процесс «${name}» закончился ${end}, код ${code}. Лог: ${log}. Проверь результат.`,
+  bgHandoffNote: (name: string, started: string, status: string, log: string) => `Фоновый процесс «${name}» ещё идёт в старом чате (запущен ${started}).${status ? ` Файл статуса: ${status}.` : ''} Лог: ${log}. Когда он закончится, Alethite сообщит здесь. При нужде загляни в лог.`,
   bgUnknown: 'неизвестно',
+  bgFinishFailed: (name: string, why: string) => `Фоновый процесс «${name}» закончился, но Alethite не смог передать это дальше (${why}). Результат остаётся в строке полосы.`,
 }

@@ -63,7 +63,7 @@ export const uk: Partial<Texts> = {
   submitFailed: (why: string, path: string) => `Новий працівник: надіслати не вдалося (${why}). Передача й чернетка в полі вводу: натисніть Enter. Передачу збережено: ${path}`,
   fillFailed: (why: string, fillWhy: string, path: string) =>
     `Новий працівник: ${why}. Чат уже очищено, а поле вводу не прийняло передачу (${fillWhy}). Передачу збережено: ${path}; чернетка, найімовірніше, ще в полі вводу.`,
-  fillRefused: { dialog: 'відкрито діалог, поле зайняте', no_composer: 'у цьому вікні немає поля вводу', other: 'поле вводу не прийняло текст' },
+  fillRefused: { dialog: 'відкрито діалог, поле зайняте', no_composer: 'у цьому вікні немає поля вводу', other: 'поле вводу не прийняло текст', unanswered: 'попереднє питання ще чекає на відповідь' },
   dropped: (why: string, path: string) => `Новий працівник: надсилання відхилено (${why}). Передачу збережено: ${path}`,
 
   // refresh failed: the status line shows it until the next good refresh
@@ -288,6 +288,8 @@ export const uk: Partial<Texts> = {
   bgElapsed: (min: number) => (min >= 60 ? `${Math.floor(min / 60)} год ${min % 60} хв` : `${min} хв`),
   bgFinish: (name: string, code: string, end: string, duration: string, tail: string, log: string) =>
     `Фоновий процес «${name}» завершився: код ${code}, кінець ${end}, тривав ${duration}.${tail ? `\nОстанні рядки статусу:\n${tail}` : ''}\nПовний лог: ${log}\nПеревір результат і продовжуй роботу.`,
-  bgNote: (name: string, log: string) => `Фоновий процес «${name}» триває. Лог: ${log}. Alethite повідомить, коли він завершиться.`,
+  bgNote: (name: string, end: string, code: string, log: string) => `Alethite: фоновий процес «${name}» завершився ${end}, код ${code}. Лог: ${log}. Перевір результат.`,
+  bgHandoffNote: (name: string, started: string, status: string, log: string) => `Фоновий процес «${name}» ще триває в старому чаті (запущено ${started}).${status ? ` Файл статусу: ${status}.` : ''} Лог: ${log}. Коли він завершиться, Alethite повідомить тут. За потреби зазирни в лог.`,
   bgUnknown: 'невідомо',
+  bgFinishFailed: (name: string, why: string) => `Фоновий процес «${name}» завершився, але Alethite не зміг передати це далі (${why}). Результат лишається в рядку смуги.`,
 }

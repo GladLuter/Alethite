@@ -62,7 +62,7 @@ export const en = {
   submitFailed: (why: string, path: string) => `New worker: sending failed (${why}). The handoff and the draft are in the input box: press Enter. The handoff is saved: ${path}`,
   fillFailed: (why: string, fillWhy: string, path: string) =>
     `New worker: ${why}. The chat is cleared already, and the input box did not take the handoff (${fillWhy}). The handoff is saved: ${path}; the draft is most likely still in the input box.`,
-  fillRefused: { dialog: 'a dialog is open, the box is busy', no_composer: 'this window has no input box', other: 'the input box did not take the text' },
+  fillRefused: { dialog: 'a dialog is open, the box is busy', no_composer: 'this window has no input box', other: 'the input box did not take the text', unanswered: 'the previous question is still waiting for an answer' },
   dropped: (why: string, path: string) => `New worker: the send was refused (${why}). The handoff is saved: ${path}`,
 
   // refresh failed: the status line shows it until the next good refresh
@@ -287,8 +287,10 @@ export const en = {
   bgElapsed: (min: number) => (min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`),
   bgFinish: (name: string, code: string, end: string, duration: string, tail: string, log: string) =>
     `Background process "${name}" finished: exit code ${code}, ended ${end}, ran ${duration}.${tail ? `\nLast status lines:\n${tail}` : ''}\nFull log: ${log}\nCheck the result and continue the work.`,
-  bgNote: (name: string, log: string) => `Background process "${name}" is running. Log: ${log}. Alethite will report when it ends.`,
+  bgNote: (name: string, end: string, code: string, log: string) => `Alethite: the background process "${name}" ended ${end} with exit code ${code}. Log: ${log}. Check the result.`,
+  bgHandoffNote: (name: string, started: string, status: string, log: string) => `The background process "${name}" is still running in the old chat (started ${started}).${status ? ` Status file: ${status}.` : ''} Log: ${log}. When it ends, Alethite reports here. Check the log if needed.`,
   bgUnknown: 'unknown',
+  bgFinishFailed: (name: string, why: string) => `Background process "${name}" ended, but Alethite could not pass it on (${why}). The result stays in the band row.`,
 }
 
 export type Texts = typeof en

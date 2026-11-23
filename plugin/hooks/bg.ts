@@ -1,11 +1,10 @@
 // Pure decisions for background runs: what to do when one ends, and what the band row and the finish message say.
-import type { Snap } from '../types'
+import type { BgRun, Snap } from '../types'
 import { delayTimes, when } from './band'
 import { CACHE_MS } from './guard'
 import { T } from './text'
 
-// The record `bg:<session id>` in the store.
-export type BgRun = { dir: string; name: string; pid: number; started: number; log: string; statusFile?: string; ifCold: 'show' | 'new_worker'; ended?: { code: number | null; at: number; lost?: true } }
+export type { BgRun }
 
 // A cache with under 2 minutes left is treated as cold: the wake-up would arrive after it expired.
 export const finishAction = (i: { ifCold: BgRun['ifCold']; at: number | null; now: number; limits: Snap['limits']; isWorking: boolean }) => {

@@ -4,6 +4,7 @@ import { ru } from '../hooks/lang/ru'
 import { uk } from '../hooks/lang/uk'
 import { notePath, summaryPath } from '../hooks/notes'
 import { when } from '../hooks/band'
+import { END, START } from '../hooks/lessons'
 import { bgRow } from '../hooks/bg'
 import type { BgRun } from '../hooks/bg'
 import { price } from '../hooks/guard'
@@ -143,11 +144,11 @@ test('/al-health: a project that matches no conversation is said so', async ($, 
 
 // The engine beneath a launch: the prompt box (`refuse` makes a fill fail), /clear, and the first message. `gate` holds the submit until released.
 const box = (on: any, draft: string, log: string[], gate: Promise<unknown> = Promise.resolve()) => {
-  const state = { text: draft, refuse: undefined as string | undefined, broken: false }
+  const state = { text: draft, refuse: undefined as string | undefined, broken: false, drop: undefined as string | undefined, nextId: undefined as string | undefined, contexts: [] as string[][] }
   on('prompt.read', () => (state.broken ? { deny: 'boom' } : { value: { text: state.text, cursor: 0 } }))
   on('prompt.fill', (_: unknown, e: { text: string }) => (state.refuse ? { isFilled: false, refusal: state.refuse } : ((state.text = e.text), { isFilled: true })))
-  on('prompt.submit', async (_: unknown, e: { text: string }) => (log.push(`submit ${e.text}`), await gate, { text: e.text }))
-  on('command.run', (_: unknown, e: { command: string; args: string }) => (log.push(`/${e.command} ${e.args}`.trim()), e.command === 'model' && chat.switches && (chat.model = `claude-${e.args}-5-5`), { text: '' }))
+  on('prompt.submit', async (_: unknown, e: { text: string; context?: readonly string[] }) => (log.push(`submit ${e.text}`), state.contexts.push([...(e.context ?? [])]), await gate, state.drop === undefined ? { text: e.text } : { drop: state.drop }))
+  on('command.run', (_: unknown, e: { command: string; args: string }) => (log.push(`/${e.command} ${e.args}`.trim()), e.command === 'clear' && state.nextId && (ids.now = state.nextId), e.command === 'model' && chat.switches && (chat.model = `claude-${e.args}-5-5`), { text: '' }))
   return state
 }
 const withMemory = { value: { ...usage, context: { ...usage.context, breakdown: { memoryFiles: [{ path: 'C:/mem/memory/MEMORY.md', type: 'AutoMem', tokens: 1 }] } } } }
@@ -2904,12 +2905,12 @@ const bgRun = (over: object = {}) => ({ dir: BG_DIR, name: 'train', pid: 7, star
 const bgCall = ($: any, over: object = {}) => $.tool.call({ tool: 'mcp__alethite__background_run', name: 'train', command: 'python train.py', if_cold: 'show', ...over })
 const bgVerbs = (m: { runs: { argv: string[] }[] }) => m.runs.filter(r => verb(r.argv)[0]!.startsWith('bg-'))
 const norm = (p: string) => p.replace(/\\/g, '/') // the engine may hand paths back with backslashes
-const runRig = async ($: any, on: any, store = new Map<string, unknown>(), files: Record<string, string> = {}) => {
-  const fs = { files, readError: undefined as string | undefined, alive: true, startError: undefined as string | undefined, onAlive: undefined as (() => void) | undefined, gate: undefined as Promise<void> | undefined }
+const runRig = async ($: any, on: any, store = new Map<string, unknown>(), files: Record<string, string> = {}, answerUsage: () => unknown = () => ({ value: usage }), init: object = {}) => {
+  const fs = { files, readError: undefined as string | undefined, alive: true, startError: undefined as string | undefined, handoffError: undefined as string | undefined, onAlive: undefined as (() => void) | undefined, gate: undefined as Promise<void> | undefined, ...init }
   on('fs.exists', (_: unknown, e: { path: string }) => ({ value: norm(e.path) in fs.files }))
   on('fs.read', async (_: unknown, e: { path: string }) => (await fs.gate, fs.readError ? { deny: fs.readError } : norm(e.path) in fs.files ? { value: fs.files[norm(e.path)] } : { deny: 'ENOENT' }))
-  const answer = (a: string[]) => (a[0] === 'bg-alive' ? (fs.onAlive?.(), ran(JSON.stringify({ alive: fs.alive }))) : a[0] === 'bg-start' ? (fs.startError ? failed(fs.startError) : ran(JSON.stringify({ dir: BG_DIR, pid: 7, log: `${BG_DIR}/log.txt` }))) : a[0] === 'index' ? indexed() : a[0] === 'embed' ? embedded() : ran('{}'))
-  const m = await started($, on, answer, [], () => ({ value: usage }), {}, noTurn, store)
+  const answer = (a: string[]) => (a[0] === 'bg-alive' ? (fs.onAlive?.(), ran(JSON.stringify({ alive: fs.alive }))) : a[0] === 'bg-start' ? (fs.startError ? failed(fs.startError) : ran(JSON.stringify({ dir: BG_DIR, pid: 7, log: `${BG_DIR}/log.txt` }))) : a[0] === 'handoff' ? (fs.handoffError ? failed(fs.handoffError) : ran(JSON.stringify({ text: 'h', path: 'C:/h/id.md' }))) : a[0] === 'index' ? indexed() : a[0] === 'embed' ? embedded() : ran('{}'))
+  const m = await started($, on, answer, [], answerUsage, {}, noTurn, store)
   return { m, fs, ui: await $.ui.mount(UI) }
 }
 const bgTexts = async (ui: any) => (await texts(ui)).filter((t: string) => t.includes('train') || t.includes('far'))
@@ -3071,11 +3072,11 @@ test('a watch asked meanwhile: one toast, one more pass shows the run started me
   let release!: () => void
   fs.gate = new Promise<void>(r => (release = r))
   const first = m.clock.advance(30_000) // its watch blocks on the read of exit.json
-  await new Promise(r => setTimeout(r, 50))
+  await new Promise(r => (globalThis as any).setTimeout(r, 50))
   await bgCall($, { name: 'late' }) // asks for a watch while the first is blocked
   release()
   await first
-  await new Promise(r => setTimeout(r, 50))
+  await new Promise(r => (globalThis as any).setTimeout(r, 50))
   expect(m.toasts.filter(t => t.includes('far'))).toHaveLength(1)
   expect((await texts(ui)).filter((t: string) => t.includes('late'))).toHaveLength(1)
 })
@@ -3086,11 +3087,11 @@ test('[x] while a watch is in flight: the removed row does not come back', async
   let release!: () => void
   fs.gate = new Promise<void>(r => (release = r))
   const tick = m.clock.advance(30_000) // the watch blocks on the status file, holding the row
-  await new Promise(r => setTimeout(r, 50))
+  await new Promise(r => (globalThis as any).setTimeout(r, 50))
   await ui.press({ key: 'bg-remove' })
   release()
   await tick
-  await new Promise(r => setTimeout(r, 50))
+  await new Promise(r => (globalThis as any).setTimeout(r, 50))
   expect(await bgTexts(ui)).toEqual([])
 })
 
@@ -3102,4 +3103,114 @@ test('session.start drops an empty or garbled bg record too', async ($, on) => {
 test('session.start drops runs started over 7 days ago', async ($, on) => {
   const { m } = await runRig($, on, new Map([['bg:old', bgRun({ started: NOW - 8 * 86_400_000 })], ['bg:new', bgRun({ started: NOW - 6 * 86_400_000 })]]))
   expect([...m.store.keys()].filter(k => k.startsWith('bg:'))).toEqual(['bg:new'])
+})
+
+// background runs: what happens when one ends (task 5)
+const WARM = NOW - 60_000
+const COLD = NOW - 2 * 3_600_000
+const ENDED = { code: 0, at: NOW - 60_000 }
+const finRig = async ($: any, on: any, o: { at?: number | null; run?: object; draft?: string; limit?: () => unknown; gate?: Promise<unknown>; drop?: string; handoffError?: string } = {}) => {
+  const log: string[] = []
+  const state = box(on, o.draft ?? 'мой текст', log, o.gate)
+  state.drop = o.drop
+  const store = new Map<string, unknown>([['bg:id', bgRun({ ended: ENDED, ...o.run })], ['turn:id', { at: o.at === undefined ? WARM : o.at, tokens: 1000 }]])
+  const r = await runRig($, on, store, { [BG_STATUS]: 'a\nepoch 3 done\n' }, o.limit, { handoffError: o.handoffError })
+  return { ...r, log, state, store }
+}
+const bgSent = (log: string[]) => log.filter(l => l.startsWith('submit'))
+
+test('a run that ended on a warm cache wakes the agent once and the record goes', async ($, on) => {
+  const { m, log, store } = await finRig($, on)
+  await m.clock.advance(30_000)
+  expect(bgSent(log)).toHaveLength(1)
+  expect(bgSent(log)[0]).toContain('epoch 3 done')
+  expect(bgSent(log)[0]).toContain(`${BG_DIR}/log.txt`)
+  expect(store.has('bg:id')).toBe(false)
+})
+
+test('a wake that is dropped keeps the record and toasts once for two ticks', async ($, on) => {
+  const { m, log, store } = await finRig($, on, { drop: 'no' })
+  await m.clock.advance(60_000)
+  expect(store.has('bg:id')).toBe(true)
+  expect(bgSent(log).length).toBeGreaterThan(1)
+  expect(m.toasts.filter(t => t.includes(T.bgFinishFailed('train', 'no')))).toHaveLength(1)
+})
+
+test('a second tick while the wake-up submit hangs sends no second one', async ($, on) => {
+  const { m, log } = await finRig($, on, { gate: new Promise<void>(() => {}) }) // never released: nothing runs on after the test
+  await m.clock.advance(60_000)
+  expect(bgSent(log)).toHaveLength(1)
+})
+
+test('a cold cache with "show": nothing is sent, the row says it ended, the next message carries the note once', async ($, on) => {
+  const { m, log, store, ui, state } = await finRig($, on, { at: COLD })
+  const contexts = state.contexts
+  await m.clock.advance(30_000)
+  expect(bgSent(log)).toEqual([])
+  expect(await bgTexts(ui)).toEqual([bgRow(bgRun({ ended: ENDED }) as BgRun, 'epoch 3 done', NOW + 30_000).text])
+  await typed($, 'привет')
+  const note = [START, T.bgNote('train', when(new Date(ENDED.at).toISOString(), NOW + 30_000), '0', `${BG_DIR}/log.txt`), END].join('\n')
+  expect(contexts).toEqual([[note]])
+  expect(store.has('bg:id')).toBe(false)
+  await typed($, 'ещё')
+  expect(contexts[1]).toEqual([])
+})
+
+test('a dropped owner message leaves the note for the next one', async ($, on) => {
+  const { m, store, state } = await finRig($, on, { at: COLD })
+  const contexts = state.contexts
+  await m.clock.advance(30_000)
+  state.drop = 'no'
+  await typed($, 'drop')
+  state.drop = undefined
+  expect(store.has('bg:id')).toBe(true)
+  await typed($, 'again')
+  expect(contexts[1]).toEqual(contexts[0])
+  expect(contexts[0]).toHaveLength(1)
+  expect(store.has('bg:id')).toBe(false)
+})
+
+test('cold with new_worker: /clear and the finish text, the draft is not touched, the record goes before the launch', async ($, on) => {
+  const { m, log, state, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' } })
+  await m.clock.advance(30_000)
+  expect(log[0]).toBe('/clear')
+  expect(bgSent(log)).toHaveLength(1)
+  expect(bgSent(log)[0]).toContain('submit h\n\n')
+  expect(bgSent(log)[0]).toContain('epoch 3 done')
+  expect(state.text).toBe('мой текст')
+  expect(store.has('bg:id')).toBe(false)
+})
+
+test('cold new_worker whose launch fails before /clear: the record comes back once, then goes', async ($, on) => {
+  const { m, log, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker', dir: 'C:/bg/r2' }, handoffError: 'boom' })
+  await m.clock.advance(1)
+  expect(store.has('bg:id')).toBe(true) // the first try, at session.start, put it back
+  await m.clock.advance(30_000)
+  expect(log).toEqual([])
+  expect(store.has('bg:id')).toBe(false)
+})
+
+test('a spent limit with new_worker: the finish waits for the reset, then the worker starts with it', async ($, on) => {
+  const { m, log, store } = await finRig($, on, { at: COLD, run: { ifCold: 'new_worker' }, limit: nearLimit(undefined, 100) })
+  await m.clock.advance(30_000)
+  expect(bgSent(log)).toEqual([])
+  expect(store.get('delayed:id')).toMatchObject({ at: AT })
+  const { text } = store.get('delayed:id') as { text: string }
+  expect(text).toContain('epoch 3 done')
+  expect(store.has('bg:id')).toBe(false)
+  await m.clock.advance(AT - NOW)
+  expect(log[0]).toBe('/clear')
+  expect(bgSent(log)[0]).toBe(`submit h\n\n${text}`)
+  expect(store.has('delayed:id')).toBe(false)
+})
+
+test('a manual New worker while the run goes: the handoff gets the note, the record moves to the new chat', async ($, on) => {
+  const { m, ui, store, state } = await finRig($, on, { run: { ended: undefined } })
+  state.nextId = 'new'
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'send' })
+  const note = T.bgHandoffNote('train', when(new Date(NOW - 5 * 60_000).toISOString(), NOW), BG_STATUS, `${BG_DIR}/log.txt`)
+  expect(ofCg(m, 'handoff')[0]!.argv).toContain(`--note=${note}`)
+  expect(store.has('bg:id')).toBe(false)
+  expect(store.get('bg:new')).toMatchObject({ name: 'train', pid: 7 })
 })

@@ -22,7 +22,7 @@ import { END, forgetArg, formatLessons, gateFor, lessonContext, lessonSaveArgs, 
 import type { Found, Lesson } from './lessons'
 import { formatHits, formatRows, recallArgs } from './recall'
 import type { Hit, IndexError, Row } from './recall'
-import { bgRow, lastLine } from './bg'
+import { bgRow, finishAction, finishText, lastLine } from './bg'
 import type { BgRun } from './bg'
 import { skipArgs, syncArgs, syncReport } from './sync'
 import type { SyncResult } from './sync'
@@ -217,36 +217,34 @@ const watchBg = async ($: EngineInterface) => {
 }
 
 const watchBgOnce = async ($: EngineInterface) => {
-  {
-    const [id, now] = [await $.session.id(), await $.clock.now()]
-    let view = null
-    for (const key of (await $.store.keys()).filter(k => k.startsWith('bg:'))) {
-      let run = (await $.store.get(key)) as (BgRun & { toasted?: true }) | undefined
-      if (!run) continue
-      try {
-        const exit = `${run.dir}/exit.json`
-        if (!run.ended && (await $.fs.exists(exit))) {
-          let ended: NonNullable<BgRun['ended']>
-          try {
-            const x = JSON.parse(await $.fs.read(exit)) as { code: number | null; ended: string }
-            ended = { code: x.code, at: Date.parse(x.ended) }
-          } catch {
-            ended = { code: null, at: now, lost: true } // a file that cannot be read is no code: the run is told as lost
-          }
-          run = await bgPatch($, key, { ended }, true) ?? ((await $.store.get(key)) as typeof run)
-          if (!run) continue
+  const [id, now] = [await $.session.id(), await $.clock.now()]
+  let view = null
+  for (const key of (await $.store.keys()).filter(k => k.startsWith('bg:'))) {
+    let run = (await $.store.get(key)) as (BgRun & { toasted?: true }) | undefined
+    if (!run) continue
+    try {
+      const exit = `${run.dir}/exit.json`
+      if (!run.ended && (await $.fs.exists(exit))) {
+        let ended: NonNullable<BgRun['ended']>
+        try {
+          const x = JSON.parse(await $.fs.read(exit)) as { code: number | null; ended: string }
+          ended = { code: x.code, at: Date.parse(x.ended) }
+        } catch {
+          ended = { code: null, at: now, lost: true } // a file that cannot be read is no code: the run is told as lost
         }
-        if (key === `bg:${id}`) view = { run, last: await bgLast($, run) }
-        else if (run.ended && !run.toasted) {
-          toast($, bgRow(run, await bgLast($, run), now).text) // a run of another chat: told once, nothing else is done
-          await bgPatch($, key, { toasted: true })
-        }
-      } catch (err) {
-        await bgOnce($, run, err)
+        run = await bgPatch($, key, { ended }, true) ?? ((await $.store.get(key)) as typeof run)
+        if (!run) continue
       }
+      if (key === `bg:${id}`) view = { run, last: await bgLast($, run) }
+      else if (run.ended && !run.toasted) {
+        toast($, bgRow(run, await bgLast($, run), now).text) // a run of another chat: told once, nothing else is done
+        await bgPatch($, key, { toasted: true })
+      }
+    } catch (err) {
+      await bgOnce($, run, err)
     }
-    await update($, bgView, () => view)
   }
+  await update($, bgView, () => view)
 }
 
 // A run whose wrapper is gone and left no exit.json is lost.
@@ -263,6 +261,60 @@ const bgCheck = async ($: EngineInterface, python: string) => {
     })
   }
   await watchBg($)
+}
+
+// A watched run that ended: only the open chat's record is acted on, one finish at a time (a wake-up that hangs must not go out twice).
+// Wake the agent on a warm cache, else the owner's choice; a spent limit waits for the reset (`delayed:<id>` with the text).
+let isFinishing = false
+const bgFailed = new Set<string>() // runs whose finish failed: one toast per run, not per tick
+
+// Deletes the record unless a newer run took its key meanwhile.
+const bgDone = async ($: EngineInterface, key: string, run: BgRun) => {
+  if (((await $.store.get(key)) as BgRun | undefined)?.dir === run.dir) await $.store.delete(key)
+}
+
+const finishBg = async ($: EngineInterface, python: string, compression: string) => {
+  if (isFinishing) return
+  isFinishing = true
+  try {
+    const id = await $.session.id()
+    const key = `bg:${id}`
+    const run = (await $.store.get(key)) as BgRun | undefined
+    if (!run?.ended) return
+    const [now, turn, s] = await Promise.all([$.clock.now(), $.store.get(`turn:${id}`), read($, snap)])
+    const action = finishAction({ ifCold: run.ifCold, at: (turn as { at: number | null } | undefined)?.at ?? null, now, limits: s?.limits ?? [], isWorking })
+    if (action === 'wait' || action === 'show') return // show: the band row says it, the owner's next message carries the note
+    let tail: string[] = []
+    try {
+      if (run.statusFile) tail = (await $.fs.read(run.statusFile)).split('\n').map(l => l.trim()).filter(Boolean).slice(-5)
+    } catch {} // the text goes without the tail
+    const text = finishText(run, tail, now)
+    if (action === 'wake') {
+      let why: string
+      try {
+        const r = await $.prompt.submit({ text, asUser: true })
+        if (r.drop === undefined) await bgDone($, key, run)
+        why = r.drop ?? ''
+      } catch (err) {
+        why = message(err)
+      }
+      if (why && !bgFailed.has(run.dir)) (bgFailed.add(run.dir), toast($, T.bgFinishFailed(run.name, why))) // the record stays: the next tick tries again
+    } else if (action === 'newWorker') {
+      await $.store.delete(key) // like fireDue: gone before the launch, back when nothing was launched
+      const r = await startWorker($, python, 'send', compression, undefined, text) // startWorker tells the owner what failed
+      if (!r && !(r === null && bgFailed.has(run.dir))) await $.store.set(key, run)
+      if (r === null) bgFailed.add(run.dir) // a step before /clear keeps throwing: one put-back per run
+    } else {
+      const { at, model } = await waitOf($, id) // a wait the owner set keeps its time and model
+      const due = at ?? action.afterReset
+      await $.store.set(`delayed:${id}`, { at: due, ...(model ? { model } : {}), text })
+      await $.store.delete(key)
+      await update($, delayedAt, () => due)
+    }
+    await watchBg($) // the band row follows the record
+  } finally {
+    isFinishing = false
+  }
 }
 
 // One sync with the other computers through the shared folder, for the current project's short memory too (none known, none synced).
@@ -527,10 +579,10 @@ let isWorking = false
 
 // When this chat's wait comes due and the model it asks for (an old wait has none: the current one); a stored value that is not a time the clock can show counts as no wait.
 const waitOf = async ($: EngineInterface, id: string) => {
-  const wait = (await $.store.get(`delayed:${id}`)) as { at?: unknown; model?: unknown } | undefined
+  const wait = (await $.store.get(`delayed:${id}`)) as { at?: unknown; model?: unknown; text?: unknown } | undefined
   const at = typeof wait?.at === 'number' && !Number.isNaN(new Date(wait.at).getTime()) ? wait.at : null
   const model: Model | undefined = wait?.model === 'opus' || wait?.model === 'sonnet' ? wait.model : undefined
-  return { at, model }
+  return { at, model, text: typeof wait?.text === 'string' ? wait.text : undefined }
 }
 
 // The delayed New worker: the wait is a store key of its chat; the 30 s tick starts it once due. The key goes first, so it never fires twice.
@@ -539,25 +591,25 @@ const waitOf = async ($: EngineInterface, id: string) => {
 let threwAt = 0
 const fireDue = async ($: EngineInterface, python: string, compression: string) => {
   const [id, now] = await Promise.all([$.session.id(), $.clock.now()])
-  const { at, model } = await waitOf($, id)
+  const { at, model, text } = await waitOf($, id)
   let shown: number | null = null
   await update($, delayedAt, v => ((shown = v), at))
   if (at === null || at > now || isWorking || shown !== at) return
   await $.store.delete(`delayed:${id}`)
   await update($, delayedAt, () => null)
   // false = nothing was launched (busy, the busy flag could not be set, or a step before /clear threw or failed): the wait goes back. A throw from startWorker's tail comes after the launch: no put-back.
-  const r = await startWorker($, python, 'send', compression, model)
+  const r = await startWorker($, python, 'send', compression, model, text)
   if (r) return
   if (r === null) {
     if (threwAt === at) return // a step before /clear keeps throwing: one put-back per wait, not a toast every tick
     threwAt = at
   }
-  await $.store.set(`delayed:${id}`, model ? { at, model } : { at })
+  await $.store.set(`delayed:${id}`, { at, ...(model ? { model } : {}), ...(text !== undefined ? { text } : {}) })
   await update($, delayedAt, () => at)
 }
 
 // "Новый работник": binds launch() to the engine through closures made here. One launch at a time.
-const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill', compression: string, model?: Model) => {
+const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'fill', compression: string, model?: Model, finish?: string) => {
   let wasBusy = false
   try {
     await update($, isBusy, busy => ((wasBusy = busy), true)) // atomic: a second press before the redraw is refused here
@@ -568,6 +620,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
   if (wasBusy) return false
   let outcome: Awaited<ReturnType<typeof launch>> | undefined
   let isCleared = false
+  let from: string | undefined // the old chat's id when a run still goes on in it: its record moves to the new chat
   try {
     await disarm($)
     let told = '' // the last thing launch told the owner; it is the reason when the launch did not go through
@@ -575,7 +628,10 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
       draft: async () => (await $.prompt.read()).text,
       handoff: async () => {
         const [id, now, dir] = await Promise.all([$.session.id(), $.clock.now(), memoryDir($)])
-        const args = ['handoff', '--session', id, '--today', calendarDay(now), ...(dir ? ['--memory-dir', dir] : []), '--compress', compression]
+        const run = finish === undefined ? ((await $.store.get(`bg:${id}`)) as BgRun | undefined) : undefined
+        if (run && !run.ended) from = id
+        const note = run && !run.ended ? [`--note=${T.bgHandoffNote(run.name, when(new Date(run.started).toISOString(), now), run.statusFile ?? '', run.log)}`] : []
+        const args = ['handoff', '--session', id, '--today', calendarDay(now), ...(dir ? ['--memory-dir', dir] : []), '--compress', compression, ...note]
         return (await runCg($, python, args)) as { text: string; path: string }
       },
       clear: () => ((isCleared = true), $.command.run({ command: 'clear' })),
@@ -595,7 +651,11 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
       currentModel: () => $.session.model(),
       switchModel: async m => (await $.command.run({ command: 'model', args: m }), (await $.session.model()).includes(m)),
     }
-    outcome = await launch(io, mode, model)
+    outcome = await launch(io, mode, model, finish)
+    if (from !== undefined && (outcome === 'sent' || outcome === 'ready')) {
+      const [to, run] = await Promise.all([$.session.id(), $.store.get(`bg:${from}`)])
+      if (to !== from && run) (await $.store.set(`bg:${to}`, run), await $.store.delete(`bg:${from}`))
+    }
     if (outcome === 'ready') toast($, T.pickThenEnter)
     if (outcome === 'failed' || outcome === 'dropped') await noteError($, 'launch', told)
   } catch (err) {
@@ -679,7 +739,7 @@ export const register: Register = (on, options) => {
     $.clock.every(30_000, () => {
       void guarded($, 'timer', () => refresh($, python))
       void guarded($, 'delayed', () => fireDue($, python, compression))
-      void guarded($, 'bg', () => watchBg($))
+      void guarded($, 'bg', async () => (await watchBg($), await finishBg($, python, compression)))
     })
     // a chat open for hours learns of a lesson saved in another chat or brought by the job's sync
     // and the band's data (never awaited together: one slow answer must not hold the other)
@@ -711,6 +771,7 @@ export const register: Register = (on, options) => {
         if (typeof started !== 'number' || started < loadedAt - 7 * 86_400_000) await $.store.delete(k) // an empty or garbled record goes too
       }
       await watchBg($)
+      void guarded($, 'bg', () => finishBg($, python, compression)) // never awaited either: a hanging wake-up must not hold session.start
       void guarded($, 'bg', () => bgCheck($, python)) // never awaited: a slow Python must not hold session.start
       const isOpen = (await $.store.get('details')) === true
       await update($, isDetails, () => isOpen)
@@ -1098,11 +1159,13 @@ export const register: Register = (on, options) => {
     // the review hint rides the owner's next message once; a failure here costs nothing but the hint
     const blocks: string[] = []
     let hint: [id: string, edits: number] | undefined
+    let ended: [key: string, run: BgRun] | undefined // the owner's next message carries the note of a run that ended (cold cache, "show")
     // a dropped prompt never reached the model: the hint comes back for the next one
     const pass = async () => {
       try {
         const r = await next(blocks.length ? { ...e, context: [...(e.context ?? []), ...blocks] } : e)
         if (hint && r.drop !== undefined) (reviewDue.set(hint[0], hint[1]), reviewSaid.delete(hint[0]))
+        if (ended && r.drop === undefined) await bgDone($, ended[0], ended[1]).catch(() => {}) // a dropped message leaves the note for the next one
         return r
       } catch (err) {
         if (hint) (reviewDue.set(hint[0], hint[1]), reviewSaid.delete(hint[0]))
@@ -1118,6 +1181,17 @@ export const register: Register = (on, options) => {
           reviewSaid.add(id)
           hint = [id, edits]
           blocks.push([START, T.reviewHint(edits), END].join('\n'))
+        }
+      } catch {}
+    }
+    if (isOwners && !e.isMeta && e.command === undefined && kind !== 'plugin') {
+      try {
+        const key = `bg:${await $.session.id()}`
+        const run = (await $.store.get(key)) as BgRun | undefined
+        if (run?.ended) {
+          ended = [key, run]
+          const end = when(new Date(run.ended.at).toISOString(), await $.clock.now())
+          blocks.push([START, T.bgNote(run.name, end, run.ended.code === null ? T.bgUnknown : String(run.ended.code), run.log), END].join('\n'))
         }
       } catch {}
     }
@@ -1265,7 +1339,7 @@ export const register: Register = (on, options) => {
     const data = await read($, info)
     const isOpen = await read($, isDetails)
     const rawLevel = await read($, afterLevel)
-    const bg = await read($, bgView) as { run: BgRun; last: string } | null
+    const bg = await read($, bgView)
 
     isWorking = e.props.isWorking // /clear in the middle of a turn is dangerous: no New worker then, and no waiting one either
     if (s === null || e.props.hasSurvey || s.id === hidden) return next(e)
