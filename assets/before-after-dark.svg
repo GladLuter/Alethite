@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="400" viewBox="0 0 880 400" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-label="Four weeks with Alethite: one message cost 54% less. The first message after an hour-long pause fell from 32% to 3% of all spend. Cache rewrites fell from 41% to 4%.">
-<rect x="0.5" y="0.5" width="879" height="399" rx="12" fill="#1a1a19" stroke="rgba(255,255,255,0.10)"/>
-<text x="32" y="48" font-size="22" font-weight="600" fill="#f0efec">Four weeks with Alethite</text>
-<text x="32" y="74" font-size="14" fill="#c3c2b7">My own Claude Code work on one computer, at API prices. Without Alethite: May 25 to Oct 13. With it: Oct 19 to Nov 15.</text>
-<text x="32" y="210" font-size="64" font-weight="600" fill="#f0efec">&#8722;54%</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="460" viewBox="0 0 880 460" font-family="system-ui, -apple-system, Segoe UI, sans-serif" role="img" aria-label="Five weeks with Alethite. One message cost 56% less. The first message after an hour-long pause fell from 32% to 3% of all spend, cache rewrites from 41% to 4%. Since Nov 15, 219 of 277 subagent starts used lean agents and cost $27 less than general-purpose starts.">
+<rect x="0.5" y="0.5" width="879" height="459" rx="12" fill="#1a1a19" stroke="rgba(255,255,255,0.10)"/>
+<text x="32" y="48" font-size="22" font-weight="600" fill="#f0efec">Five weeks with Alethite</text>
+<text x="32" y="74" font-size="14" fill="#c3c2b7">My own Claude Code work on one computer, at API prices. Without Alethite: May 25 to Oct 13. With it: Oct 19 to Nov 23.</text>
+<text x="32" y="210" font-size="64" font-weight="600" fill="#f0efec">&#8722;56%</text>
 <text x="32" y="240" font-size="14" fill="#c3c2b7">cost of one message I sent</text>
 <text x="32" y="260" font-size="13" fill="#898781">subagents included</text>
 <line x1="300" y1="120" x2="300" y2="330" stroke="#2c2c2a"/>
@@ -21,20 +21,23 @@
 <text x="840.0" y="318" font-size="12" text-anchor="middle" fill="#898781">50%</text>
 <line x1="360" y1="300" x2="840" y2="300" stroke="#383835"/>
 <text x="360" y="180" font-size="14" fill="#f0efec">First message after a pause of an hour or more</text>
-<line x1="389.76" y1="200" x2="663.36" y2="200" stroke="#383835" stroke-width="2"/>
+<line x1="384.384" y1="200" x2="663.36" y2="200" stroke="#383835" stroke-width="2"/>
 <circle cx="663.36" cy="200" r="7" fill="#1a1a19" stroke="#2e5ca3" stroke-width="3"/>
-<circle cx="389.76" cy="200" r="7" fill="#4a94ee" stroke="#1a1a19" stroke-width="2"/>
+<circle cx="384.384" cy="200" r="7" fill="#4a94ee" stroke="#1a1a19" stroke-width="2"/>
 <text x="679.36" y="205" font-size="14" font-weight="600" fill="#f0efec">32%</text>
-<text x="375.76" y="205" font-size="14" font-weight="600" text-anchor="end" fill="#f0efec">3%</text>
+<text x="370.384" y="205" font-size="14" font-weight="600" text-anchor="end" fill="#f0efec">3%</text>
 <text x="360" y="250" font-size="14" fill="#f0efec">All cache rewrites (context written again)</text>
-<line x1="402.24" y1="270" x2="757.44" y2="270" stroke="#383835" stroke-width="2"/>
+<line x1="395.52" y1="270" x2="757.44" y2="270" stroke="#383835" stroke-width="2"/>
 <circle cx="757.44" cy="270" r="7" fill="#1a1a19" stroke="#2e5ca3" stroke-width="3"/>
-<circle cx="402.24" cy="270" r="7" fill="#4a94ee" stroke="#1a1a19" stroke-width="2"/>
+<circle cx="395.52" cy="270" r="7" fill="#4a94ee" stroke="#1a1a19" stroke-width="2"/>
 <text x="773.44" y="275" font-size="14" font-weight="600" fill="#f0efec">41%</text>
-<text x="388.24" y="275" font-size="14" font-weight="600" text-anchor="end" fill="#f0efec">4%</text>
+<text x="381.52" y="275" font-size="14" font-weight="600" text-anchor="end" fill="#f0efec">4%</text>
 <circle cx="366" cy="352" r="6" fill="#1a1a19" stroke="#2e5ca3" stroke-width="3"/>
 <text x="380" y="357" font-size="13" fill="#c3c2b7">Without Alethite</text>
 <circle cx="520" cy="352" r="6" fill="#4a94ee"/>
 <text x="534" y="357" font-size="13" fill="#c3c2b7">With Alethite</text>
-<text x="32" y="384" font-size="12" fill="#898781">A before-and-after count on one person's work, not a controlled test.</text>
+<line x1="32" y1="378" x2="848" y2="378" stroke="#2c2c2a"/>
+<text x="32" y="404" font-size="14" fill="#f0efec"><tspan font-weight="600">Lean helper agents.</tspan> Since Nov 15, 219 of 277 subagent starts used them.</text>
+<text x="32" y="424" font-size="13" fill="#c3c2b7">Their starts cost $27 less than the same starts of the built-in general-purpose agent.</text>
+<text x="32" y="446" font-size="12" fill="#898781">A before-and-after count on one person's work, not a controlled test.</text>
 </svg>

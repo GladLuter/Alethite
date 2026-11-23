@@ -31,11 +31,11 @@ I audited my own Claude Code transcripts (May to October 2026, at API prices) to
 
 The money goes on coming back to a big idle chat. Alethite shows you the price before you pay it, and keeps a memory of your past chats so a fresh one starts informed.
 
-After four weeks with Alethite (October 19 to November 15, same computer, API prices) each message I sent cost about half as much, subagents included. The first message after a long pause went from 32% of all spend to 3%. This is a before-and-after count on one person's work, not a controlled test.
+After five weeks with Alethite (October 19 to November 23, same computer, API prices) each message I sent cost about half as much, subagents included. The first message after a long pause went from 32% of all spend to 3%. This is a before-and-after count on one person's work, not a controlled test.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="assets/before-after-dark.svg"><img src="assets/before-after-light.svg" alt="Before and after four weeks with Alethite: one message costs 54% less, the first message after a long pause falls from 32% to 3% of all spend, and cache rewrites from 41% to 4%." width="880"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="assets/before-after-dark.svg"><img src="assets/before-after-light.svg" alt="Before and after five weeks with Alethite: one message costs 56% less, the first message after a long pause falls from 32% to 3% of all spend, and cache rewrites from 41% to 4%. Since November 15, 219 of 277 subagent starts were lean and cost $27 less." width="880"></picture>
 
-The same count showed where the money goes now. Subagents grew to 44% of all spend, and nearly half of their cost is the start every agent pays before it does any work. A general-purpose agent starts with about 64k tokens of tool descriptions, skill lists and instructions. Alethite now ships lean agent types that start with 5-16k.
+The same count showed where the money goes now. From October 19 to November 15 subagents grew to 44% of all spend, and nearly half of their cost is the start every agent pays before it does any work. A general-purpose agent starts with about 64k tokens of tool descriptions, skill lists and instructions. Alethite now ships lean agent types that start with 5-16k. From November 16 to 23 subagents took 34% of spend. Since November 15, 219 of 277 starts were lean. Their starts cost $27 less than the same general-purpose starts.
 
 ---
 
