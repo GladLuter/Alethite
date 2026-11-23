@@ -2905,10 +2905,10 @@ const bgCall = ($: any, over: object = {}) => $.tool.call({ tool: 'mcp__alethite
 const bgVerbs = (m: { runs: { argv: string[] }[] }) => m.runs.filter(r => verb(r.argv)[0]!.startsWith('bg-'))
 const norm = (p: string) => p.replace(/\\/g, '/') // the engine may hand paths back with backslashes
 const runRig = async ($: any, on: any, store = new Map<string, unknown>(), files: Record<string, string> = {}) => {
-  const fs = { files, readError: undefined as string | undefined, alive: true, startError: undefined as string | undefined }
+  const fs = { files, readError: undefined as string | undefined, alive: true, startError: undefined as string | undefined, onAlive: undefined as (() => void) | undefined }
   on('fs.exists', (_: unknown, e: { path: string }) => ({ value: norm(e.path) in fs.files }))
   on('fs.read', (_: unknown, e: { path: string }) => (fs.readError ? { deny: fs.readError } : norm(e.path) in fs.files ? { value: fs.files[norm(e.path)] } : { deny: 'ENOENT' }))
-  const answer = (a: string[]) => (a[0] === 'bg-alive' ? ran(JSON.stringify({ alive: fs.alive })) : a[0] === 'bg-start' ? (fs.startError ? failed(fs.startError) : ran(JSON.stringify({ dir: BG_DIR, pid: 7, log: `${BG_DIR}/log.txt` }))) : a[0] === 'index' ? indexed() : a[0] === 'embed' ? embedded() : ran('{}'))
+  const answer = (a: string[]) => (a[0] === 'bg-alive' ? (fs.onAlive?.(), ran(JSON.stringify({ alive: fs.alive }))) : a[0] === 'bg-start' ? (fs.startError ? failed(fs.startError) : ran(JSON.stringify({ dir: BG_DIR, pid: 7, log: `${BG_DIR}/log.txt` }))) : a[0] === 'index' ? indexed() : a[0] === 'embed' ? embedded() : ran('{}'))
   const m = await started($, on, answer, [], () => ({ value: usage }), {}, noTurn, store)
   return { m, fs, ui: await $.ui.mount(UI) }
 }
@@ -3005,6 +3005,43 @@ test('dead but exit.json is there: the code from the file wins over lost', async
   fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 0, ended: '2026-11-23T10:00:00Z' })
   await m.clock.advance(600_000)
   expect((m.store.get('bg:id') as BgRun).ended).toEqual({ code: 0, at: Date.parse('2026-11-23T10:00:00Z') })
+})
+
+test('bg-alive: exit.json appears while it runs, the real code stays', async ($, on) => {
+  const { m, fs } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  fs.alive = false
+  fs.onAlive = () => { fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 5, ended: '2026-11-23T10:00:00Z' }) }
+  await m.clock.advance(600_000)
+  expect((m.store.get('bg:id') as BgRun).ended).toEqual({ code: 5, at: Date.parse('2026-11-23T10:00:00Z') })
+})
+
+test('bg-alive: the record is removed while it runs, it is not recreated', async ($, on) => {
+  const { m, fs } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  fs.alive = false
+  fs.onAlive = () => { m.store.delete('bg:id') }
+  await m.clock.advance(600_000)
+  expect(m.store.has('bg:id')).toBe(false)
+})
+
+test('exit.json that is not valid JSON: the run is lost, not running forever', async ($, on) => {
+  const { m, fs } = await runRig($, on, new Map([['bg:id', bgRun()]]))
+  fs.files[`${BG_DIR}/exit.json`] = '{broken'
+  await m.clock.advance(30_000)
+  expect((m.store.get('bg:id') as BgRun).ended).toMatchObject({ code: null, lost: true })
+})
+
+test('overlapping watches: one toast for another chat run', async ($, on) => {
+  const { m, fs } = await runRig($, on, new Map([['bg:other', bgRun({ name: 'far' })]]))
+  fs.files[`${BG_DIR}/exit.json`] = JSON.stringify({ code: 0, ended: '2026-11-23T10:00:00Z' })
+  await Promise.all([m.clock.advance(30_000), m.clock.advance(30_000)])
+  expect(m.toasts.filter(t => t.includes('far'))).toHaveLength(1)
+})
+
+test('background_run: quotes, &, Cyrillic and a leading - stay one argv item', async ($, on) => {
+  const { m } = await runRig($, on)
+  const command = `-x "a b" & echo 'привіт' && dir`
+  await bgCall($, { command })
+  expect(bgVerbs(m)[0]!.argv).toContain(`--command=${command}`)
 })
 
 test('[x] removes the record and the row', async ($, on) => {

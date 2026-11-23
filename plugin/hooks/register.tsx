@@ -187,28 +187,53 @@ const bgLast = async ($: EngineInterface, run: BgRun) => {
   }
 }
 
+// Writes into the record as it is now (a read before an await may be stale: the owner may have removed it, another path may have ended it).
+// A record that is gone is never recreated; `open` also leaves an ended one alone.
+const bgPatch = async ($: EngineInterface, key: string, patch: object, open = false) => {
+  const cur = (await $.store.get(key)) as (BgRun & { toasted?: true }) | undefined
+  if (!cur || (open && cur.ended)) return undefined
+  const next = { ...cur, ...patch }
+  await $.store.set(key, next)
+  return next
+}
+
+let bgWatching = false // one watch at a time: two at once would each toast the same ended run
+
 const watchBg = async ($: EngineInterface) => {
-  const [id, now] = [await $.session.id(), await $.clock.now()]
-  let view = null
-  for (const key of (await $.store.keys()).filter(k => k.startsWith('bg:'))) {
-    const run = (await $.store.get(key)) as BgRun & { toasted?: true }
-    try {
-      const exit = `${run.dir}/exit.json`
-      if (!run.ended && (await $.fs.exists(exit))) {
-        const x = JSON.parse(await $.fs.read(exit)) as { code: number | null; ended: string }
-        run.ended = { code: x.code, at: Date.parse(x.ended) }
-        await $.store.set(key, run)
+  if (bgWatching) return
+  bgWatching = true
+  try {
+    const [id, now] = [await $.session.id(), await $.clock.now()]
+    let view = null
+    for (const key of (await $.store.keys()).filter(k => k.startsWith('bg:'))) {
+      let run = (await $.store.get(key)) as (BgRun & { toasted?: true }) | undefined
+      if (!run) continue
+      try {
+        const exit = `${run.dir}/exit.json`
+        if (!run.ended && (await $.fs.exists(exit))) {
+          let ended: NonNullable<BgRun['ended']>
+          try {
+            const x = JSON.parse(await $.fs.read(exit)) as { code: number | null; ended: string }
+            ended = { code: x.code, at: Date.parse(x.ended) }
+          } catch {
+            ended = { code: null, at: now, lost: true } // a file that cannot be read is no code: the run is told as lost
+          }
+          run = await bgPatch($, key, { ended }, true) ?? ((await $.store.get(key)) as typeof run)
+          if (!run) continue
+        }
+        if (key === `bg:${id}`) view = { run, last: await bgLast($, run) }
+        else if (run.ended && !run.toasted) {
+          toast($, bgRow(run, await bgLast($, run), now).text) // a run of another chat: told once, nothing else is done
+          await bgPatch($, key, { toasted: true })
+        }
+      } catch (err) {
+        await bgOnce($, run, err)
       }
-      if (key === `bg:${id}`) view = { run, last: await bgLast($, run) }
-      else if (run.ended && !run.toasted) {
-        toast($, bgRow(run, await bgLast($, run), now).text) // a run of another chat: told once, nothing else is done
-        await $.store.set(key, { ...run, toasted: true })
-      }
-    } catch (err) {
-      await bgOnce($, run, err)
     }
+    await update($, bgView, () => view)
+  } finally {
+    bgWatching = false
   }
-  await update($, bgView, () => view)
 }
 
 // A run whose wrapper is gone and left no exit.json is lost.
@@ -218,7 +243,10 @@ const bgCheck = async ($: EngineInterface, python: string) => {
     if (run.ended) continue
     await guarded($, 'bg', async () => {
       const { alive } = await runCg($, python, ['bg-alive', `--dir=${run.dir}`], 20_000)
-      if (alive === false && !(await $.fs.exists(`${run.dir}/exit.json`))) await $.store.set(key, { ...run, ended: { code: null, at: await $.clock.now(), lost: true } })
+      if (alive !== false) return
+      const at = await $.clock.now()
+      // checked last, right before the write: an exit.json that came during bg-alive keeps its real code for the watch
+      if (!(await $.fs.exists(`${run.dir}/exit.json`))) await bgPatch($, key, { ended: { code: null, at, lost: true } }, true)
     })
   }
   await watchBg($)
@@ -666,7 +694,7 @@ export const register: Register = (on, options) => {
         if (typeof at === 'number' && at < loadedAt - 86_400_000) await $.store.delete(k)
       }
       for (const k of (await $.store.keys()).filter(k => k.startsWith('bg:'))) {
-        if (((await $.store.get(k)) as BgRun).started < loadedAt - 7 * 86_400_000) await $.store.delete(k)
+        if (((await $.store.get(k)) as BgRun | undefined)?.started! <loadedAt - 7 * 86_400_000) await $.store.delete(k)
       }
       await watchBg($)
       void guarded($, 'bg', () => bgCheck($, python)) // never awaited: a slow Python must not hold session.start
