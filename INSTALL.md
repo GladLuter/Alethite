@@ -331,9 +331,20 @@ What else to know:
 
 Off by default. `/al-cleanup on` turns it on, `/al-cleanup off` turns it off, `/al-cleanup` shows the state and how many chats (and MB) are waiting.
 
-- When on, the background job deletes from disk the transcript of an old chat after a New worker handoff, once everything from it is in the index (and in the shared folder, if sync is on) and the chat has not been touched for 60 minutes. Its statistics stay in the index. The current chat is never deleted.
+- When on, the background job deletes from disk the transcript of an old chat after a New worker handoff, once everything from it is in the index (and in the shared folder, if sync is on) and the chat has not been touched for 60 minutes. Its statistics stay in the index. The current chat is never deleted. The cleanup also starts right after a New worker. The chat you just left stays, because it was touched less than 60 minutes ago.
 - Deletion is permanent. An old chat reopened with `claude --resume` and left idle for an hour is deleted too. Its text stays in the long memory.
 - `/al-health` shows the state and how many chats were deleted.
+
+### Background runs
+
+- For a run longer than 10 minutes the agent calls `background_run`. Before the call it asks what to do if the cache is cold when the run ends: only show the result, or start a New worker in this chat.
+- The mod starts the command detached through a `cg.py` wrapper, with no console window. Output goes to `log.txt` in `%USERPROFILE%\.claude\alethite\bg\<chat>-<time>\`, and the exit code to `exit.json`.
+- While the run goes, a row above the band shows its name, how long it has run, the last line of the status file the agent named, and your cold-cache choice. Waiting costs no tokens. Every 30 seconds the mod only reads files. Every 10 minutes it checks that the wrapper is alive (a lock file). A run that has vanished (reboot, killed process) is shown as lost.
+- `[×]` stops the watching. It does not stop the process.
+- Warm cache: the mod sends a message as yours with the exit code, the end time, the last status lines and the log path, and the agent goes on. If the agent is busy, the mod waits for the end of its turn. Your draft in the box is never touched.
+- Cold cache and "show": the row shows the result (code, time), and your next message carries a one-line note about it. Cold cache and "New worker": a New worker starts with the run's result as its first message. A spent limit counts as cold, and the New worker then waits for After reset.
+- One run per chat, and only from the main chat (not from subagents). If you start a New worker by hand while the run goes, the run moves to the new chat and the handoff names it.
+- Records and run folders older than 7 days are removed. Windows only.
 
 ### Lean agent types
 
