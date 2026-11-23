@@ -69,7 +69,7 @@ def start(base, session, name, command, cwd, status_file, if_cold):
         json.dump(dict(name=name, command=command, cwd=cwd, status_file=status_file, if_cold=if_cold, session=session,
                        started=now.isoformat()), f, ensure_ascii=False)
     pid = spawn_detached([sys.executable, os.path.abspath(__file__), 'wrap', d])
-    end = time.monotonic() + 5  # the wrapper takes its lock a moment after the start: wait, so alive() is True when we return
+    end = time.monotonic() + 15  # the wrapper takes its lock a moment after the start: wait, so alive() is True when we return
     while not alive(d) and not os.path.exists(os.path.join(d, 'exit.json')) and time.monotonic() < end:
         time.sleep(0.02)
     if not alive(d) and not os.path.exists(os.path.join(d, 'exit.json')):
@@ -81,7 +81,11 @@ def wrap(dir):
     out = {'code': None}
     try:
         fd = os.open(os.path.join(dir, LOCK), os.O_RDWR | os.O_CREAT)
-        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # retries for a while: alive() holds the same byte for a moment
+        try:
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # retries for a while: alive() holds the same byte for a moment
+        except OSError:
+            os.close(fd)
+            raise
         with open(os.path.join(dir, 'run.json'), encoding='utf-8') as f:
             run = json.load(f)
         # shortcut: cmd's own echo of non-ASCII into log.txt goes through the OEM code page; the mod shows only the log's path
