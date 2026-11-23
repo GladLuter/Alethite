@@ -276,13 +276,12 @@ export const en = {
   // background runs
   bgCold: { show: 'result will be shown', new_worker: 'a new worker continues' },
   bgRunning: 'running',
-  bgDone: (code: number) => `exit ${code}`,
-  bgFailed: (code: number) => `exit ${code}`,
+  bgExit: (code: number) => `exit ${code}`,
   bgLost: 'lost, no exit code',
   bgTooBig: 'This chat is too big to wake up cheaply.',
   bgElapsed: (min: number) => (min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`),
   bgFinish: (name: string, code: string, end: string, duration: string, tail: string, log: string) =>
-    `Background process "${name}" finished: exit code ${code}, ended ${end}, ran ${duration}.\nLast status lines:\n${tail}\nFull log: ${log}\nCheck the result and continue the work.`,
+    `Background process "${name}" finished: exit code ${code}, ended ${end}, ran ${duration}.${tail ? `\nLast status lines:\n${tail}` : ''}\nFull log: ${log}\nCheck the result and continue the work.`,
   bgNote: (name: string, log: string) => `Background process "${name}" is running. Log: ${log}. Alethite will report when it ends.`,
   bgUnknown: 'unknown',
 }

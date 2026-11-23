@@ -277,13 +277,12 @@ export const uk: Partial<Texts> = {
   // background runs
   bgCold: { show: 'підсумок покажу', new_worker: 'продовжить новий працівник' },
   bgRunning: 'триває',
-  bgDone: (code: number) => `код ${code}`,
-  bgFailed: (code: number) => `код ${code}`,
+  bgExit: (code: number) => `код ${code}`,
   bgLost: 'загублено, коду немає',
   bgTooBig: 'Чат завеликий, щоб будити його дешево.',
   bgElapsed: (min: number) => (min >= 60 ? `${Math.floor(min / 60)} год ${min % 60} хв` : `${min} хв`),
   bgFinish: (name: string, code: string, end: string, duration: string, tail: string, log: string) =>
-    `Фоновий процес «${name}» завершився: код ${code}, кінець ${end}, тривав ${duration}.\nОстанні рядки статусу:\n${tail}\nПовний лог: ${log}\nПеревір результат і продовжуй роботу.`,
+    `Фоновий процес «${name}» завершився: код ${code}, кінець ${end}, тривав ${duration}.${tail ? `\nОстанні рядки статусу:\n${tail}` : ''}\nПовний лог: ${log}\nПеревір результат і продовжуй роботу.`,
   bgNote: (name: string, log: string) => `Фоновий процес «${name}» триває. Лог: ${log}. Alethite повідомить, коли він завершиться.`,
   bgUnknown: 'невідомо',
 }

@@ -19,6 +19,9 @@ test('finishAction: busy waits, warm wakes, cold follows ifCold', () => {
   expect(ask({ at: now - 59 * 60_000 })).toBe('show')
   expect(ask({ at: now - 59 * 60_000, ifCold: 'new_worker' })).toBe('newWorker')
   expect(ask({ at: null, ifCold: 'new_worker' })).toBe('newWorker')
+  expect(ask({ at: now - 58 * 60_000 })).toBe('wake')
+  expect(ask({ at: now - 58 * 60_000 - 1 })).toBe('show')
+  expect(ask({ ifCold: 'new_worker' })).toBe('wake')
 })
 test('finishAction: an exhausted limit blocks wake', () => {
   expect(ask({ limits: full })).toBe('show')
@@ -50,4 +53,8 @@ test('finishText: name, code, log, at most 5 tail lines', () => {
   expect(t).toContain('C:/l.log')
   expect(t).not.toContain('\n2\n')
   expect(t).toContain('\n7\n')
+  const unknown = finishText(run({ ended: { code: null, at: now } }), [], now)
+  expect(unknown).toContain('код неизвестно')
+  expect(unknown).not.toContain('Последние строки')
+  expect(unknown).not.toContain('\n\n')
 })

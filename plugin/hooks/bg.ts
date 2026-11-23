@@ -33,8 +33,9 @@ export const bgRow = (run: BgRun, last: string, now: number): { text: string; to
   const e = run.ended
   const dur = T.bgElapsed(minutes(run.started, e?.at ?? now))
   if (!e) return { text: `⏳ ${run.name} · ${dur} · ${last} · ${T.bgCold[run.ifCold]}` }
+  // code null without `lost` is shown as lost too: exit.json with an error means the command did not start; the watcher sets `lost` when the wrapper vanished
   if (e.lost || e.code === null) return { text: `? ${run.name} · ${dur} · ${last} · ${T.bgLost}`, tone: 'warning' }
-  return e.code === 0 ? { text: `✓ ${run.name} · ${dur} · ${last} · ${T.bgDone(0)}` } : { text: `✗ ${run.name} · ${dur} · ${last} · ${T.bgFailed(e.code)}`, tone: 'error' }
+  return e.code === 0 ? { text: `✓ ${run.name} · ${dur} · ${last} · ${T.bgExit(0)}` } : { text: `✗ ${run.name} · ${dur} · ${last} · ${T.bgExit(e.code)}`, tone: 'error' }
 }
 
 export const finishText = (run: BgRun, tail: string[], now: number) => {

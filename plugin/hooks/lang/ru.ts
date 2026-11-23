@@ -274,13 +274,12 @@ export const ru: Partial<Texts> = {
   // background runs
   bgCold: { show: 'итог покажу', new_worker: 'продолжит новый работник' },
   bgRunning: 'идёт',
-  bgDone: (code: number) => `код ${code}`,
-  bgFailed: (code: number) => `код ${code}`,
+  bgExit: (code: number) => `код ${code}`,
   bgLost: 'потерян, кода нет',
   bgTooBig: 'Чат слишком большой, чтобы будить его дёшево.',
   bgElapsed: (min: number) => (min >= 60 ? `${Math.floor(min / 60)} ч ${min % 60} мин` : `${min} мин`),
   bgFinish: (name: string, code: string, end: string, duration: string, tail: string, log: string) =>
-    `Фоновый процесс «${name}» закончился: код ${code}, конец ${end}, шёл ${duration}.\nПоследние строки статуса:\n${tail}\nПолный лог: ${log}\nПроверь результат и продолжай работу.`,
+    `Фоновый процесс «${name}» закончился: код ${code}, конец ${end}, шёл ${duration}.${tail ? `\nПоследние строки статуса:\n${tail}` : ''}\nПолный лог: ${log}\nПроверь результат и продолжай работу.`,
   bgNote: (name: string, log: string) => `Фоновый процесс «${name}» идёт. Лог: ${log}. Alethite сообщит, когда он закончится.`,
   bgUnknown: 'неизвестно',
 }
