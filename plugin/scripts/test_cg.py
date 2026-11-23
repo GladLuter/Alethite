@@ -1647,6 +1647,22 @@ class BgCommandsTest(unittest.TestCase):
             time.sleep(0.05)
         self.assertEqual(call('bg-alive', '--dir', r['dir']), (0, {'alive': False}))
 
+    def test_maintain_detached(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        db = os.path.join(tmp, 'index.db')
+        out = io.TextIOWrapper(io.BytesIO(), encoding='utf-8')
+        for on, want in ((False, {'started': False}), (True, {'started': True})):
+            crypto.set_fields(crypto.settings_path(db), {'deleteOldChats': True if on else None})
+            out.buffer.seek(0)
+            out.buffer.truncate()
+            with mock.patch('bg.spawn_detached', return_value=1) as spawn, mock.patch.object(sys, 'stdout', out):
+                code = cg.main(['--db', db, 'maintain-detached'])
+            out.flush()
+            self.assertEqual((code, json.loads(out.buffer.getvalue().decode('utf-8'))), (0, want))
+            self.assertEqual([c[0][0] for c in spawn.call_args_list],
+                             [[sys.executable, os.path.abspath(cg.__file__), '--db', db, 'maintain']] if on else [])
+
 
 if __name__ == '__main__':
     unittest.main()

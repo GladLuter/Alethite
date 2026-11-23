@@ -20,7 +20,7 @@ from compress import LEVELS, compress
 from transcripts import find_session, last_usage, project_key, project_keys
 
 
-INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings', 'agent-age', 'review-hint', 'settings-fill', 'bg-start', 'bg-alive')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
+INDEX_FREE = ('last-turn', 'compress', 'handoff', 'savings', 'agent-age', 'review-hint', 'settings-fill', 'bg-start', 'bg-alive', 'maintain-detached')  # no merge waits for these and they still answer when the index cannot be used (savings reads the index only when it can)
 SHORT = (*INDEX_FREE, 'lessons-match')  # the runs that do not merge, nor open the index again to keep forgets (lessons-match reads it and writes no forget)
 
 
@@ -462,6 +462,14 @@ def _bg_start(a):
     return bg.start(os.path.dirname(a.db), a.session, a.name, a.command, a.cwd, a.status_file, a.if_cold)
 
 
+def _maintain_detached(a):
+    import bg
+    if not _cleanup_on(a):
+        return {'started': False}
+    bg.spawn_detached([sys.executable, os.path.abspath(__file__), '--db', a.db, 'maintain'])  # maintain's own lock (wait 0) turns away a second run
+    return {'started': True}
+
+
 def _bg_alive(a):
     import bg
     return {'alive': bg.alive(a.dir)}
@@ -570,6 +578,7 @@ def _parser():
         s.add_argument('--' + flag, required=True)
     s.add_argument('--status-file')
     add('bg-alive', _bg_alive).add_argument('--dir', required=True)
+    add('maintain-detached', _maintain_detached)
     s = add('forget', _forget)
     s.add_argument('--conv', required=True)
     s.add_argument('--pos', type=int, required=True)

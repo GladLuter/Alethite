@@ -2906,10 +2906,10 @@ const bgCall = ($: any, over: object = {}) => $.tool.call({ tool: 'mcp__alethite
 const bgVerbs = (m: { runs: { argv: string[] }[] }) => m.runs.filter(r => verb(r.argv)[0]!.startsWith('bg-'))
 const norm = (p: string) => p.replace(/\\/g, '/') // the engine may hand paths back with backslashes
 const runRig = async ($: any, on: any, store = new Map<string, unknown>(), files: Record<string, string> = {}, answerUsage: () => unknown = () => ({ value: usage }), init: object = {}) => {
-  const fs = { files, readError: undefined as string | undefined, alive: true, startError: undefined as string | undefined, handoffError: undefined as string | undefined, onAlive: undefined as (() => void) | undefined, onHandoff: undefined as (() => void) | undefined, gate: undefined as Promise<void> | undefined, ...init }
+  const fs = { files, readError: undefined as string | undefined, alive: true, startError: undefined as string | undefined, handoffError: undefined as string | undefined, maintainError: undefined as string | undefined, onAlive: undefined as (() => void) | undefined, onHandoff: undefined as (() => void) | undefined, gate: undefined as Promise<void> | undefined, ...init }
   on('fs.exists', (_: unknown, e: { path: string }) => ({ value: norm(e.path) in fs.files }))
   on('fs.read', async (_: unknown, e: { path: string }) => (await fs.gate, fs.readError ? { deny: fs.readError } : norm(e.path) in fs.files ? { value: fs.files[norm(e.path)] } : { deny: 'ENOENT' }))
-  const answer = (a: string[]) => (a[0] === 'bg-alive' ? (fs.onAlive?.(), ran(JSON.stringify({ alive: fs.alive }))) : a[0] === 'bg-start' ? (fs.startError ? failed(fs.startError) : ran(JSON.stringify({ dir: BG_DIR, pid: 7, log: `${BG_DIR}/log.txt` }))) : a[0] === 'handoff' ? (fs.onHandoff?.(), fs.handoffError ? failed(fs.handoffError) : ran(JSON.stringify({ text: 'h', path: 'C:/h/id.md' }))) : a[0] === 'index' ? indexed() : a[0] === 'embed' ? embedded() : ran('{}'))
+  const answer = (a: string[]) => (a[0] === 'maintain-detached' && fs.maintainError ? failed(fs.maintainError) : a[0] === 'bg-alive' ? (fs.onAlive?.(), ran(JSON.stringify({ alive: fs.alive }))) : a[0] === 'bg-start' ? (fs.startError ? failed(fs.startError) : ran(JSON.stringify({ dir: BG_DIR, pid: 7, log: `${BG_DIR}/log.txt` }))) : a[0] === 'handoff' ? (fs.onHandoff?.(), fs.handoffError ? failed(fs.handoffError) : ran(JSON.stringify({ text: 'h', path: 'C:/h/id.md' }))) : a[0] === 'index' ? indexed() : a[0] === 'embed' ? embedded() : ran('{}'))
   const m = await started($, on, answer, [], answerUsage, {}, noTurn, store)
   return { m, fs, ui: await $.ui.mount(UI) }
 }
@@ -3285,6 +3285,42 @@ test('a manual New worker with an ended run: the handoff gets the run\'s result 
   expect(ofCg(m, 'handoff')[0]!.argv).toContain(`--note=${note}`)
   expect(store.has('bg:id')).toBe(false)
   expect(store.has('bg:new')).toBe(false)
+})
+
+// cleanup after a New worker (task 6): only a launch that went through asks cg.py to start it
+for (const key of ['send', 'pick']) {
+  test(`New worker, ${key}: maintain-detached is asked once`, async ($, on) => {
+    const { m, ui, state } = await finRig($, on, { at: COLD })
+    state.nextId = 'new'
+    await ui.press({ key: 'launch' })
+    await ui.press({ key })
+    expect(ofCg(m, 'maintain-detached')).toHaveLength(1)
+  })
+}
+
+test('New worker with an empty draft: no cleanup', async ($, on) => {
+  const { m, ui } = await finRig($, on, { draft: '' })
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'send' })
+  expect(ofCg(m, 'maintain-detached')).toEqual([])
+})
+
+test('New worker whose handoff fails: no cleanup', async ($, on) => {
+  const { m, ui } = await finRig($, on, { handoffError: 'boom' })
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'send' })
+  expect(ofCg(m, 'maintain-detached')).toEqual([])
+})
+
+test('a failing maintain-detached: a note for /al-health, no toast, the launch is as before', async ($, on) => {
+  const { m, ui, log, state, fs, store } = await finRig($, on, { at: COLD })
+  fs.maintainError = 'no spawn'
+  state.nextId = 'new'
+  await ui.press({ key: 'launch' })
+  await ui.press({ key: 'send' })
+  expect(bgSent(log)).toHaveLength(1)
+  expect(store.get('lastError')).toMatchObject({ where: 'cleanup' })
+  expect(m.toasts).toEqual([])
 })
 
 const RESET_SOON = new Date(NOW + 600_000).toISOString()

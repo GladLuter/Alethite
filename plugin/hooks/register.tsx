@@ -681,6 +681,7 @@ const startWorker = async ($: EngineInterface, python: string, mode: 'send' | 'f
         else if (to !== from) await $.store.delete(`bg:${from}`)
       }
     }
+    if (outcome === 'sent' || outcome === 'ready') await runCg($, python, ['maintain-detached'], 20_000).catch(err => noteError($, 'cleanup', err))
     if (outcome === 'ready') toast($, T.pickThenEnter)
     if (outcome === 'failed' || outcome === 'dropped') await noteError($, 'launch', told)
   } catch (err) {

@@ -61,6 +61,17 @@ class BgTest(unittest.TestCase):
                 self.start('echo ok', **kw)
         self.assertFalse(os.path.exists(os.path.join(self.tmp, 'bg')))
 
+    def test_lock_failure_is_recorded(self):
+        d = os.path.join(self.tmp, 'run')
+        os.makedirs(d)
+        with mock.patch('bg.msvcrt.locking', side_effect=OSError('busy')):
+            bg.wrap(d)
+        with open(os.path.join(d, 'exit.json'), encoding='utf-8') as f:
+            r = json.load(f)
+        self.assertIsNone(r['code'])
+        self.assertIn('busy', r['error'])
+        self.assertFalse(bg.alive(d))
+
     def test_prune_old(self):
         old, new = (os.path.join(self.tmp, 'bg', n) for n in ('old', 'new'))
         for d, days in ((old, 8), (new, 6)):
