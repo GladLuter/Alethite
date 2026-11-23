@@ -331,7 +331,8 @@ def _settings_fill(a):
 
 def _handoff(a):
     from handoff import build_handoff
-    text = build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress, _cleanup_on(a), a.note)
+    from redact import redact
+    text = redact(build_handoff(a.projects, _session(a.session), a.today, a.memory_dir, a.compress, _cleanup_on(a), a.note))
     folder = os.path.join(os.path.dirname(a.db), 'handoffs')  # next to the index: ~/.claude/alethite/handoffs by default
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, a.session + '.md')

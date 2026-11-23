@@ -198,6 +198,16 @@ class CgTest(unittest.TestCase):
             self.assertIn('..', out['error'])
         self.assertFalse(os.path.exists(os.path.join(self.tmp, 'x.md')))
 
+    def test_the_handoff_has_no_password_in_the_answer_or_the_file(self):
+        self.write('P/S1.jsonl', [owner_line('деплой с password=hunter22'), claude_line('ок')])
+        code, out = self.run_cg('handoff', '--session', 'S1', '--today', '2026-10-19')
+        with open(out['path'], encoding='utf-8') as f:
+            saved = f.read()
+        self.assertEqual(code, 0)
+        for text in (out['text'], saved):
+            self.assertNotIn('hunter22', text)
+            self.assertTrue(text.startswith('[al-handoff]') and text.rstrip().endswith('[/al-handoff]'))
+
     def test_last_turn_unknown_session(self):
         self.assertEqual(self.run_cg('last-turn', '--session', 'nope'), (0, {'tokens': None, 'at': None, 'model': None}))
 

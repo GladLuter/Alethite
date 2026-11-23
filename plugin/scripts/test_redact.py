@@ -49,8 +49,38 @@ class RedactTest(unittest.TestCase):
                           ('passphrase=abc123xyz', 'passphrase='), ('x-api-key: abc123xyz', 'x-api-key: '),
                           ('api-key=abc123xyz', 'api-key='), ('"secretAccessKey": "abc123xyz"', '"secretAccessKey": "')]:
             self.assertEqual(redact(raw), kept + H + ('"' if kept.endswith('"') else ''), raw)
-        for ok in ['pwd: 1234', 'password=123456', 'token: "4096"']:
+        for ok in ['token: "4096"', 'pass: 12', 'tests pass: 12', 'max_key: 10', 'secret: 1234']:
             self.assertEqual(redact(ok), ok)
+
+    def test_digit_passwords_are_hidden_after_password_names(self):
+        for raw, want in [('password=123456', 'password=' + H), ('pwd: 1234', 'pwd: ' + H), ('пароль: 2580', 'пароль: ' + H),
+                          ('passwd=1234', 'passwd=' + H), ('DB_PASS=1234', 'DB_PASS=' + H), ('db_pass: 1234', 'db_pass: ' + H),
+                          ('"password": "1234"', '"password": "' + H + '"')]:
+            self.assertEqual(redact(raw), want, raw)
+
+    def test_password_arguments_of_more_commands(self):
+        for raw, want in [('sqlcmd -S srv -U sa -P S3cr3t!', 'sqlcmd -S srv -U sa -P ' + H),
+                          ('SQLCMD -S srv -P S3cr3t! -d db', 'SQLCMD -S srv -P ' + H + ' -d db'),
+                          ('ConvertTo-SecureString "Pa55word" -AsPlainText -Force', 'ConvertTo-SecureString "' + H + '" -AsPlainText -Force'),
+                          ("convertto-securestring -String 'Pa55word' -Force", "convertto-securestring -String '" + H + "' -Force"),
+                          ('smbclient //srv/share -U bob%Pa55', 'smbclient //srv/share -U bob%' + H),
+                          ('redis-cli -h r -a Pa55', 'redis-cli -h r -a ' + H),
+                          ('az login -u me -p Pa55', 'az login -u me -p ' + H),
+                          ('htpasswd -b .htpasswd bob Pa55', 'htpasswd -b .htpasswd bob ' + H),
+                          ('htpasswd -cb f bob Pa55', 'htpasswd -cb f bob ' + H),
+                          ('htpasswd -bB f bob Pa55 x', 'htpasswd -bB f bob ' + H + ' x'),
+                          ('htpasswd -nb bob Pa55', 'htpasswd -nb bob ' + H)]:
+            self.assertEqual(redact(raw), want, raw)
+        for ok in ['ssh -P 2222 host', 'mysql -P 3306', 'sqlcmd -S srv -p 5', 'redis-cli -h r -p 6379', 'htpasswd f bob',
+                   'smbclient //srv/share -U bob', 'a login -u me -p']:
+            self.assertEqual(redact(ok), ok)
+
+    def test_long_lines_of_the_new_rules_stay_linear(self):
+        for line in ('password=' + '1' * 100000, 'sqlcmd ' * 20000, 'htpasswd -b ' * 20000, 'ConvertTo-SecureString ' * 10000,
+                     'smbclient -U ' * 20000, 'redis-cli ' * 20000, 'az ' * 30000):
+            start = time.monotonic()
+            redact(line)
+            self.assertLess(time.monotonic() - start, 2, line[:12])
 
     def test_prefix_tokens(self):
         for raw in ['shpat_' + 'a1' * 16, 'shpss_' + 'b2' * 16, 'hf_' + 'A' * 34, 'glpat-' + 'x' * 20, 'npm_' + 'Z' * 36,
