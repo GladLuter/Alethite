@@ -1,20 +1,11 @@
-import ctypes
 import json
 import os
 import shutil
+import sys
 import tempfile
 import time
 import unittest
 import bg
-
-
-def decoded(path):
-    raw = open(path, 'rb').read()
-    for enc in ('utf-8', 'cp%d' % ctypes.windll.kernel32.GetOEMCP(), 'cp%d' % ctypes.windll.kernel32.GetACP()):
-        try:
-            yield raw.decode(enc)
-        except UnicodeDecodeError:
-            pass
 
 
 class BgTest(unittest.TestCase):
@@ -43,9 +34,13 @@ class BgTest(unittest.TestCase):
         self.finished(r['dir'])
 
     def test_exit_code_and_log(self):
-        r = self.start('echo привет & exit 2')
+        arg = os.path.join(self.tmp, 'arg.txt')  # the command line reaches the command intact; cmd's own echo into the log is lossy (OEM page)
+        py = "import sys; open(r'%s', 'w', encoding='utf-8').write(sys.argv[1])" % arg
+        r = self.start('"%s" -c "%s" привет & echo ok & exit 2' % (sys.executable, py))
         self.assertEqual(self.finished(r['dir'])['code'], 2)
-        self.assertTrue(any('привет' in s for s in decoded(r['log'])))
+        with open(arg, encoding='utf-8') as f:
+            self.assertEqual(f.read(), 'привет')
+        self.assertIn(b'ok', open(r['log'], 'rb').read())
         self.assertFalse(os.path.exists(os.path.join(r['dir'], 'exit.json.tmp')))
         self.assertFalse(bg.alive(r['dir']))
 

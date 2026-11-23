@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 import texts
@@ -59,8 +60,8 @@ def start(base, session, name, command, cwd, status_file, if_cold):
             raise ValueError(texts.t(key))
     _prune(base)
     now = datetime.datetime.now(datetime.timezone.utc)
-    d = os.path.join(base, 'bg', '%s-%s' % (session, now.strftime('%Y%m%d-%H%M%S')))
-    os.makedirs(d)  # shortcut: two starts of one session within a second collide and the second fails, upgrade if that ever happens
+    os.makedirs(os.path.join(base, 'bg'), exist_ok=True)
+    d = tempfile.mkdtemp(prefix='%s-%s-' % (session, now.strftime('%Y%m%d-%H%M%S')), dir=os.path.join(base, 'bg'))
     with open(os.path.join(d, 'run.json'), 'w', encoding='utf-8') as f:
         json.dump(dict(name=name, command=command, cwd=cwd, status_file=status_file, if_cold=if_cold, session=session,
                        started=now.isoformat()), f, ensure_ascii=False)
@@ -78,11 +79,9 @@ def wrap(dir):
     try:
         with open(os.path.join(dir, 'run.json'), encoding='utf-8') as f:
             run = json.load(f)
-        script = os.path.join(dir, 'run.cmd')  # cmd /c drops letters its OEM page lacks from a command line; a UTF-8 batch file read after chcp keeps them
-        with open(script, 'w', encoding='utf-8', newline='\r\n') as f:
-            f.write('@chcp 65001 >nul\n' + run['command'] + '\n')
-        with open(os.path.join(dir, 'log.txt'), 'wb') as log:  # the raw bytes of the command (UTF-8 thanks to chcp)
-            out['code'] = subprocess.run(['cmd.exe', '/c', script], cwd=run['cwd'], stdin=subprocess.DEVNULL, stdout=log,
+        # shortcut: cmd's own echo of non-ASCII into log.txt goes through the OEM code page; the mod shows only the log's path
+        with open(os.path.join(dir, 'log.txt'), 'wb') as log:  # the raw bytes of the command
+            out['code'] = subprocess.run(run['command'], shell=True, cwd=run['cwd'], stdin=subprocess.DEVNULL, stdout=log,
                                          stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW).returncode
     except Exception as e:
         out['error'] = '%s: %s' % (type(e).__name__, e)

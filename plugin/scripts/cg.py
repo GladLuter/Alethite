@@ -178,18 +178,26 @@ def maintain(a, embed_fn=vectors.ollama_embed, battery=None, digest=None):
     is set). Each step under the lock a chat takes for it, so a chat and the job never do one thing twice at a time; a step that fails
     does not stop the next. The result is kept in meta.job_last for /al-health. The short memory waits for a chat: only a chat knows its
     project's auto-memory folder."""
-    import cleanup, job, sync
+    import job, sync
     battery, digest = battery or job.on_battery, digest or sync.ollama_digest
     try:
         conn = memdb.connect(a.db)  # first: it also makes the folder the lock files lie in
     except ValueError as e:  # an encrypted index and no key that opens it: nowhere to keep the run, /al-health tells the same from `status`
         return {'errors': [{'where': 'index', 'error': '%s: %s' % (type(e).__name__, e)}]}
     try:
-        lock = memdb.lock(a.db, 'maintain', 0)  # noqa: F841 (held until the return)
+        lock = memdb.lock(a.db, 'maintain', 0)  # held until the return
     except sqlite3.OperationalError as e:
         if 'locked' not in str(e):
             raise
         return {'busy': True}
+    try:
+        return _maintain_steps(a, conn, embed_fn, battery, digest)
+    finally:
+        lock.close()  # not left to the garbage collector: a reference cycle would keep the lock past the return
+
+
+def _maintain_steps(a, conn, embed_fn, battery, digest):
+    import cleanup, sync
     s, broken = _settings(a.settings or crypto.settings_path(a.db))
     if isinstance(s.get('language'), str) and s['language'] in texts.TABLES:
         texts.lang = s['language']
