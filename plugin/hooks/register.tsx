@@ -1371,6 +1371,12 @@ export const register: Register = (on, options) => {
 
     const els = $.ui.resolve(e)
     const { Box, Button, Text } = els
+    // flat, as ponytail's band: a line high, so a desktop button no longer sits on the row below; the color tells it from text
+    const act = (key: string, label: string, onPress: () => unknown) => (
+      <Button key={key} plain onPress={onPress}>
+        <Text color="suggestion">{label}</Text>
+      </Button>
+    )
     const rule = e.surface === 'desktop' && 'Svg' in els ? <els.Svg source={RULE_SVG} alt="—" /> : null // the `in` narrows the union for the types
     // the band above the prompt is one area for every mod: ours is a row or a frame of its own, and what the mods beneath draw stays under it
     const below = await next(e)
@@ -1389,31 +1395,27 @@ export const register: Register = (on, options) => {
           await $.store.set(`delayed:${await $.session.id()}`, model ? { at, model } : { at }) // the time printed on the button; the chat that is open now (a /clear may have come)
           await update($, delayedAt, () => at)
         })
-      const cancel = <Button key="cancel" label={T.cancel} onPress={() => disarm($)} />
+      const cancel = act('cancel', T.cancel, () => disarm($))
       const menu =
         typeof level === 'number' ? (
           <>
             <Text dimColor>{whenOf(level)}</Text>
             <Box gap={1} flexWrap="wrap">
-              <Button key="model" label={T.currentModel} onPress={() => setWait(level)} />
-              {(['opus', 'sonnet'] as const).map(model => (
-                <Button key={`model-${model}`} label={model} onPress={() => setWait(level, model)} />
-              ))}
+              {act('model', T.currentModel, () => setWait(level))}
+              {(['opus', 'sonnet'] as const).map(model => act(`model-${model}`, model, () => setWait(level, model)))}
               {cancel}
             </Box>
           </>
         ) : level === 'time' ? (
           <Box gap={1} flexWrap="wrap">
-            {times.map((t, i) => (
-              <Button key={`at-${i + 1}`} label={whenOf(t)} onPress={() => update($, afterLevel, () => t)} />
-            ))}
+            {times.map((t, i) => act(`at-${i + 1}`, whenOf(t), () => update($, afterLevel, () => t)))}
             {cancel}
           </Box>
         ) : (
           <Box gap={1} flexWrap="wrap">
-            <Button key="send" label={T.sendNow} onPress={() => startWorker($, python, 'send', compression)} />
-            <Button key="pick" label={T.pickInMenu} onPress={() => startWorker($, python, 'fill', compression)} />
-            {times.length > 0 && <Button key="after" label={T.afterResetMenu} onPress={() => update($, afterLevel, () => (times.length > 1 ? 'time' : times[0]))} />}
+            {act('send', T.sendNow, () => startWorker($, python, 'send', compression))}
+            {act('pick', T.pickInMenu, () => startWorker($, python, 'fill', compression))}
+            {times.length > 0 && act('after', T.afterResetMenu, () => update($, afterLevel, () => (times.length > 1 ? 'time' : times[0])))}
             {cancel}
           </Box>
         )
@@ -1475,26 +1477,25 @@ export const register: Register = (on, options) => {
       return (
         <Box gap={1}>
           <Text color={r.tone} wrap="truncate-end">{r.text}</Text>
-          {/* right after the text, not at the row's end: a desktop button is taller than a line and would sit on Details below */}
-          <Button key="bg-remove" label="×" dimColor onPress={remove} />
+          <Button key="bg-remove" plain dimColor label="×" onPress={remove} />
         </Box>
       )
     })()
     const actions = (wrap: boolean, hasDetails = true) => (
       <Box gap={1} flexWrap={wrap ? 'wrap' : undefined}>
         {wait !== null && <Text color="warning">{waitText}</Text>}
-        {wait !== null && <Button key="cancel-delay" label={T.cancel} onPress={cancelWait} />}
-        {wait === null && !isWorking && <Button key="launch" label={launchLabel} onPress={() => (busy ? undefined : update($, isArmed, () => true))} />}
-        {hasDetails && <Button key="details" label={detailsLabel} onPress={toggle} />}
+        {wait !== null && act('cancel-delay', T.cancel, cancelWait)}
+        {wait === null && !isWorking && act('launch', launchLabel, () => (busy ? undefined : update($, isArmed, () => true)))}
+        {hasDetails && act('details', detailsLabel, toggle)}
       </Box>
     )
 
     if (!isOpen) {
       // the terminal counts cells; the desktop draws wider and does not wrap, so only the terminal trims the tokens to the room the buttons leave
       const buttons = wait !== null ? [waitText, T.cancel, detailsLabel] : [launchLabel, detailsLabel].slice(isWorking ? -1 : 0)
-      // the row is the title, the tokens ("· " + text), a spacer and the buttons, one gap between neighbours; a Button draws `[ label ]`, its label plus 4.
+      // the row is the title, the tokens ("· " + text), a spacer and the buttons, one gap between neighbours; a plain Button draws its label alone.
       // The tokens' ' · ' joins in tokensWidth are 3 cells short of what they take in the row, and the spacer's gap is one more.
-      const room = (rowTitle: string) => (e.surface === 'terminal' ? e.props.bodyColumns - rowTitle.length - buttons.join('').length - 5 * buttons.length - 4 : Infinity)
+      const room = (rowTitle: string) => (e.surface === 'terminal' ? e.props.bodyColumns - rowTitle.length - buttons.join('').length - buttons.length - 4 : Infinity)
       const all = lineTokens(s, data, isLit)
       let [rowTitle, left] = [T.bandTitle, room(T.bandTitle)]
       let tokens = fitTokens(all, left)

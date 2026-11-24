@@ -63,6 +63,16 @@ test('an armed picker lasts one turn', async ($, on) => {
   expect(await buttons(ui)).toEqual(['launch', 'details'])
 })
 
+const plainButtons = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b: { props: { plain?: boolean } }) => b.props.plain === true)
+test('every band Button is plain, a line high: on a desktop none sits on the row below', async ($, on) => {
+  wire(on, [], () => ({ value: usage }))
+  await ($ as any).command.run({ command: 'al-band', args: '' })
+  const ui = await $.ui.mount({ plugin: 'alethite', surface: 'desktop', component: 'AbovePrompt', props } as never)
+  expect(await plainButtons(ui)).toEqual([true, true])
+  await ui.press({ key: 'launch' })
+  expect(await plainButtons(ui)).toEqual([true, true, true])
+})
+
 test('while the model works the row stays without New worker', async ($, on) => {
   wire(on, [], () => ({ value: usage }))
   await ($ as any).command.run({ command: 'al-band', args: '' })
@@ -1894,11 +1904,10 @@ const bandData = async ($: any, on: any, savings: unknown, status: object = { co
   return m
 }
 
-// cells the collapsed row takes in the terminal: every Text, every Button as `[ label ]`, one gap between neighbours and one for the spacer
+// cells the collapsed row takes in the terminal: every Text (a plain Button draws its label alone, a Text of its own), one gap between neighbours and one for the spacer
 const rowWidth = async (ui: any) => {
   const t: string[] = (await texts(ui)).filter((x: string) => x !== 'no band')
-  const b: { text: string }[] = await ui.findAll({ type: 'Button' })
-  return t.reduce((n, x) => n + x.length + (x.includes('⏰') ? 1 : 0), 0) + b.reduce((n, x) => n + x.text.length + 4, 0) + t.length + b.length
+  return t.reduce((n, x) => n + x.length + (x.includes('⏰') ? 1 : 0), 0) + t.length
 }
 const atColumns = ($: any, bodyColumns: number) => $.ui.mount({ ...(UI as object), props: { ...props, bodyColumns } } as never)
 
@@ -3049,6 +3058,7 @@ test('[x] removes the record and the row', async ($, on) => {
   const { m, ui } = await runRig($, on, new Map([['bg:id', bgRun()]]))
   await m.clock.advance(30_000)
   expect(await buttons(ui)).toContain('bg-remove')
+  expect(await plainButtons(ui)).not.toContain(false)
   await ui.press({ key: 'bg-remove' })
   expect(m.store.has('bg:id')).toBe(false)
   expect(await bgTexts(ui)).toEqual([])
